@@ -1,7 +1,7 @@
 // Linux Platform Adapter (Stub - To be implemented in Phase 6)
 
 import { IPlatformAdapter, IWindowManager, IFileSystem, IApps, ISystem, IProcess } from '../index';
-import { WindowInfo, FileInfo, FileFilter, AppInfo, ProcessInfo } from '../../shared/types';
+import { WindowInfo, FileInfo, AppInfo, ProcessInfo } from '../../shared/types';
 
 class LinuxWindowManager implements IWindowManager {
   async listWindows(): Promise<WindowInfo[]> {
@@ -25,6 +25,7 @@ class LinuxFileSystem implements IFileSystem {
   async renameFile(): Promise<boolean> { return false; }
   async createFolder(): Promise<boolean> { return false; }
   async readFile(): Promise<string> { return ''; }
+  async writeFile(): Promise<boolean> { return false; }
   async getFileInfo(): Promise<FileInfo> { throw new Error('Not implemented'); }
 }
 
@@ -33,6 +34,7 @@ class LinuxApps implements IApps {
   async launchApp(): Promise<boolean> { return false; }
   async quitApp(): Promise<boolean> { return false; }
   async switchToApp(): Promise<boolean> { return false; }
+  async createPowerPoint(): Promise<boolean> { return false; }
 }
 
 class LinuxSystem implements ISystem {

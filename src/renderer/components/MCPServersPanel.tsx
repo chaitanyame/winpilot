@@ -94,21 +94,39 @@ export function MCPServersPanel({ isOpen, onClose }: MCPServersPanelProps) {
         argsFromForm = parts.slice(1);
       }
       
+      let parsedEnv: Record<string, string> | undefined;
+      if (formData.env) {
+        try {
+          parsedEnv = JSON.parse(formData.env);
+        } catch {
+          throw new Error('Invalid JSON in Environment Variables field');
+        }
+      }
+
       const config: MCPLocalServerConfig = {
         ...baseConfig,
         type: 'local',
         command: command,
         args: argsFromForm,
-        env: formData.env ? JSON.parse(formData.env) : undefined,
+        env: parsedEnv,
         cwd: formData.cwd || undefined,
       };
       return config;
     } else {
+      let parsedHeaders: Record<string, string> | undefined;
+      if (formData.headers) {
+        try {
+          parsedHeaders = JSON.parse(formData.headers);
+        } catch {
+          throw new Error('Invalid JSON in Headers field');
+        }
+      }
+
       const config: MCPRemoteServerConfig = {
         ...baseConfig,
         type: formData.type,
         url: formData.url,
-        headers: formData.headers ? JSON.parse(formData.headers) : undefined,
+        headers: parsedHeaders,
       };
       return config;
     }
@@ -120,7 +138,7 @@ export function MCPServersPanel({ isOpen, onClose }: MCPServersPanelProps) {
       name: config.name,
       type: config.type === 'stdio' ? 'local' : config.type,
       enabled: config.enabled,
-      tools: config.tools.join(', '),
+      tools: Array.isArray(config.tools) ? config.tools.join(', ') : config.tools,
       timeout: config.timeout?.toString() || '',
     } as ServerFormData;
 
@@ -327,7 +345,7 @@ function ServerCard({ server, onEdit, onDelete, onToggle }: ServerCardProps) {
             }
           </p>
           <p className="mt-1 text-xs text-gray-500">
-            Tools: {config.tools.join(', ')}
+            Tools: {Array.isArray(config.tools) ? config.tools.join(', ') : config.tools}
           </p>
         </div>
         <div className="flex items-center gap-2">

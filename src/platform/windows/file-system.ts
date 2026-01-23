@@ -1,6 +1,7 @@
 // Windows File System Implementation
 
 import * as fs from 'fs';
+import * as fsPromises from 'fs/promises';
 import * as path from 'path';
 import { promisify } from 'util';
 import { exec } from 'child_process';
@@ -8,6 +9,7 @@ import { shell } from 'electron';
 import { IFileSystem } from '../index';
 import { FileInfo, FileFilter } from '../../shared/types';
 import { getFileExtension } from '../../shared/utils';
+import { assertPathAllowed, assertPathsAllowed } from '../path-validator';
 
 const execAsync = promisify(exec);
 const readdir = promisify(fs.readdir);
@@ -18,6 +20,16 @@ const mkdir = promisify(fs.mkdir);
 const readFile = promisify(fs.readFile);
 const writeFileAsync = promisify(fs.writeFile);
 const appendFileAsync = promisify(fs.appendFile);
+
+/**
+ * Escapes a string for safe use in PowerShell single-quoted strings.
+ * In single-quoted strings, only the single quote character needs escaping (doubled).
+ */
+function escapePowerShellString(input: string): string {
+  if (input === null || input === undefined) return '';
+  // In PowerShell single-quoted strings, only ' needs to be escaped as ''
+  return String(input).replace(/'/g, "''");
+}
 
 export class WindowsFileSystem implements IFileSystem {
 
@@ -118,9 +130,13 @@ export class WindowsFileSystem implements IFileSystem {
       const startPath = params.startPath || process.env.USERPROFILE || 'C:\\';
       const maxResults = params.maxResults || 100;
 
+      // Sanitize user input to prevent command injection
+      const safeStartPath = escapePowerShellString(startPath);
+      const safeQuery = escapePowerShellString(params.query);
+
       // Use Windows Search via PowerShell for better performance
       const script = `
-        Get-ChildItem -Path "${startPath}" -Recurse -Filter "*${params.query}*" -ErrorAction SilentlyContinue |
+        Get-ChildItem -Path '${safeStartPath}' -Recurse -Filter '*${safeQuery}*' -ErrorAction SilentlyContinue |
         Select-Object -First ${maxResults} |
         ForEach-Object {
           @{
@@ -160,9 +176,12 @@ export class WindowsFileSystem implements IFileSystem {
   }
 
   async moveFiles(params: { source: string | string[]; destination: string; overwrite?: boolean }): Promise<boolean> {
+    // Validate all source and destination paths are allowed
+    const sources = Array.isArray(params.source) ? params.source : [params.source];
+    assertPathsAllowed(sources, 'move (source)');
+    assertPathAllowed(params.destination, 'move (destination)');
+    
     try {
-      const sources = Array.isArray(params.source) ? params.source : [params.source];
-      
       // Ensure destination exists if it's a directory
       if (!fs.existsSync(params.destination)) {
         await mkdir(params.destination, { recursive: true });
@@ -187,9 +206,12 @@ export class WindowsFileSystem implements IFileSystem {
   }
 
   async copyFiles(params: { source: string | string[]; destination: string; overwrite?: boolean }): Promise<boolean> {
+    // Validate all source and destination paths are allowed
+    const sources = Array.isArray(params.source) ? params.source : [params.source];
+    assertPathsAllowed(sources, 'copy (source)');
+    assertPathAllowed(params.destination, 'copy (destination)');
+    
     try {
-      const sources = Array.isArray(params.source) ? params.source : [params.source];
-
       if (!fs.existsSync(params.destination)) {
         await mkdir(params.destination, { recursive: true });
       }
@@ -233,6 +255,9 @@ export class WindowsFileSystem implements IFileSystem {
   }
 
   async deleteFiles(params: { paths: string[]; moveToTrash?: boolean }): Promise<boolean> {
+    // Validate all paths are allowed before deleting
+    assertPathsAllowed(params.paths, 'delete');
+    
     try {
       const moveToTrash = params.moveToTrash !== false; // Default to true for safety
 
@@ -241,8 +266,8 @@ export class WindowsFileSystem implements IFileSystem {
           // Use shell to move to recycle bin
           await shell.trashItem(filePath);
         } else {
-          // Permanent delete using PowerShell
-          await execAsync(`powershell -NoProfile -Command "Remove-Item -Path '${filePath}' -Recurse -Force"`);
+          // Permanent delete using Node.js native fs (safer than PowerShell)
+          await fsPromises.rm(filePath, { recursive: true, force: true });
         }
       }
 
@@ -276,6 +301,9 @@ export class WindowsFileSystem implements IFileSystem {
   }
 
   async readFile(params: { path: string; encoding?: string; maxSize?: number }): Promise<string> {
+    // Validate path is allowed before reading
+    assertPathAllowed(params.path, 'read');
+    
     try {
       const stats = await stat(params.path);
       const maxSize = params.maxSize || 1024 * 1024; // 1MB default
@@ -303,6 +331,9 @@ export class WindowsFileSystem implements IFileSystem {
   }
 
   async writeFile(params: { path: string; content: string; encoding?: BufferEncoding; append?: boolean }): Promise<boolean> {
+    // Validate path is allowed before writing
+    assertPathAllowed(params.path, 'write');
+    
     try {
       const encoding = params.encoding || 'utf-8';
       const append = params.append ?? false;

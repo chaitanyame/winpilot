@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
-import type { Message, ToolCall } from '../../shared/types';
+import type { Message } from '../../shared/types';
 import { generateId } from '../../shared/utils';
 
 interface UseCopilotReturn {

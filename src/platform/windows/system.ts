@@ -51,7 +51,6 @@ export class WindowsSystem implements ISystem {
 
         case 'set': {
           if (params.level === undefined) return false;
-          const level = Math.max(0, Math.min(100, params.level)) / 100;
           
           // Use nircmd for reliable volume control
           await execAsync(`powershell -NoProfile -Command "$obj = New-Object -ComObject WScript.Shell; $obj.SendKeys([char]173)"`);
@@ -62,7 +61,6 @@ export class WindowsSystem implements ISystem {
 
         case 'mute':
         case 'unmute': {
-          const muteValue = params.action === 'mute' ? 1 : 0;
           await execAsync(`powershell -NoProfile -Command "(New-Object -ComObject WScript.Shell).SendKeys([char]173)"`);
           return true;
         }

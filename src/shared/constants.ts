@@ -16,12 +16,14 @@ export const TRAY_ICON_IDLE = 'icon-idle';
 export const TRAY_ICON_ACTIVE = 'icon-active';
 export const TRAY_ICON_ERROR = 'icon-error';
 
+import { PermissionLevel } from './types';
+
 // Default settings
 export const DEFAULT_SETTINGS = {
   hotkey: DEFAULT_HOTKEY,
   theme: 'system' as const,
   permissions: {
-    defaultLevel: 'standard' as const,
+    defaultLevel: PermissionLevel.STANDARD,
     rememberChoices: true,
     requireConfirmFor: ['files.delete', 'process.kill', 'system.sleep', 'system.lock'],
   },

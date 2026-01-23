@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect } from 'react';
 
 interface UseHotkeyOptions {
   enabled?: boolean;
@@ -20,7 +20,6 @@ export function useHotkey(
       const ctrl = keys.includes('ctrl') || keys.includes('control');
       const alt = keys.includes('alt');
       const shift = keys.includes('shift');
-      const meta = keys.includes('meta') || keys.includes('cmd') || keys.includes('command');
       
       // Get the main key (not a modifier)
       const mainKey = keys.find(k => 

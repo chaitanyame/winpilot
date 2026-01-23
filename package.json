@@ -3,6 +3,14 @@
   "version": "0.1.0",
   "description": "Control your entire desktop with natural language using the GitHub Copilot SDK",
   "main": "dist/main/index.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/burkeholland/desktop-commander.git"
+  },
+  "bugs": {
+    "url": "https://github.com/burkeholland/desktop-commander/issues"
+  },
+  "homepage": "https://github.com/burkeholland/desktop-commander#readme",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build && electron-builder",
@@ -22,8 +30,11 @@
     "natural-language",
     "electron"
   ],
-  "author": "",
+  "author": "Burke Holland",
   "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "dependencies": {
     "@github/copilot-sdk": "^0.1.15",
     "electron-store": "^8.1.0",

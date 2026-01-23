@@ -1,6 +1,6 @@
 // IPC Handlers for Main Process
 
-import { ipcMain, BrowserWindow, clipboard, shell } from 'electron';
+import { ipcMain, clipboard, shell } from 'electron';
 import { IPC_CHANNELS } from '../shared/types';
 import { MCP_IPC_CHANNELS, MCPServerConfig } from '../shared/mcp-types';
 import { getSettings, setSettings, getHistory, addToHistory, clearHistory, getMcpServers, addMcpServer, updateMcpServer, deleteMcpServer, toggleMcpServer } from './store';
@@ -203,6 +203,11 @@ export function setupIpcHandlers(): void {
       console.log('[IPC] Starting sendMessage generator...');
       // Use the AsyncGenerator pattern from copilotController
       for await (const streamEvent of copilotController.sendMessage(message)) {
+        // Check if sender is still valid before sending
+        if (sender.isDestroyed()) {
+          console.log('[IPC] Sender destroyed, stopping stream');
+          return;
+        }
         console.log('[IPC] Stream event:', streamEvent.type, streamEvent.content?.substring(0, 50));
         switch (streamEvent.type) {
           case 'text':
@@ -216,21 +221,29 @@ export function setupIpcHandlers(): void {
             break;
           case 'error':
             console.error('[IPC] Stream error:', streamEvent.error);
-            sender.send(IPC_CHANNELS.COPILOT_STREAM_END, { error: streamEvent.error });
+            if (!sender.isDestroyed()) {
+              sender.send(IPC_CHANNELS.COPILOT_STREAM_END, { error: streamEvent.error });
+            }
             return;
           case 'done':
             console.log('[IPC] Stream done');
-            sender.send(IPC_CHANNELS.COPILOT_STREAM_END);
+            if (!sender.isDestroyed()) {
+              sender.send(IPC_CHANNELS.COPILOT_STREAM_END);
+            }
             return;
         }
       }
       console.log('[IPC] Generator exhausted');
-      sender.send(IPC_CHANNELS.COPILOT_STREAM_END);
+      if (!sender.isDestroyed()) {
+        sender.send(IPC_CHANNELS.COPILOT_STREAM_END);
+      }
     } catch (error) {
       console.error('Copilot error:', error);
-      sender.send(IPC_CHANNELS.COPILOT_STREAM_END, { 
-        error: error instanceof Error ? error.message : 'Unknown error' 
-      });
+      if (!sender.isDestroyed()) {
+        sender.send(IPC_CHANNELS.COPILOT_STREAM_END, { 
+          error: error instanceof Error ? error.message : 'Unknown error' 
+        });
+      }
     }
   });
 
@@ -244,10 +257,25 @@ export function setupIpcHandlers(): void {
 
   // Shell handlers
   ipcMain.handle('shell:openExternal', async (_, url: string) => {
+    // Validate URL protocol to prevent arbitrary protocol execution
+    const parsed = new URL(url);
+    if (!['http:', 'https:'].includes(parsed.protocol)) {
+      throw new Error('Only http and https URLs are allowed');
+    }
     await shell.openExternal(url);
   });
 
   ipcMain.handle('shell:openPath', async (_, path: string) => {
+    // Block dangerous executable file types
+    const dangerousExtensions = [
+      '.exe', '.bat', '.cmd', '.ps1', '.vbs', '.vbe', '.js', '.jse',
+      '.ws', '.wsf', '.wsc', '.wsh', '.msc', '.msi', '.msp', '.com',
+      '.scr', '.hta', '.cpl', '.jar', '.reg'
+    ];
+    const ext = path.toLowerCase().slice(path.lastIndexOf('.'));
+    if (dangerousExtensions.includes(ext)) {
+      throw new Error(`Opening ${ext} files is not allowed for security reasons`);
+    }
     await shell.openPath(path);
   });
 

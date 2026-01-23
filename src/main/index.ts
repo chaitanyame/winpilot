@@ -1,13 +1,13 @@
 // Electron Main Process Entry Point
 
-import { app, BrowserWindow, ipcMain, globalShortcut } from 'electron';
+import { app, BrowserWindow } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { createTray, destroyTray } from './tray';
-import { createCommandWindow, toggleCommandWindow, getCommandWindow } from './windows';
+import { createCommandWindow, getCommandWindow } from './windows';
 import { registerHotkeys, unregisterHotkeys } from './hotkeys';
 import { setupIpcHandlers } from './ipc';
-import { initStore, getSettings } from './store';
+import { initStore } from './store';
 
 // In development, use a separate userData directory to avoid conflicts
 if (!app.isPackaged) {
@@ -96,7 +96,7 @@ app.on('before-quit', () => {
 });
 
 // Handle certificate errors (for development)
-app.on('certificate-error', (event, webContents, url, error, certificate, callback) => {
+app.on('certificate-error', (event, _webContents, _url, _error, _certificate, callback) => {
   if (process.env.NODE_ENV === 'development') {
     event.preventDefault();
     callback(true);

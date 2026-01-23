@@ -5,7 +5,7 @@ import { CopilotClient, CopilotSession, type SessionEvent, type MCPServerConfig 
 import { desktopCommanderTools } from '../tools';
 import { logger } from '../utils/logger';
 import { getEnabledMcpServers } from '../main/store';
-import { MCPLocalServerConfig, MCPRemoteServerConfig, StoredMCPServer } from '../shared/mcp-types';
+import { MCPLocalServerConfig, MCPRemoteServerConfig } from '../shared/mcp-types';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -18,6 +18,32 @@ export interface StreamEvent {
   toolArgs?: Record<string, unknown>;
   result?: unknown;
   error?: string;
+}
+
+// Types for session event data to avoid unsafe 'as any' casts
+interface MessageDeltaData {
+  deltaContent?: string;
+}
+
+interface AssistantMessageData {
+  content?: string;
+  toolRequests?: unknown[];
+}
+
+interface ToolExecutionStartData {
+  toolName: string;
+  arguments: Record<string, unknown>;
+}
+
+interface ToolExecutionCompleteData {
+  toolCallId: string;
+  success: boolean;
+  result?: { content: unknown };
+  error?: { message: string };
+}
+
+interface SessionErrorData {
+  message: string;
 }
 
 /**
@@ -62,6 +88,7 @@ export class CopilotController {
   private isComplete = false;
   private isStreaming = false;
   private mcpServersChanged = false;
+  private isSending = false;
 
   constructor() {
     const cliPath = findCopilotCliPath();
@@ -79,10 +106,9 @@ export class CopilotController {
     for (const server of enabledServers) {
       const config = server.config;
       
-      // Convert tools: ["*"] to "*" for SDK compatibility
-      const tools = (Array.isArray(config.tools) && config.tools.length === 1 && config.tools[0] === '*') 
-        ? '*' as const 
-        : config.tools;
+      // SDK requires tools as string[]. The SDK comment says "[] means none, \"*\" means all"
+      // So when config.tools is "*" string, convert to ["*"] array
+      const toolsArray: string[] = Array.isArray(config.tools) ? config.tools : ['*'];
 
       if (config.type === 'local' || config.type === 'stdio') {
         const localConfig = config as MCPLocalServerConfig;
@@ -106,7 +132,7 @@ export class CopilotController {
           type: localConfig.type,
           command,
           args,
-          tools,
+          tools: toolsArray,
           env: localConfig.env,
           cwd: localConfig.cwd,
           timeout: localConfig.timeout,
@@ -116,7 +142,7 @@ export class CopilotController {
         mcpServers[server.id] = {
           type: remoteConfig.type,
           url: remoteConfig.url,
-          tools,
+          tools: toolsArray,
           headers: remoteConfig.headers,
           timeout: remoteConfig.timeout,
         };
@@ -205,6 +231,18 @@ export class CopilotController {
    */
   async *sendMessage(message: string): AsyncGenerator<StreamEvent> {
     logger.copilot('sendMessage called', { message });
+
+    // Prevent concurrent sendMessage calls
+    if (this.isSending) {
+      logger.copilot('Already sending a message, rejecting concurrent call');
+      yield {
+        type: 'error',
+        error: 'A message is already being processed. Please wait.',
+      };
+      return;
+    }
+
+    this.isSending = true;
     
     // Ensure session is initialized
     if (!this.session) {
@@ -278,6 +316,7 @@ export class CopilotController {
         this.unsubscribe();
         this.unsubscribe = null;
       }
+      this.isSending = false;
     }
   }
 
@@ -288,20 +327,22 @@ export class CopilotController {
     let streamEvent: StreamEvent | null = null;
 
     switch (event.type) {
-      case 'assistant.message_delta':
+      case 'assistant.message_delta': {
         // Streaming text content
         this.isStreaming = true;
-        logger.copilot('Message delta', { content: (event.data as any).deltaContent?.substring(0, 50) });
+        const deltaData = event.data as MessageDeltaData;
+        logger.copilot('Message delta', { content: deltaData.deltaContent?.substring(0, 50) });
         streamEvent = {
           type: 'text',
-          content: (event.data as any).deltaContent,
+          content: deltaData.deltaContent,
         };
         break;
+      }
 
       case 'assistant.message': {
         // Final message - may contain toolRequests, so don't mark done yet
         // Wait for session.idle to know when all work is complete
-        const messageData = event.data as any;
+        const messageData = event.data as AssistantMessageData;
         logger.copilot('Assistant message', { toolRequestCount: messageData.toolRequests?.length || 0, toolRequests: messageData.toolRequests });
         
         // If there are tool requests, the SDK will execute them and we'll get
@@ -323,12 +364,12 @@ export class CopilotController {
 
       case 'tool.execution_start': {
         // Tool is being called
-        const toolStartData = event.data as any;
+        const toolStartData = event.data as ToolExecutionStartData;
         logger.copilot('Tool execution start', { toolName: toolStartData.toolName, arguments: toolStartData.arguments });
         streamEvent = {
           type: 'tool_call',
           toolName: toolStartData.toolName,
-          toolArgs: toolStartData.arguments as Record<string, unknown>,
+          toolArgs: toolStartData.arguments,
           content: `🔧 Executing: ${toolStartData.toolName}...`,
         };
         break;
@@ -336,7 +377,7 @@ export class CopilotController {
 
       case 'tool.execution_complete': {
         // Tool execution completed
-        const toolCompleteData = event.data as any;
+        const toolCompleteData = event.data as ToolExecutionCompleteData;
         logger.copilot('Tool execution complete', { success: toolCompleteData.success, result: toolCompleteData.result, error: toolCompleteData.error });
         streamEvent = {
           type: 'tool_result',
@@ -349,7 +390,7 @@ export class CopilotController {
 
       case 'session.error': {
         // Error occurred
-        const errorData = event.data as any;
+        const errorData = event.data as SessionErrorData;
         logger.copilot('Session error event', errorData);
         streamEvent = {
           type: 'error',

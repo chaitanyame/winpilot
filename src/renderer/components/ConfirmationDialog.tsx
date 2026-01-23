@@ -1,6 +1,5 @@
-import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { AlertTriangle, X, Check, Trash2 } from 'lucide-react';
+import { AlertTriangle, Check } from 'lucide-react';
 import type { PermissionRequest } from '../../shared/types';
 
 interface Props {

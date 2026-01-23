@@ -1,19 +1,18 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { CommandPalette } from './components/CommandPalette';
 import { useTheme } from './hooks/useTheme';
 
 function App() {
-  const { theme, setTheme } = useTheme();
-  const [isVisible, setIsVisible] = useState(true);
+  const { theme } = useTheme();
 
   useEffect(() => {
     // Listen for window shown/hidden events
     const unsubscribeShown = window.electronAPI.onWindowShown(() => {
-      setIsVisible(true);
+      // Window is now visible
     });
 
     const unsubscribeHidden = window.electronAPI.onWindowHidden(() => {
-      setIsVisible(false);
+      // Window is now hidden
     });
 
     return () => {

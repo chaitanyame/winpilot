@@ -30,7 +30,7 @@ export const windowListTool = defineTool('window_list', {
       windows: windows.map(w => ({
         id: w.id,
         title: w.title,
-        app: w.appName,
+        app: w.app,
         bounds: w.bounds,
         isMinimized: w.isMinimized,
         isMaximized: w.isMaximized,
@@ -74,7 +74,7 @@ export const windowResizeTool = defineTool('window_resize', {
       if (listResult.success && listResult.data) {
         const match = listResult.data.find(w => {
           if (titleContains && w.title.toLowerCase().includes(titleContains.toLowerCase())) return true;
-          if (appName && w.appName.toLowerCase().includes(appName.toLowerCase())) return true;
+          if (appName && w.app.toLowerCase().includes(appName.toLowerCase())) return true;
           return false;
         });
         if (match) targetId = match.id;
@@ -181,7 +181,12 @@ export const filesListTool = defineTool('files_list', {
     }).optional().describe('Filter criteria')
   }),
   handler: async ({ path, recursive, filter }) => {
-    const result = await adapter.listFiles({ path, recursive, filter });
+    // Convert filter to match FileFilter type (extension as string[])
+    const adaptedFilter = filter ? {
+      ...filter,
+      extension: filter.extension ? [filter.extension] : undefined,
+    } : undefined;
+    const result = await adapter.listFiles({ path, recursive, filter: adaptedFilter });
     if (!result.success) {
       return `Failed to list files: ${result.error}`;
     }
@@ -311,7 +316,7 @@ export const filesInfoTool = defineTool('files_info', {
       return `Failed to get file info: ${result.error}`;
     }
     const info = result.data;
-    return `File: ${info?.name}\nSize: ${info?.size} bytes\nType: ${info?.type}\nModified: ${info?.modified}`;
+    return `File: ${info?.name}\nSize: ${info?.size} bytes\nType: ${info?.isDirectory ? 'Directory' : 'File'}\nModified: ${info?.modified}`;
   }
 });
 

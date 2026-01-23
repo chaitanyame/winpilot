@@ -182,9 +182,11 @@ export function resizeCommandWindow(height: number): void {
 }
 
 // Add isQuitting flag to app
-declare module 'electron' {
-  interface App {
-    isQuitting?: boolean;
+declare global {
+  namespace Electron {
+    interface App {
+      isQuitting?: boolean;
+    }
   }
 }
 

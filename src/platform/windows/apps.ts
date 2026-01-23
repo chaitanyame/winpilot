@@ -8,6 +8,16 @@ import { logger } from '../../utils/logger';
 
 const execAsync = promisify(exec);
 
+/**
+ * Escapes a string for safe use in PowerShell single-quoted strings.
+ * In single-quoted strings, only the single quote character needs escaping (doubled).
+ */
+function escapePowerShellString(input: string): string {
+  if (input === null || input === undefined) return '';
+  // In PowerShell single-quoted strings, only ' needs to be escaped as ''
+  return String(input).replace(/'/g, "''");
+}
+
 export class WindowsApps implements IApps {
 
   async listApps(filter?: 'running' | 'installed' | 'all'): Promise<AppInfo[]> {
@@ -179,8 +189,9 @@ export class WindowsApps implements IApps {
 
   async quitApp(params: { name: string; force?: boolean }): Promise<boolean> {
     try {
+      const safeName = escapePowerShellString(params.name);
       const forceFlag = params.force ? '-Force' : '';
-      await execAsync(`powershell -NoProfile -Command "Stop-Process -Name '${params.name}' ${forceFlag} -ErrorAction SilentlyContinue"`);
+      await execAsync(`powershell -NoProfile -Command "Stop-Process -Name '${safeName}' ${forceFlag} -ErrorAction SilentlyContinue"`);
       return true;
     } catch (error) {
       console.error('Error quitting app:', error);
@@ -190,6 +201,7 @@ export class WindowsApps implements IApps {
 
   async switchToApp(name: string): Promise<boolean> {
     try {
+      const safeName = escapePowerShellString(name);
       const script = `
         Add-Type @"
         using System;
@@ -203,7 +215,7 @@ export class WindowsApps implements IApps {
             public static extern bool IsIconic(IntPtr hWnd);
         }
 "@
-        $proc = Get-Process -Name "${name}" -ErrorAction SilentlyContinue | Select-Object -First 1
+        $proc = Get-Process -Name '${safeName}' -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($proc -and $proc.MainWindowHandle -ne 0) {
             $handle = $proc.MainWindowHandle
             if ([Win32]::IsIconic($handle)) {

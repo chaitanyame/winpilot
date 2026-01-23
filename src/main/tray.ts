@@ -15,7 +15,7 @@ export function createTray(): Tray {
   const iconPath = path.join(__dirname, '../../resources/icon.png');
   
   // Create a fallback icon if the file doesn't exist
-  let icon: nativeImage;
+  let icon: Electron.NativeImage;
   try {
     icon = nativeImage.createFromPath(iconPath);
     if (icon.isEmpty()) {
@@ -42,7 +42,7 @@ export function createTray(): Tray {
 /**
  * Create a default icon programmatically
  */
-function createDefaultIcon(): nativeImage {
+function createDefaultIcon(): Electron.NativeImage {
   // Create a simple 16x16 icon
   const size = 16;
   const canvas = Buffer.alloc(size * size * 4);

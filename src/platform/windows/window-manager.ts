@@ -2,7 +2,7 @@
 
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import { screen, BrowserWindow } from 'electron';
+import { screen } from 'electron';
 import { IWindowManager } from '../index';
 import { WindowInfo } from '../../shared/types';
 import { WINDOW_LAYOUTS } from '../../shared/constants';
@@ -12,6 +12,24 @@ import * as os from 'os';
 
 const execAsync = promisify(exec);
 
+/**
+ * Escapes a string for safe use in PowerShell single-quoted strings.
+ * In single-quoted strings, only the single quote character needs escaping (doubled).
+ */
+function escapePowerShellString(input: string): string {
+  if (input === null || input === undefined) return '';
+  // In PowerShell single-quoted strings, only ' needs to be escaped as ''
+  return String(input).replace(/'/g, "''");
+}
+
+/**
+ * Validates that a windowId is a valid numeric handle.
+ * Window handles should only contain digits.
+ */
+function isValidWindowId(windowId: string): boolean {
+  return /^\d+$/.test(windowId);
+}
+
 // Track the last focused window that wasn't our own app
 let lastFocusedExternalWindowId: string | null = null;
 
@@ -19,9 +37,6 @@ export class WindowsWindowManager implements IWindowManager {
   
   async listWindows(): Promise<WindowInfo[]> {
     try {
-      // Get our own process ID to filter out our windows
-      const ourPid = process.pid;
-      
       // PowerShell script to get all visible windows using Win32 API
       const script = `
 Add-Type @"
@@ -182,6 +197,11 @@ public class WindowInfo {
       let targetHandle: string | null = null;
 
       if (params.windowId) {
+        // Validate windowId is a valid numeric handle to prevent injection
+        if (!isValidWindowId(params.windowId)) {
+          console.error('Invalid window ID format');
+          return false;
+        }
         targetHandle = params.windowId;
       } else {
         const windows = await this.listWindows();
@@ -225,6 +245,12 @@ public class WindowInfo {
 
   async moveWindow(params: { windowId: string; x?: number; y?: number; width?: number; height?: number }): Promise<boolean> {
     try {
+      // Validate windowId is a valid numeric handle to prevent injection
+      if (!isValidWindowId(params.windowId)) {
+        console.error('Invalid window ID format');
+        return false;
+      }
+
       // Build the script with proper values
       const xVal = params.x !== undefined ? params.x : '$rect.Left';
       const yVal = params.y !== undefined ? params.y : '$rect.Top';
@@ -288,6 +314,11 @@ $height = ${heightVal}
   async closeWindow(params: { windowId?: string; appName?: string }): Promise<boolean> {
     try {
       if (params.windowId) {
+        // Validate windowId is a valid numeric handle to prevent injection
+        if (!isValidWindowId(params.windowId)) {
+          console.error('Invalid window ID format');
+          return false;
+        }
         const script = `
 Add-Type @"
 using System;
@@ -307,7 +338,9 @@ public class Win32Close {
           try { fs.unlinkSync(scriptPath); } catch {}
         }
       } else if (params.appName) {
-        await execAsync(`powershell -NoProfile -Command "Stop-Process -Name '${params.appName}' -ErrorAction SilentlyContinue"`);
+        // Sanitize appName to prevent command injection
+        const safeAppName = escapePowerShellString(params.appName);
+        await execAsync(`powershell -NoProfile -Command "Stop-Process -Name '${safeAppName}' -ErrorAction SilentlyContinue"`);
       }
       return true;
     } catch (error) {
@@ -318,6 +351,12 @@ public class Win32Close {
 
   async minimizeWindow(windowId: string): Promise<boolean> {
     try {
+      // Validate windowId is a valid numeric handle to prevent injection
+      if (!isValidWindowId(windowId)) {
+        console.error('Invalid window ID format');
+        return false;
+      }
+
       const script = `
 Add-Type @"
 using System;
@@ -345,6 +384,12 @@ public class Win32Minimize {
 
   async maximizeWindow(windowId: string): Promise<boolean> {
     try {
+      // Validate windowId is a valid numeric handle to prevent injection
+      if (!isValidWindowId(windowId)) {
+        console.error('Invalid window ID format');
+        return false;
+      }
+
       const script = `
 Add-Type @"
 using System;
