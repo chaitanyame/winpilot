@@ -4,6 +4,8 @@ import { Send, X, History, Square, Monitor, Plug, Trash2 } from 'lucide-react';
 import { MessageStream } from './MessageStream';
 import { MCPServersPanel } from './MCPServersPanel';
 import { useCopilot } from '../hooks/useCopilot';
+import { ConfirmationDialog } from './ConfirmationDialog';
+import type { PermissionRequest, PermissionResponse } from '../../shared/types';
 
 interface HistoryItem {
   id: string;
@@ -16,6 +18,7 @@ export function CommandPalette() {
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [showMcpPanel, setShowMcpPanel] = useState(false);
+  const [permissionRequest, setPermissionRequest] = useState<PermissionRequest | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   
   const {
@@ -30,6 +33,14 @@ export function CommandPalette() {
   // Load history on mount
   useEffect(() => {
     loadHistory();
+  }, []);
+
+  // Listen for permission requests from the main process
+  useEffect(() => {
+    const unsubscribe = window.electronAPI.onPermissionRequest((request) => {
+      setPermissionRequest(request);
+    });
+    return unsubscribe;
   }, []);
 
   // Focus input when window is shown
@@ -88,6 +99,11 @@ export function CommandPalette() {
 
   const handleClose = () => {
     window.electronAPI.hide();
+  };
+
+  const respondPermission = (response: PermissionResponse) => {
+    window.electronAPI.respondPermission(response);
+    setPermissionRequest(null);
   };
 
   return (
@@ -240,6 +256,19 @@ export function CommandPalette() {
 
       {/* MCP Servers Panel */}
       <MCPServersPanel isOpen={showMcpPanel} onClose={() => setShowMcpPanel(false)} />
+
+      {/* Permission Dialog */}
+      <ConfirmationDialog
+        request={permissionRequest}
+        onApprove={(options) => {
+          if (!permissionRequest) return;
+          respondPermission({ id: permissionRequest.id, allowed: true, options });
+        }}
+        onDeny={() => {
+          if (!permissionRequest) return;
+          respondPermission({ id: permissionRequest.id, allowed: false });
+        }}
+      />
     </motion.div>
   );
 }

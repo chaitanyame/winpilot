@@ -3,6 +3,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import { IPC_CHANNELS } from '../shared/types';
 import { MCP_IPC_CHANNELS } from '../shared/mcp-types';
+import type { PermissionRequest, PermissionResponse } from '../shared/types';
 
 // Expose protected methods to the renderer process
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -73,6 +74,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
     const handler = (_: unknown, error?: { error: string }) => callback(error);
     ipcRenderer.on(IPC_CHANNELS.COPILOT_STREAM_END, handler);
     return () => ipcRenderer.removeListener(IPC_CHANNELS.COPILOT_STREAM_END, handler);
+  },
+
+  // Permissions
+  onPermissionRequest: (callback: (request: PermissionRequest) => void) => {
+    const handler = (_: unknown, request: PermissionRequest) => callback(request);
+    ipcRenderer.on(IPC_CHANNELS.APP_PERMISSION_REQUEST, handler);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.APP_PERMISSION_REQUEST, handler);
+  },
+  respondPermission: (response: PermissionResponse) => {
+    ipcRenderer.send(IPC_CHANNELS.APP_PERMISSION_RESPONSE, response);
   },
 
   // Shell
@@ -158,6 +169,9 @@ export interface ElectronAPI {
   clearSession: () => Promise<void>;
   onStreamChunk: (callback: (chunk: string) => void) => () => void;
   onStreamEnd: (callback: (error?: { error: string }) => void) => () => void;
+
+  onPermissionRequest: (callback: (request: PermissionRequest) => void) => () => void;
+  respondPermission: (response: PermissionResponse) => void;
   
   openExternal: (url: string) => Promise<void>;
   openPath: (path: string) => Promise<void>;

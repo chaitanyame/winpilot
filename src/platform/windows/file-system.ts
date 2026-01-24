@@ -3,6 +3,7 @@
 import * as fs from 'fs';
 import * as fsPromises from 'fs/promises';
 import * as path from 'path';
+import * as os from 'os';
 import { promisify } from 'util';
 import { exec } from 'child_process';
 import { shell } from 'electron';
@@ -34,6 +35,8 @@ function escapePowerShellString(input: string): string {
 export class WindowsFileSystem implements IFileSystem {
 
   async listFiles(params: { path: string; recursive?: boolean; filter?: FileFilter }): Promise<FileInfo[]> {
+    // Validate root path is allowed before listing
+    assertPathAllowed(params.path, 'list');
     try {
       const results: FileInfo[] = [];
       await this.walkDirectory(params.path, params.recursive ?? false, params.filter, results);
@@ -127,8 +130,11 @@ export class WindowsFileSystem implements IFileSystem {
 
   async searchFiles(params: { query: string; startPath?: string; maxResults?: number }): Promise<FileInfo[]> {
     try {
-      const startPath = params.startPath || process.env.USERPROFILE || 'C:\\';
+      const startPath = params.startPath || process.env.USERPROFILE || os.homedir();
       const maxResults = params.maxResults || 100;
+
+      // Validate start path is allowed
+      assertPathAllowed(startPath, 'search');
 
       // Sanitize user input to prevent command injection
       const safeStartPath = escapePowerShellString(startPath);
@@ -280,8 +286,10 @@ export class WindowsFileSystem implements IFileSystem {
 
   async renameFile(params: { path: string; newName: string }): Promise<boolean> {
     try {
+      assertPathAllowed(params.path, 'rename');
       const dir = path.dirname(params.path);
       const newPath = path.join(dir, params.newName);
+      assertPathAllowed(newPath, 'rename');
       await rename(params.path, newPath);
       return true;
     } catch (error) {
@@ -292,6 +300,7 @@ export class WindowsFileSystem implements IFileSystem {
 
   async createFolder(folderPath: string): Promise<boolean> {
     try {
+      assertPathAllowed(folderPath, 'create folder');
       await mkdir(folderPath, { recursive: true });
       return true;
     } catch (error) {
@@ -322,6 +331,7 @@ export class WindowsFileSystem implements IFileSystem {
 
   async getFileInfo(filePath: string): Promise<FileInfo> {
     try {
+      assertPathAllowed(filePath, 'info');
       const stats = await stat(filePath);
       return this.createFileInfo(path.basename(filePath), filePath, stats, stats.isDirectory());
     } catch (error) {

@@ -9,6 +9,7 @@ import { updateHotkey } from './hotkeys';
 import { updateTrayMenu } from './tray';
 import { getPlatformAdapter } from '../platform';
 import { copilotController } from '../copilot/client';
+import { cancelAllPendingPermissions, handlePermissionResponse } from './permission-gate';
 
 /**
  * Setup all IPC handlers
@@ -201,6 +202,10 @@ export function setupIpcHandlers(): void {
 
     try {
       console.log('[IPC] Starting sendMessage generator...');
+
+      // Ensure tool execution can request permissions from the active window.
+      copilotController.setActiveWebContents(sender);
+
       // Use the AsyncGenerator pattern from copilotController
       for await (const streamEvent of copilotController.sendMessage(message)) {
         // Check if sender is still valid before sending
@@ -244,15 +249,24 @@ export function setupIpcHandlers(): void {
           error: error instanceof Error ? error.message : 'Unknown error' 
         });
       }
+    } finally {
+      cancelAllPendingPermissions();
+      copilotController.setActiveWebContents(null);
     }
   });
 
   ipcMain.handle(IPC_CHANNELS.COPILOT_CANCEL, async () => {
+    cancelAllPendingPermissions();
     await copilotController.cancel();
   });
 
   ipcMain.handle(IPC_CHANNELS.COPILOT_CLEAR_SESSION, async () => {
     await copilotController.clearHistory();
+  });
+
+  // Permission handlers
+  ipcMain.on(IPC_CHANNELS.APP_PERMISSION_RESPONSE, (_, response) => {
+    handlePermissionResponse(response);
   });
 
   // Shell handlers

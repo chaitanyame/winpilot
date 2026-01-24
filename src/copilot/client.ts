@@ -6,6 +6,7 @@ import { desktopCommanderTools } from '../tools';
 import { logger } from '../utils/logger';
 import { getEnabledMcpServers } from '../main/store';
 import { MCPLocalServerConfig, MCPRemoteServerConfig } from '../shared/mcp-types';
+import { setActiveWebContents } from '../main/permission-gate';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -94,6 +95,14 @@ export class CopilotController {
     const cliPath = findCopilotCliPath();
     logger.copilot('Creating CopilotClient...', { cliPath });
     this.client = new CopilotClient(cliPath ? { cliPath } : undefined);
+  }
+
+  /**
+   * Set the active renderer WebContents for permission prompts.
+   * This is set per user message invocation.
+   */
+  setActiveWebContents(contents: import('electron').WebContents | null): void {
+    setActiveWebContents(contents);
   }
 
   /**

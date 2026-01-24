@@ -1,17 +1,26 @@
 import { motion, AnimatePresence } from 'framer-motion';
 import { AlertTriangle, Check } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import type { PermissionRequest } from '../../shared/types';
 
 interface Props {
   request: PermissionRequest | null;
-  onApprove: () => void;
+  onApprove: (options?: Record<string, unknown>) => void;
   onDeny: () => void;
 }
 
 export function ConfirmationDialog({ request, onApprove, onDeny }: Props) {
+  const [moveToTrash, setMoveToTrash] = useState(true);
+
+  useEffect(() => {
+    // Reset per-request state
+    setMoveToTrash(true);
+  }, [request?.id]);
+
   if (!request) return null;
 
   const isDangerous = request.level === 'dangerous';
+  const isDelete = request.tool === 'files.delete';
 
   return (
     <AnimatePresence>
@@ -85,12 +94,13 @@ export function ConfirmationDialog({ request, onApprove, onDeny }: Props) {
             </div>
 
             {/* Options for delete operations */}
-            {request.tool === 'files.delete' && (
+            {isDelete && (
               <div className="mb-4 space-y-2">
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
                     type="checkbox"
-                    defaultChecked
+                    checked={moveToTrash}
+                    onChange={(e) => setMoveToTrash(e.target.checked)}
                     className="w-4 h-4 rounded border-dark-300 text-primary-500 focus:ring-primary-500"
                   />
                   <span className="text-sm text-dark-600 dark:text-dark-400">
@@ -112,7 +122,7 @@ export function ConfirmationDialog({ request, onApprove, onDeny }: Props) {
               Cancel
             </button>
             <button
-              onClick={onApprove}
+              onClick={() => onApprove(isDelete ? { moveToTrash } : undefined)}
               className={`px-4 py-2 rounded-lg text-white transition-colors flex items-center gap-2 ${
                 isDangerous
                   ? 'bg-red-500 hover:bg-red-600'

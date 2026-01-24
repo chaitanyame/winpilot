@@ -18,7 +18,8 @@ export function wrapZodSchema<T extends ZodTypeAny>(schema: T): T & { toJSONSche
       $refStrategy: 'none'
     });
     // Remove the $schema property as the SDK doesn't need it
-    const { $schema, ...rest } = jsonSchema as Record<string, unknown>;
+    const { $schema: _schema, ...rest } = jsonSchema as Record<string, unknown>;
+    void _schema;
     return rest;
   };
   

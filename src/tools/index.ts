@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { getUnifiedAdapter } from '../platform/unified-adapter';
 import { logger } from '../utils/logger';
 import { p } from '../utils/zod-wrapper';
+import { requestPermissionForTool } from '../main/permission-gate';
 
 const adapter = getUnifiedAdapter();
 
@@ -117,6 +118,13 @@ export const windowCloseTool = defineTool('window_close', {
     appName: z.string().optional().describe('The application name to close')
   }),
   handler: async ({ windowId, appName }) => {
+    const decision = await requestPermissionForTool('window_close', { windowId, appName }, [
+      windowId ? `windowId: ${windowId}` : undefined,
+      appName ? `appName: ${appName}` : undefined,
+    ].filter(Boolean) as string[]);
+    if (!decision.allowed) {
+      return 'Cancelled: permission denied.';
+    }
     const result = await adapter.closeWindow({ windowId, appName });
     return result.success
       ? `Successfully closed window`
@@ -226,6 +234,15 @@ export const filesMoveTool = defineTool('files_move', {
     overwrite: z.boolean().optional().describe('Overwrite existing files')
   }),
   handler: async ({ source, destination, overwrite }) => {
+    const sources: string[] = [source];
+    const decision = await requestPermissionForTool('files_move', { source, destination, overwrite }, [
+      `destination: ${destination}`,
+      ...sources.slice(0, 10).map(s => `source: ${s}`),
+      sources.length > 10 ? `...and ${sources.length - 10} more` : undefined,
+    ].filter(Boolean) as string[]);
+    if (!decision.allowed) {
+      return 'Cancelled: permission denied.';
+    }
     const result = await adapter.moveFiles({ source, destination, overwrite });
     return result.success
       ? `Successfully moved ${source} to ${destination}`
@@ -241,6 +258,15 @@ export const filesCopyTool = defineTool('files_copy', {
     overwrite: z.boolean().optional().describe('Overwrite existing files')
   }),
   handler: async ({ source, destination, overwrite }) => {
+    const sources: string[] = [source];
+    const decision = await requestPermissionForTool('files_copy', { source, destination, overwrite }, [
+      `destination: ${destination}`,
+      ...sources.slice(0, 10).map(s => `source: ${s}`),
+      sources.length > 10 ? `...and ${sources.length - 10} more` : undefined,
+    ].filter(Boolean) as string[]);
+    if (!decision.allowed) {
+      return 'Cancelled: permission denied.';
+    }
     const result = await adapter.copyFiles({ source, destination, overwrite });
     return result.success
       ? `Successfully copied ${source} to ${destination}`
@@ -255,7 +281,19 @@ export const filesDeleteTool = defineTool('files_delete', {
     moveToTrash: z.boolean().optional().default(true).describe('Move to trash instead of permanent delete')
   }),
   handler: async ({ paths, moveToTrash }) => {
-    const result = await adapter.deleteFiles({ paths, moveToTrash });
+    const decision = await requestPermissionForTool('files_delete', { paths, moveToTrash }, [
+      ...paths.slice(0, 10).map(p => p),
+      paths.length > 10 ? `...and ${paths.length - 10} more` : undefined,
+    ].filter(Boolean) as string[]);
+    if (!decision.allowed) {
+      return 'Cancelled: permission denied.';
+    }
+
+    const effectiveMoveToTrash = typeof decision.options?.moveToTrash === 'boolean'
+      ? (decision.options.moveToTrash as boolean)
+      : moveToTrash;
+
+    const result = await adapter.deleteFiles({ paths, moveToTrash: effectiveMoveToTrash });
     return result.success
       ? `Successfully deleted ${paths.length} file(s)`
       : `Failed to delete files: ${result.error}`;
@@ -269,6 +307,13 @@ export const filesRenameTool = defineTool('files_rename', {
     newName: z.string().describe('New name')
   }),
   handler: async ({ path, newName }) => {
+    const decision = await requestPermissionForTool('files_rename', { path, newName }, [
+      `path: ${path}`,
+      `newName: ${newName}`,
+    ]);
+    if (!decision.allowed) {
+      return 'Cancelled: permission denied.';
+    }
     const result = await adapter.renameFile({ path, newName });
     return result.success
       ? `Successfully renamed to ${newName}`
@@ -282,6 +327,10 @@ export const filesCreateFolderTool = defineTool('files_create_folder', {
     path: z.string().describe('Path for the new folder')
   }),
   handler: async ({ path }) => {
+    const decision = await requestPermissionForTool('files_create_folder', { path }, [`path: ${path}`]);
+    if (!decision.allowed) {
+      return 'Cancelled: permission denied.';
+    }
     const result = await adapter.createFolder({ path });
     return result.success
       ? `Successfully created folder ${path}`
@@ -329,6 +378,15 @@ export const filesWriteTool = defineTool('files_write', {
     append: z.boolean().optional().default(false).describe('Append to file instead of overwriting')
   }),
   handler: async ({ path, content, encoding, append }) => {
+    const preview = content.length > 200 ? content.slice(0, 200) + '…' : content;
+    const decision = await requestPermissionForTool('files_write', { path, encoding, append }, [
+      `path: ${path}`,
+      `append: ${append}`,
+      `content preview: ${preview}`,
+    ]);
+    if (!decision.allowed) {
+      return 'Cancelled: permission denied.';
+    }
     const result = await adapter.writeFile({ path, content, encoding, append });
     return result.success
       ? `Successfully wrote to ${path}`
@@ -382,6 +440,10 @@ export const appsQuitTool = defineTool('apps_quit', {
     force: z.boolean().optional().describe('Force quit the application')
   }),
   handler: async ({ name, force }) => {
+    const decision = await requestPermissionForTool('apps_quit', { name, force }, [`app: ${name}`, force ? 'force: true' : undefined].filter(Boolean) as string[]);
+    if (!decision.allowed) {
+      return 'Cancelled: permission denied.';
+    }
     const result = await adapter.quitApp({ name, force });
     return result.success
       ? `Successfully quit ${name}`
@@ -479,6 +541,10 @@ export const systemLockTool = defineTool('system_lock', {
   description: 'Lock the screen',
   parameters: p({}),
   handler: async () => {
+    const decision = await requestPermissionForTool('system_lock', {}, ['Lock screen']);
+    if (!decision.allowed) {
+      return 'Cancelled: permission denied.';
+    }
     const result = await adapter.lockScreen();
     return result.success
       ? 'Screen locked'
@@ -490,6 +556,10 @@ export const systemSleepTool = defineTool('system_sleep', {
   description: 'Put the computer to sleep',
   parameters: p({}),
   handler: async () => {
+    const decision = await requestPermissionForTool('system_sleep', {}, ['Put computer to sleep']);
+    if (!decision.allowed) {
+      return 'Cancelled: permission denied.';
+    }
     const result = await adapter.sleep();
     return result.success
       ? 'Computer going to sleep'
@@ -544,6 +614,14 @@ export const processKillTool = defineTool('process_kill', {
     force: z.boolean().optional().describe('Force kill the process')
   }),
   handler: async ({ pid, name, force }) => {
+    const decision = await requestPermissionForTool('process_kill', { pid, name, force }, [
+      pid !== undefined ? `pid: ${pid}` : undefined,
+      name ? `name: ${name}` : undefined,
+      force ? 'force: true' : undefined,
+    ].filter(Boolean) as string[]);
+    if (!decision.allowed) {
+      return 'Cancelled: permission denied.';
+    }
     const result = await adapter.killProcess({ pid, name, force });
     return result.success
       ? `Successfully killed process ${pid || name}`

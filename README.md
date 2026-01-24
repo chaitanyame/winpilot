@@ -3,10 +3,16 @@
 > Control your entire desktop with natural language using AI
 
 ![Version](https://img.shields.io/badge/version-0.1.0-blue.svg)
-![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)
+![Platform](https://img.shields.io/badge/platform-Windows%20(alpha)-lightgrey.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 
-Desktop Commander is a cross-platform system tray application that lets you control your desktop environment through natural language. It acts as an AI layer over your operating system, enabling you to manage windows, files, applications, and system settings through conversation.
+Desktop Commander is a system tray application that lets you control your desktop environment through natural language. It acts as an AI layer over your operating system, enabling you to manage windows, files, applications, and system settings through conversation.
+
+This repository is currently a **public alpha**:
+
+- Windows is the primary supported platform today.
+- macOS/Linux adapters exist but are not feature complete yet.
+- Destructive actions require confirmation in the UI, but you should still treat this as experimental software.
 
 ## ✨ Features
 
@@ -21,23 +27,36 @@ Desktop Commander is a cross-platform system tray application that lets you cont
 
 ### Prerequisites
 
-- Node.js 18+ 
-- npm or yarn
-- A GitHub API key
+- Node.js 18+
+- npm
+- Windows 10/11 (alpha)
+- GitHub Copilot CLI installed (the `copilot` command)
+	- The app uses the Copilot CLI via `@github/copilot-sdk`.
+	- Install guide: https://docs.github.com/en/copilot/how-tos/set-up/install-copilot-cli
+	- On Windows, Desktop Commander will try to auto-detect the Copilot CLI that ships with VS Code's Copilot extension, but you can also install the Copilot CLI separately and ensure `copilot` is on your `PATH`.
+	- Optional: set `COPILOT_CLI_PATH` to point to your Copilot CLI executable.
+
+### Sign in to Copilot CLI (required)
+
+Before running Desktop Commander, you must authenticate the Copilot CLI at least once on this machine.
+
+1. Run `copilot`
+2. At the prompt, run `/login` and complete the browser sign-in flow
+
+If you skip this step, the app won't be able to start a Copilot session.
 
 ### Installation
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/desktop-commander.git
+git clone https://github.com/burkeholland/desktop-commander.git
 cd desktop-commander
 
 # Install dependencies
 npm install
 
-# Set up environment variables
+# (Optional) environment variables
 cp .env.example .env
-# Edit .env and add your GitHub API key
 
 # Run in development mode
 npm run electron:dev
@@ -126,6 +145,11 @@ Desktop Commander uses a permission system to protect your system:
 | **Sensitive** | Always confirm | Move/delete files, quit apps |
 | **Dangerous** | Explicit approval required | Kill processes, system sleep |
 
+Notes:
+
+- File operations are constrained to the user home directory and temp directory by default.
+- You can also configure MCP servers; only enable servers you trust.
+
 ## 🎨 Customization
 
 Settings are stored locally and can be configured:
@@ -147,7 +171,7 @@ Settings are stored locally and can be configured:
 
 ## 🤝 Contributing
 
-Contributions are welcome! Please read our contributing guidelines before submitting PRs.
+Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) before submitting PRs.
 
 ## 📄 License
 

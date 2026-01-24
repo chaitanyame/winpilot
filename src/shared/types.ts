@@ -110,6 +110,12 @@ export interface PermissionRequest {
   details?: string[];
 }
 
+export interface PermissionResponse {
+  id: string;
+  allowed: boolean;
+  options?: Record<string, unknown>;
+}
+
 // Settings
 export interface Settings {
   hotkey: string;
