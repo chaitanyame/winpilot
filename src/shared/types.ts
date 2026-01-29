@@ -255,13 +255,35 @@ export interface ToolDefinition {
   permissionLevel: PermissionLevel;
 }
 
+// Available AI models via GitHub Copilot
+export type AIModel =
+  // Claude models (Anthropic) - Excellent for agentic tasks
+  | 'claude-sonnet-4.5'      // Best balance for agentic loops
+  | 'claude-opus-4.5'        // Most capable, slower
+  | 'claude-haiku-4.5'       // Fastest Claude
+  | 'claude-sonnet-4'        // Previous generation
+  // GPT-5 models (OpenAI) - Latest generation
+  | 'gpt-5.2-codex'          // Code-focused, latest
+  | 'gpt-5.2'                // General purpose, latest
+  | 'gpt-5.1-codex-max'      // Extended context
+  | 'gpt-5.1-codex'          // Code-focused
+  | 'gpt-5.1'                // General purpose
+  | 'gpt-5'                  // Base GPT-5
+  // GPT-4 models (OpenAI) - Previous generation
+  | 'gpt-4.1'                // GPT-4 Turbo
+  | 'gpt-4o'                 // GPT-4 Optimized
+  | 'gpt-4o-mini'            // Fastest, cheapest
+  | 'gpt-3.5-turbo'          // Budget option
+  // Gemini models (Google)
+  | 'gemini-3-pro-preview';  // Experimental
+
 // Agentic Loop Configuration
 export interface AgenticLoopConfig {
   enabled: boolean;
   maxIterations: number;
   maxTotalTimeMinutes: number;
   iterationTimeoutSeconds: number;
-  model?: 'gpt-4.1' | 'gpt-4o' | 'gpt-4o-mini' | 'gpt-3.5-turbo';
+  model?: AIModel;
 }
 
 // Tool execution record for agentic loop
