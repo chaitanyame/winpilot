@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { X, Moon, Sun, Monitor, Keyboard, Shield, FolderClosed } from 'lucide-react';
-import type { Settings } from '../../shared/types';
+import { X, Moon, Sun, Monitor, Keyboard, Shield, FolderClosed, Brain } from 'lucide-react';
+import type { Settings, AIModel } from '../../shared/types';
 
 interface Props {
   isOpen: boolean;
@@ -10,7 +10,7 @@ interface Props {
 
 export function SettingsPanel({ isOpen, onClose }: Props) {
   const [settings, setSettings] = useState<Settings | null>(null);
-  const [activeTab, setActiveTab] = useState<'general' | 'permissions' | 'safety'>('general');
+  const [activeTab, setActiveTab] = useState<'general' | 'ai' | 'permissions' | 'safety'>('general');
 
   useEffect(() => {
     if (isOpen) {
@@ -43,6 +43,7 @@ export function SettingsPanel({ isOpen, onClose }: Props) {
 
   const tabs = [
     { id: 'general', label: 'General', icon: Monitor },
+    { id: 'ai', label: 'AI Model', icon: Brain },
     { id: 'permissions', label: 'Permissions', icon: Shield },
     { id: 'safety', label: 'Safety', icon: FolderClosed },
   ] as const;
@@ -174,6 +175,137 @@ export function SettingsPanel({ isOpen, onClose }: Props) {
                     </span>
                   </label>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'ai' && (
+            <div className="space-y-6">
+              {/* AI Model Selection */}
+              <div>
+                <label className="block text-sm font-medium text-dark-700 dark:text-dark-300 mb-2">
+                  <Brain className="w-4 h-4 inline mr-2" />
+                  AI Model
+                </label>
+                <select
+                  value={settings.agenticLoop?.model || 'gpt-5'}
+                  onChange={(e) => updateSettings({
+                    agenticLoop: {
+                      ...settings.agenticLoop,
+                      model: e.target.value as AIModel
+                    }
+                  })}
+                  className="w-full px-4 py-2 rounded-lg border border-dark-200 dark:border-dark-600
+                           bg-white dark:bg-dark-700 text-dark-700 dark:text-dark-300"
+                >
+                  <optgroup label="⭐ Recommended">
+                    <option value="claude-sonnet-4.5">Claude Sonnet 4.5 (Best for agentic loops)</option>
+                    <option value="gpt-5.1-codex">GPT-5.1 Codex (Best for code/desktop)</option>
+                    <option value="claude-haiku-4.5">Claude Haiku 4.5 (Fastest)</option>
+                  </optgroup>
+
+                  <optgroup label="🤖 Claude Models">
+                    <option value="claude-opus-4.5">Claude Opus 4.5 (Most capable)</option>
+                    <option value="claude-sonnet-4">Claude Sonnet 4 (Previous gen)</option>
+                  </optgroup>
+
+                  <optgroup label="✨ GPT-5 Models">
+                    <option value="gpt-5.2-codex">GPT-5.2 Codex (Latest code)</option>
+                    <option value="gpt-5.2">GPT-5.2 (Latest general)</option>
+                    <option value="gpt-5.1-codex-max">GPT-5.1 Codex Max (Extended context)</option>
+                    <option value="gpt-5.1">GPT-5.1 (Enhanced)</option>
+                    <option value="gpt-5">GPT-5 (Base)</option>
+                  </optgroup>
+
+                  <optgroup label="📦 GPT-4 Models">
+                    <option value="gpt-4.1">GPT-4.1 Turbo</option>
+                    <option value="gpt-4o">GPT-4o (Optimized)</option>
+                    <option value="gpt-4o-mini">GPT-4o Mini (Fast & cheap)</option>
+                    <option value="gpt-3.5-turbo">GPT-3.5 Turbo (Budget)</option>
+                  </optgroup>
+
+                  <optgroup label="🔮 Other Models">
+                    <option value="gemini-3-pro-preview">Gemini 3 Pro (Preview)</option>
+                  </optgroup>
+                </select>
+                <p className="text-xs text-dark-500 mt-2">
+                  Choose the AI model for Desktop Commander's agentic loop
+                </p>
+              </div>
+
+              {/* Agentic Loop Settings */}
+              <div>
+                <label className="block text-sm font-medium text-dark-700 dark:text-dark-300 mb-2">
+                  Agentic Loop Settings
+                </label>
+
+                <div className="space-y-3">
+                  {/* Enable/Disable Loop */}
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={settings.agenticLoop?.enabled ?? true}
+                      onChange={(e) => updateSettings({
+                        agenticLoop: {
+                          ...settings.agenticLoop,
+                          enabled: e.target.checked
+                        }
+                      })}
+                      className="w-4 h-4 rounded border-dark-300 text-primary-500"
+                    />
+                    <span className="text-sm text-dark-600 dark:text-dark-400">
+                      Enable agentic loop (multi-turn iteration)
+                    </span>
+                  </label>
+
+                  {/* Max Iterations */}
+                  <div>
+                    <label className="block text-xs text-dark-600 dark:text-dark-400 mb-1">
+                      Max Iterations: {settings.agenticLoop?.maxIterations || 10}
+                    </label>
+                    <input
+                      type="range"
+                      min="3"
+                      max="20"
+                      value={settings.agenticLoop?.maxIterations || 10}
+                      onChange={(e) => updateSettings({
+                        agenticLoop: {
+                          ...settings.agenticLoop,
+                          maxIterations: parseInt(e.target.value)
+                        }
+                      })}
+                      className="w-full"
+                    />
+                  </div>
+
+                  {/* Max Time */}
+                  <div>
+                    <label className="block text-xs text-dark-600 dark:text-dark-400 mb-1">
+                      Max Time: {settings.agenticLoop?.maxTotalTimeMinutes || 15} minutes
+                    </label>
+                    <input
+                      type="range"
+                      min="5"
+                      max="30"
+                      value={settings.agenticLoop?.maxTotalTimeMinutes || 15}
+                      onChange={(e) => updateSettings({
+                        agenticLoop: {
+                          ...settings.agenticLoop,
+                          maxTotalTimeMinutes: parseInt(e.target.value)
+                        }
+                      })}
+                      className="w-full"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Model Info */}
+              <div className="p-3 bg-primary-50 dark:bg-primary-900/20 rounded-lg">
+                <p className="text-xs text-primary-700 dark:text-primary-300">
+                  💡 <strong>Tip:</strong> Claude Sonnet 4.5 and GPT-5.1 Codex offer the best balance
+                  of speed, reasoning, and tool use for autonomous desktop control.
+                </p>
               </div>
             </div>
           )}
