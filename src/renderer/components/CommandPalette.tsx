@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { motion } from 'framer-motion';
-import { Send, X, History, Square, Monitor, Plug, Trash2 } from 'lucide-react';
+import { Send, X, History, Square, Monitor, Plug, Trash2, Settings } from 'lucide-react';
 import { MessageStream } from './MessageStream';
 import { MCPServersPanel } from './MCPServersPanel';
+import { SettingsPanel } from './SettingsPanel';
 import { useCopilot } from '../hooks/useCopilot';
 import { ConfirmationDialog } from './ConfirmationDialog';
 import type { PermissionRequest, PermissionResponse } from '../../shared/types';
@@ -18,6 +19,7 @@ export function CommandPalette() {
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [showMcpPanel, setShowMcpPanel] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [permissionRequest, setPermissionRequest] = useState<PermissionRequest | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   
@@ -123,6 +125,13 @@ export function CommandPalette() {
           </span>
         </div>
         <div className="no-drag flex items-center gap-1">
+          <button
+            onClick={() => setShowSettings(true)}
+            className="p-1.5 rounded-lg hover:bg-dark-100 dark:hover:bg-dark-800 text-dark-500 hover:text-dark-700 dark:hover:text-dark-300 transition-colors"
+            title="Settings"
+          >
+            <Settings className="w-4 h-4" />
+          </button>
           <button
             onClick={() => setShowMcpPanel(true)}
             className="p-1.5 rounded-lg hover:bg-dark-100 dark:hover:bg-dark-800 text-dark-500 hover:text-dark-700 dark:hover:text-dark-300 transition-colors"
@@ -256,6 +265,9 @@ export function CommandPalette() {
 
       {/* MCP Servers Panel */}
       <MCPServersPanel isOpen={showMcpPanel} onClose={() => setShowMcpPanel(false)} />
+
+      {/* Settings Panel */}
+      <SettingsPanel isOpen={showSettings} onClose={() => setShowSettings(false)} />
 
       {/* Permission Dialog */}
       <ConfirmationDialog
