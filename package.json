@@ -13,6 +13,7 @@
   "homepage": "https://github.com/burkeholland/desktop-commander#readme",
   "scripts": {
     "dev": "vite",
+    "dev:wait": "wait-on http://localhost:5173 && npm run dev",
     "build": "tsc && vite build && electron-builder",
     "build:win": "npm run build -- --win",
     "build:mac": "npm run build -- --mac",

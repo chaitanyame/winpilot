@@ -194,20 +194,20 @@ export function setupIpcHandlers(): void {
   // Copilot handlers
   ipcMain.handle(IPC_CHANNELS.COPILOT_SEND_MESSAGE, async (event, message: string) => {
     const sender = event.sender;
-    
+
     console.log('[IPC] Received message:', message);
-    
+
     // Add to history
     addToHistory(message);
 
     try {
-      console.log('[IPC] Starting sendMessage generator...');
+      console.log('[IPC] Starting sendMessageWithLoop generator...');
 
       // Ensure tool execution can request permissions from the active window.
       copilotController.setActiveWebContents(sender);
 
-      // Use the AsyncGenerator pattern from copilotController
-      for await (const streamEvent of copilotController.sendMessage(message)) {
+      // Use the AsyncGenerator pattern with agentic loop
+      for await (const streamEvent of copilotController.sendMessageWithLoop(message)) {
         // Check if sender is still valid before sending
         if (sender.isDestroyed()) {
           console.log('[IPC] Sender destroyed, stopping stream');
@@ -222,6 +222,16 @@ export function setupIpcHandlers(): void {
             sender.send(IPC_CHANNELS.COPILOT_STREAM_CHUNK, streamEvent.content);
             break;
           case 'tool_result':
+            sender.send(IPC_CHANNELS.COPILOT_STREAM_CHUNK, streamEvent.content);
+            break;
+          case 'iteration_start':
+            sender.send(IPC_CHANNELS.COPILOT_STREAM_CHUNK, streamEvent.content || '');
+            break;
+          case 'iteration_complete':
+            // Just log, no need to send to UI unless we want progress indicators
+            console.log('[IPC] Iteration complete:', streamEvent.iterationNumber);
+            break;
+          case 'loop_complete':
             sender.send(IPC_CHANNELS.COPILOT_STREAM_CHUNK, streamEvent.content);
             break;
           case 'error':
@@ -245,8 +255,8 @@ export function setupIpcHandlers(): void {
     } catch (error) {
       console.error('Copilot error:', error);
       if (!sender.isDestroyed()) {
-        sender.send(IPC_CHANNELS.COPILOT_STREAM_END, { 
-          error: error instanceof Error ? error.message : 'Unknown error' 
+        sender.send(IPC_CHANNELS.COPILOT_STREAM_END, {
+          error: error instanceof Error ? error.message : 'Unknown error'
         });
       }
     } finally {

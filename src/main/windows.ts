@@ -51,31 +51,39 @@ export async function createCommandWindow(): Promise<BrowserWindow> {
     // In development, load from Vite dev server with retry logic
     let loaded = false;
     let attempts = 0;
-    const maxAttempts = 10;
+    const maxAttempts = 15;
+    const retryDelay = 500; // Start with shorter delay
 
     while (!loaded && attempts < maxAttempts && commandWindow && !commandWindow.isDestroyed()) {
       attempts++;
       try {
-        console.log(`Attempt ${attempts}: Loading ${devServerUrl}...`);
-        await commandWindow.loadURL(devServerUrl);
+        console.log(`Attempt ${attempts}/${maxAttempts}: Loading ${devServerUrl}...`);
+
+        // Set a timeout for the load operation
+        const loadPromise = commandWindow.loadURL(devServerUrl);
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Load timeout')), 5000)
+        );
+
+        await Promise.race([loadPromise, timeoutPromise]);
         loaded = true;
         console.log('Successfully loaded dev server');
-        // Open DevTools in development
-        commandWindow.webContents.openDevTools({ mode: 'detach' });
+
+        // Uncomment to open DevTools automatically in development
+        // commandWindow.webContents.openDevTools({ mode: 'detach' });
       } catch (error) {
-        console.log(`Attempt ${attempts} failed:`, (error as Error).message);
+        const errorMsg = (error as Error).message;
+        console.log(`Attempt ${attempts} failed: ${errorMsg}`);
+
         if (attempts < maxAttempts) {
-          // Wait before retry
-          await new Promise(resolve => setTimeout(resolve, 1000));
+          // Exponential backoff for retries
+          const delay = retryDelay * Math.min(attempts, 3);
+          console.log(`Waiting ${delay}ms before retry...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
         } else {
-          console.error('All attempts failed, trying file fallback...');
-          // Fallback to file if dev server not available
-          try {
-            const filePath = path.join(__dirname, '../renderer/index.html');
-            await commandWindow.loadFile(filePath);
-          } catch (fileError) {
-            console.error('File fallback also failed:', fileError);
-          }
+          console.error('All attempts to load dev server failed');
+          console.error('Make sure Vite dev server is running on', devServerUrl);
+          throw new Error(`Failed to load dev server after ${maxAttempts} attempts`);
         }
       }
     }

@@ -1,7 +1,7 @@
 // macOS Platform Adapter (Stub - To be implemented in Phase 5)
 
-import { IPlatformAdapter, IWindowManager, IFileSystem, IApps, ISystem, IProcess } from '../index';
-import { WindowInfo, FileInfo, AppInfo, ProcessInfo } from '../../shared/types';
+import { IPlatformAdapter, IWindowManager, IFileSystem, IApps, ISystem, IProcess, INetwork, IServices } from '../index';
+import { WindowInfo, FileInfo, AppInfo, ProcessInfo, SystemInfoData, NetworkInfoData, NetworkTestResult, ServiceInfo } from '../../shared/types';
 
 class MacOSWindowManager implements IWindowManager {
   async listWindows(): Promise<WindowInfo[]> {
@@ -44,6 +44,9 @@ class MacOSSystem implements ISystem {
   async doNotDisturb(): Promise<boolean> { return false; }
   async lockScreen(): Promise<boolean> { return false; }
   async sleep(): Promise<boolean> { return false; }
+  async getSystemInfo(): Promise<SystemInfoData> {
+    throw new Error('Not implemented');
+  }
 }
 
 class MacOSProcess implements IProcess {
@@ -53,6 +56,20 @@ class MacOSProcess implements IProcess {
   async getTopProcesses(): Promise<ProcessInfo[]> { return []; }
 }
 
+class MacOSNetwork implements INetwork {
+  async getNetworkInfo(): Promise<NetworkInfoData> {
+    throw new Error('Not implemented');
+  }
+  async testNetwork(): Promise<NetworkTestResult> {
+    throw new Error('Not implemented');
+  }
+}
+
+class MacOSServices implements IServices {
+  async listServices(): Promise<ServiceInfo[]> { return []; }
+  async controlService(): Promise<boolean> { return false; }
+}
+
 const macosAdapter: IPlatformAdapter = {
   platform: 'macos',
   windowManager: new MacOSWindowManager(),
@@ -60,6 +77,8 @@ const macosAdapter: IPlatformAdapter = {
   apps: new MacOSApps(),
   system: new MacOSSystem(),
   process: new MacOSProcess(),
+  network: new MacOSNetwork(),
+  services: new MacOSServices(),
 };
 
 export default macosAdapter;

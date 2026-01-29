@@ -10,6 +10,12 @@ export default defineConfig({
     electron([
       {
         entry: 'src/main/index.ts',
+        onstart({ startup }) {
+          // Wait a bit to ensure dev server is ready before starting Electron
+          setTimeout(() => {
+            startup();
+          }, 1000);
+        },
         vite: {
           build: {
             outDir: 'dist/main',
@@ -46,5 +52,9 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist/renderer',
+  },
+  server: {
+    port: 5173,
+    strictPort: true, // Fail if port is already in use instead of trying another
   },
 });

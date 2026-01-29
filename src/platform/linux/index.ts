@@ -1,7 +1,7 @@
 // Linux Platform Adapter (Stub - To be implemented in Phase 6)
 
-import { IPlatformAdapter, IWindowManager, IFileSystem, IApps, ISystem, IProcess } from '../index';
-import { WindowInfo, FileInfo, AppInfo, ProcessInfo } from '../../shared/types';
+import { IPlatformAdapter, IWindowManager, IFileSystem, IApps, ISystem, IProcess, INetwork, IServices } from '../index';
+import { WindowInfo, FileInfo, AppInfo, ProcessInfo, SystemInfoData, NetworkInfoData, NetworkTestResult, ServiceInfo } from '../../shared/types';
 
 class LinuxWindowManager implements IWindowManager {
   async listWindows(): Promise<WindowInfo[]> {
@@ -44,6 +44,9 @@ class LinuxSystem implements ISystem {
   async doNotDisturb(): Promise<boolean> { return false; }
   async lockScreen(): Promise<boolean> { return false; }
   async sleep(): Promise<boolean> { return false; }
+  async getSystemInfo(): Promise<SystemInfoData> {
+    throw new Error('Not implemented');
+  }
 }
 
 class LinuxProcess implements IProcess {
@@ -53,6 +56,20 @@ class LinuxProcess implements IProcess {
   async getTopProcesses(): Promise<ProcessInfo[]> { return []; }
 }
 
+class LinuxNetwork implements INetwork {
+  async getNetworkInfo(): Promise<NetworkInfoData> {
+    throw new Error('Not implemented');
+  }
+  async testNetwork(): Promise<NetworkTestResult> {
+    throw new Error('Not implemented');
+  }
+}
+
+class LinuxServices implements IServices {
+  async listServices(): Promise<ServiceInfo[]> { return []; }
+  async controlService(): Promise<boolean> { return false; }
+}
+
 const linuxAdapter: IPlatformAdapter = {
   platform: 'linux',
   windowManager: new LinuxWindowManager(),
@@ -60,6 +77,8 @@ const linuxAdapter: IPlatformAdapter = {
   apps: new LinuxApps(),
   system: new LinuxSystem(),
   process: new LinuxProcess(),
+  network: new LinuxNetwork(),
+  services: new LinuxServices(),
 };
 
 export default linuxAdapter;

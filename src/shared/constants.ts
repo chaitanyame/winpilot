@@ -41,6 +41,12 @@ export const DEFAULT_SETTINGS = {
     protectedPaths: ['C:\\Windows', 'C:\\Program Files', 'C:\\Program Files (x86)'],
     requireConfirmAbove: 10,
   },
+  agenticLoop: {
+    enabled: true,
+    maxIterations: 10,
+    maxTotalTimeMinutes: 15,
+    iterationTimeoutSeconds: 120,
+  },
 };
 
 // Protected paths that cannot be modified

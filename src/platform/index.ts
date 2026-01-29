@@ -1,6 +1,6 @@
 // Platform Adapter Interface and Factory
 
-import type { WindowInfo, FileInfo, FileFilter, AppInfo, ProcessInfo } from '../shared/types';
+import type { WindowInfo, FileInfo, FileFilter, AppInfo, ProcessInfo, SystemInfoData, NetworkInfoData, NetworkTestResult, ServiceInfo } from '../shared/types';
 
 // Window Manager Interface
 export interface IWindowManager {
@@ -44,6 +44,7 @@ export interface ISystem {
   doNotDisturb(params: { action: 'status' | 'on' | 'off'; duration?: number }): Promise<boolean>;
   lockScreen(): Promise<boolean>;
   sleep(): Promise<boolean>;
+  getSystemInfo(params: { sections?: string[] }): Promise<SystemInfoData>;
 }
 
 // Process Interface
@@ -54,6 +55,18 @@ export interface IProcess {
   getTopProcesses(params: { resource: 'cpu' | 'memory'; limit?: number }): Promise<ProcessInfo[]>;
 }
 
+// Network Interface
+export interface INetwork {
+  getNetworkInfo(params: { includeInactive?: boolean }): Promise<NetworkInfoData>;
+  testNetwork(params: { test: 'ping' | 'dns' | 'connectivity'; host?: string; count?: number }): Promise<NetworkTestResult>;
+}
+
+// Services Interface
+export interface IServices {
+  listServices(params: { filter?: string; nameContains?: string }): Promise<ServiceInfo[]>;
+  controlService(params: { service: string; action: 'start' | 'stop' | 'restart' }): Promise<boolean>;
+}
+
 // Complete Platform Adapter Interface
 export interface IPlatformAdapter {
   readonly platform: 'windows' | 'macos' | 'linux';
@@ -62,6 +75,8 @@ export interface IPlatformAdapter {
   readonly apps: IApps;
   readonly system: ISystem;
   readonly process: IProcess;
+  readonly network: INetwork;
+  readonly services: IServices;
 }
 
 // Import all platform adapters statically

@@ -738,6 +738,289 @@ export const powerpointCreateTool = defineTool('powerpoint_create', {
 });
 
 // ============================================================================
+// System Information Tools
+// ============================================================================
+
+export const systemInfoTool = defineTool('system_info', {
+  description: 'Get comprehensive system information including CPU, RAM, disk, OS, hardware, uptime, and battery status',
+  parameters: p({
+    sections: z.array(z.string()).optional().describe('Specific sections to retrieve (optional)')
+  }),
+  handler: async ({ sections }) => {
+    const result = await adapter.getSystemInfo({ sections });
+    if (!result.success) {
+      return `Failed to get system info: ${result.error}`;
+    }
+
+    const info = result.data?.data;
+    if (!info) {
+      return 'No system information available';
+    }
+
+    let output = '=== System Information ===\n\n';
+
+    // CPU
+    output += `CPU: ${info.cpu.name}\n`;
+    output += `  Cores: ${info.cpu.cores}\n`;
+    output += `  Speed: ${info.cpu.speedMHz} MHz\n`;
+    output += `  Usage: ${info.cpu.usagePercent}%\n\n`;
+
+    // Memory
+    output += `Memory:\n`;
+    output += `  Total: ${info.memory.totalGB} GB\n`;
+    output += `  Used: ${info.memory.usedGB} GB\n`;
+    output += `  Usage: ${info.memory.usagePercent}%\n\n`;
+
+    // Disk
+    output += `Disk:\n`;
+    info.disk.forEach(d => {
+      output += `  ${d.drive} - ${d.totalGB} GB total, ${d.freeGB} GB free (${d.usagePercent}% used)\n`;
+    });
+    output += '\n';
+
+    // OS
+    output += `OS: ${info.os.name}\n`;
+    output += `  Version: ${info.os.version}\n`;
+    output += `  Build: ${info.os.build}\n`;
+    output += `  Architecture: ${info.os.architecture}\n\n`;
+
+    // Uptime
+    output += `Uptime: ${info.uptime.formatted}\n\n`;
+
+    // Battery (if present)
+    if (info.battery?.isPresent) {
+      output += `Battery:\n`;
+      output += `  Charge: ${info.battery.chargePercent}%\n`;
+      output += `  Charging: ${info.battery.isCharging ? 'Yes' : 'No'}\n`;
+    }
+
+    return output;
+  }
+});
+
+// ============================================================================
+// Network Tools
+// ============================================================================
+
+export const networkInfoTool = defineTool('network_info', {
+  description: 'Get network information including IP addresses, WiFi status, gateway, DNS, and network interfaces',
+  parameters: p({
+    includeInactive: z.boolean().optional().describe('Include inactive network interfaces')
+  }),
+  handler: async ({ includeInactive }) => {
+    const result = await adapter.getNetworkInfo({ includeInactive });
+    if (!result.success) {
+      return `Failed to get network info: ${result.error}`;
+    }
+
+    const info = result.data?.data;
+    if (!info) {
+      return 'No network information available';
+    }
+
+    let output = '=== Network Information ===\n\n';
+
+    output += `Hostname: ${info.hostname}\n\n`;
+
+    // WiFi
+    if (info.wifi) {
+      output += `WiFi:\n`;
+      output += `  SSID: ${info.wifi.ssid}\n`;
+      output += `  Signal: ${info.wifi.signalStrength}%\n`;
+      output += `  Channel: ${info.wifi.channel}\n\n`;
+    }
+
+    // Interfaces
+    output += `Network Interfaces:\n`;
+    info.interfaces.forEach(iface => {
+      output += `  ${iface.name} (${iface.type})\n`;
+      output += `    Status: ${iface.status}\n`;
+      if (iface.ipv4) {
+        output += `    IPv4: ${iface.ipv4}\n`;
+      }
+      output += `    MAC: ${iface.mac}\n`;
+    });
+    output += '\n';
+
+    // DNS
+    if (info.primaryDns.length > 0) {
+      output += `Primary DNS Servers:\n`;
+      info.primaryDns.forEach(dns => {
+        output += `  ${dns}\n`;
+      });
+    }
+
+    return output;
+  }
+});
+
+export const networkTestTool = defineTool('network_test', {
+  description: 'Test network connectivity with ping, DNS resolution, or connectivity checks',
+  parameters: p({
+    test: z.enum(['ping', 'dns', 'connectivity']).describe('Type of test to run'),
+    host: z.string().optional().describe('Target host (defaults: ping=8.8.8.8, dns=google.com, connectivity=www.google.com)'),
+    count: z.number().optional().describe('Number of ping attempts (default: 4, only for ping test)')
+  }),
+  handler: async ({ test, host, count }) => {
+    const result = await adapter.testNetwork({ test, host, count });
+    if (!result.success) {
+      return `Failed to test network: ${result.error}`;
+    }
+
+    const testResult = result.data?.result;
+    if (!testResult) {
+      return 'No test results available';
+    }
+
+    let output = `=== Network Test: ${test.toUpperCase()} ===\n\n`;
+
+    if (testResult.success) {
+      output += `Status: SUCCESS\n\n`;
+      output += `Details:\n`;
+      Object.entries(testResult.details).forEach(([key, value]) => {
+        output += `  ${key}: ${value}\n`;
+      });
+    } else {
+      output += `Status: FAILED\n\n`;
+      output += `Details:\n`;
+      Object.entries(testResult.details).forEach(([key, value]) => {
+        output += `  ${key}: ${value}\n`;
+      });
+    }
+
+    return output;
+  }
+});
+
+// ============================================================================
+// Service Tools
+// ============================================================================
+
+export const serviceListTool = defineTool('service_list', {
+  description: 'List Windows services with their status and startup type',
+  parameters: p({
+    filter: z.enum(['running', 'stopped', 'all']).optional().describe('Filter services by status'),
+    nameContains: z.string().optional().describe('Filter services by name substring')
+  }),
+  handler: async ({ filter, nameContains }) => {
+    const result = await adapter.listServices({ filter, nameContains });
+    if (!result.success) {
+      return `Failed to list services: ${result.error}`;
+    }
+
+    const services = result.data?.services || [];
+    if (services.length === 0) {
+      return 'No services found matching criteria';
+    }
+
+    let output = `=== Services (${services.length} found) ===\n\n`;
+
+    services.forEach(svc => {
+      output += `${svc.displayName}\n`;
+      output += `  Name: ${svc.name}\n`;
+      output += `  Status: ${svc.status}\n`;
+      output += `  Startup: ${svc.startupType}\n`;
+      if (svc.description) {
+        output += `  Description: ${svc.description}\n`;
+      }
+      output += '\n';
+    });
+
+    return output;
+  }
+});
+
+export const serviceControlTool = defineTool('service_control', {
+  description: 'Start, stop, or restart a Windows service',
+  parameters: p({
+    service: z.string().describe('Service name to control'),
+    action: z.enum(['start', 'stop', 'restart']).describe('Action to perform')
+  }),
+  handler: async ({ service, action }) => {
+    const decision = await requestPermissionForTool('service_control', { service, action }, [
+      `service: ${service}`,
+      `action: ${action}`
+    ]);
+    if (!decision.allowed) {
+      return 'Cancelled: permission denied.';
+    }
+
+    const result = await adapter.controlService({ service, action });
+    return result.success
+      ? `Successfully ${action}ed service: ${service}`
+      : `Failed to ${action} service: ${result.error}`;
+  }
+});
+
+// ============================================================================
+// Troubleshooting Tools
+// ============================================================================
+
+// Helper function to get diagnostic plan based on category
+function getDiagnosticPlan(category: string): string[] {
+  const plans: Record<string, string[]> = {
+    network: ['network_info', 'network_test (connectivity)', 'service_list (DNS, DHCP)'],
+    performance: ['system_info', 'process_top (cpu)', 'process_top (memory)'],
+    audio: ['system_info (hardware)', 'service_list (Windows Audio)', 'system_volume (get)'],
+    display: ['system_info (hardware)', 'system_brightness (get)'],
+    storage: ['system_info (disk)', 'files_list (temp folders)'],
+    application: ['apps_list (running)', 'process_list', 'system_info'],
+    system: ['system_info', 'service_list', 'network_info'],
+    other: ['system_info', 'network_info', 'process_list']
+  };
+  return plans[category] || plans.other;
+}
+
+export const troubleshootStartTool = defineTool('troubleshoot_start', {
+  description: 'Initialize a troubleshooting session. Use when user describes a problem.',
+  parameters: p({
+    issue: z.string().describe('User description of the problem'),
+    category: z.enum(['network', 'performance', 'audio', 'display', 'storage', 'application', 'system', 'other']).optional().describe('Problem category')
+  }),
+  handler: async ({ issue, category }) => {
+    const diagnosticPlan = getDiagnosticPlan(category || 'other');
+
+    return JSON.stringify({
+      sessionId: `ts-${Date.now()}`,
+      issue,
+      category: category || 'other',
+      suggestedDiagnostics: diagnosticPlan,
+      instructions: 'Run the suggested diagnostic tools, then use troubleshoot_propose_fix to suggest solutions.'
+    }, null, 2);
+  }
+});
+
+export const troubleshootProposeFix = defineTool('troubleshoot_propose_fix', {
+  description: 'Propose fixes after running diagnostics. Structures fixes by risk level for user approval.',
+  parameters: p({
+    sessionId: z.string().describe('Troubleshooting session ID'),
+    diagnosis: z.string().describe('Summary of findings'),
+    fixes: z.array(z.object({
+      title: z.string().describe('Fix title'),
+      description: z.string().describe('Detailed description of the fix'),
+      riskLevel: z.enum(['safe', 'moderate', 'risky']).describe('Risk level of the fix'),
+      commands: z.array(z.object({
+        tool: z.string().describe('Tool name to use'),
+        params: z.record(z.unknown()).describe('Tool parameters'),
+        description: z.string().describe('Description of what this command does')
+      })).describe('Commands to execute for this fix')
+    })).describe('Array of proposed fixes')
+  }),
+  handler: async ({ sessionId, diagnosis, fixes }) => {
+    return JSON.stringify({
+      sessionId,
+      diagnosis,
+      fixes: fixes.map((f, i) => ({
+        ...f,
+        id: `fix-${i}`,
+        riskIndicator: f.riskLevel === 'safe' ? '[SAFE]' : f.riskLevel === 'moderate' ? '[MODERATE]' : '[RISKY]'
+      })),
+      instructions: 'Present fixes to user. For approved fixes, execute commands in order. Risky fixes require explicit confirmation.'
+    }, null, 2);
+  }
+});
+
+// ============================================================================
 // Export all tools
 // ============================================================================
 
@@ -785,5 +1068,16 @@ export const desktopCommanderTools = [
   clipboardClearTool,
   // Office
   officeCreateTool,
-  powerpointCreateTool
+  powerpointCreateTool,
+  // System Information
+  systemInfoTool,
+  // Network
+  networkInfoTool,
+  networkTestTool,
+  // Services
+  serviceListTool,
+  serviceControlTool,
+  // Troubleshooting
+  troubleshootStartTool,
+  troubleshootProposeFix
 ];

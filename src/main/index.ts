@@ -13,20 +13,36 @@ import { initStore } from './store';
 if (!app.isPackaged) {
   // Use a unique dev directory in the project folder itself
   const devUserData = path.join(__dirname, '../../.electron-dev');
-  
-  // Ensure directory exists
+
+  // Ensure directory exists with proper permissions
   try {
     if (!fs.existsSync(devUserData)) {
       fs.mkdirSync(devUserData, { recursive: true });
     }
+    // Create cache directories with proper permissions
+    const cacheDir = path.join(devUserData, 'Cache');
+    const gpuCacheDir = path.join(devUserData, 'GPUCache');
+    if (!fs.existsSync(cacheDir)) {
+      fs.mkdirSync(cacheDir, { recursive: true });
+    }
+    if (!fs.existsSync(gpuCacheDir)) {
+      fs.mkdirSync(gpuCacheDir, { recursive: true });
+    }
   } catch (e) {
     console.log('Could not create dev userData dir:', e);
   }
-  
+
   app.setPath('userData', devUserData);
-  
+
   // Disable GPU to avoid cache permission issues
   app.disableHardwareAcceleration();
+
+  // Disable all caching in development to avoid permission issues
+  app.commandLine.appendSwitch('disable-http-cache');
+  app.commandLine.appendSwitch('disable-gpu-shader-disk-cache');
+  app.commandLine.appendSwitch('disk-cache-size', '1');
+  app.commandLine.appendSwitch('media-cache-size', '1');
+  app.commandLine.appendSwitch('disable-application-cache');
 }
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling

@@ -13,12 +13,15 @@ import * as os from 'os';
 
 // Types for streaming events exposed to the UI
 export interface StreamEvent {
-  type: 'text' | 'tool_call' | 'tool_result' | 'error' | 'done';
+  type: 'text' | 'tool_call' | 'tool_result' | 'error' | 'done' | 'iteration_start' | 'iteration_complete' | 'loop_complete';
   content?: string;
   toolName?: string;
   toolArgs?: Record<string, unknown>;
   result?: unknown;
   error?: string;
+  iterationNumber?: number;
+  totalIterations?: number;
+  turnSummary?: import('../shared/types').TurnSummary;
 }
 
 // Types for session event data to avoid unsafe 'as any' casts
@@ -90,6 +93,11 @@ export class CopilotController {
   private isStreaming = false;
   private mcpServersChanged = false;
   private isSending = false;
+  // Agentic loop state
+  private currentTurnResults: import('../shared/types').ToolExecutionRecord[] = [];
+  private currentAssistantResponse = '';
+  private loopStartTime = 0;
+  private currentIteration = 0;
 
   constructor() {
     const cliPath = findCopilotCliPath();
@@ -235,6 +243,268 @@ export class CopilotController {
   }
 
   /**
+   * Send a message with agentic loop - iterates until task completion
+   * This is the primary entry point that wraps sendMessage in a loop
+   */
+  async *sendMessageWithLoop(
+    message: string,
+    config?: Partial<import('../shared/types').AgenticLoopConfig>
+  ): AsyncGenerator<StreamEvent> {
+    const { getSettings } = await import('../main/store');
+    const settings = getSettings();
+    const loopConfig = { ...settings.agenticLoop, ...config };
+
+    if (!loopConfig.enabled) {
+      // If loop disabled, fall back to single-turn
+      yield* this.sendMessage(message);
+      return;
+    }
+
+    logger.copilot('Starting agentic loop', { config: loopConfig });
+
+    this.loopStartTime = Date.now();
+    this.currentIteration = 0;
+    const maxTotalTimeMs = loopConfig.maxTotalTimeMinutes * 60 * 1000;
+    const toolFailureCount = new Map<string, number>();
+    let consecutiveNoToolTurns = 0;
+
+    try {
+      while (this.currentIteration < loopConfig.maxIterations) {
+        // Check total time limit
+        const elapsed = Date.now() - this.loopStartTime;
+        if (elapsed > maxTotalTimeMs) {
+          logger.copilot('Max total time exceeded', { elapsed, maxTotalTimeMs });
+          yield {
+            type: 'text',
+            content: '\n\n⏱️ Time limit reached. Task may be incomplete.',
+          };
+          break;
+        }
+
+        this.currentIteration++;
+        this.currentTurnResults = [];
+        this.currentAssistantResponse = '';
+        this.isStreaming = false;
+
+        logger.copilot('Starting iteration', { iteration: this.currentIteration });
+
+        yield {
+          type: 'iteration_start',
+          iterationNumber: this.currentIteration,
+          totalIterations: loopConfig.maxIterations,
+          content: this.currentIteration === 1
+            ? undefined
+            : `\n\n🔄 **Iteration ${this.currentIteration}/${loopConfig.maxIterations}**\n`,
+        };
+
+        // Execute one turn
+        const turnMessage = this.currentIteration === 1
+          ? message
+          : this.generateFollowUpMessage(this.currentTurnResults);
+
+        logger.copilot('Sending turn message', {
+          iteration: this.currentIteration,
+          messagePreview: turnMessage.substring(0, 200)
+        });
+
+        // Stream events from this turn
+        for await (const event of this.sendMessage(turnMessage)) {
+          yield event;
+        }
+
+        // Analyze turn results
+        const turnSummary = this.analyzeTurn(
+          this.currentIteration,
+          this.currentTurnResults,
+          this.currentAssistantResponse
+        );
+
+        logger.copilot('Turn complete', {
+          hasToolCalls: turnSummary.hasToolCalls,
+          signalsCompletion: turnSummary.signalsCompletion,
+          toolCount: turnSummary.toolsExecuted.length,
+        });
+
+        yield {
+          type: 'iteration_complete',
+          iterationNumber: this.currentIteration,
+          turnSummary,
+        };
+
+        // Check completion criteria
+        if (turnSummary.signalsCompletion) {
+          logger.copilot('Agent signaled completion');
+          yield {
+            type: 'loop_complete',
+            content: '\n\n✅ Task complete.',
+          };
+          break;
+        }
+
+        // Track consecutive turns without tools
+        if (!turnSummary.hasToolCalls) {
+          consecutiveNoToolTurns++;
+          if (consecutiveNoToolTurns >= 2) {
+            logger.copilot('No tool calls in 2 consecutive turns, ending loop');
+            yield {
+              type: 'loop_complete',
+              content: '\n\n✅ No further actions needed.',
+            };
+            break;
+          }
+        } else {
+          consecutiveNoToolTurns = 0;
+        }
+
+        // Circuit breaker: check for repeated tool failures
+        for (const toolResult of turnSummary.toolsExecuted) {
+          if (!toolResult.success) {
+            const count = (toolFailureCount.get(toolResult.toolName) || 0) + 1;
+            toolFailureCount.set(toolResult.toolName, count);
+
+            if (count >= 3) {
+              logger.copilot('Circuit breaker triggered', {
+                tool: toolResult.toolName,
+                failures: count
+              });
+              yield {
+                type: 'error',
+                error: `Tool ${toolResult.toolName} failed ${count} times consecutively. Stopping to prevent infinite loop.`,
+              };
+              return;
+            }
+          } else {
+            // Reset failure count on success
+            toolFailureCount.set(toolResult.toolName, 0);
+          }
+        }
+
+        // Check if we've reached max iterations
+        if (this.currentIteration >= loopConfig.maxIterations) {
+          logger.copilot('Max iterations reached');
+          yield {
+            type: 'text',
+            content: '\n\n⚠️ Maximum iterations reached. Task may be incomplete.',
+          };
+          break;
+        }
+      }
+
+      logger.copilot('Agentic loop complete', {
+        iterations: this.currentIteration,
+        totalTime: Date.now() - this.loopStartTime,
+      });
+
+    } catch (error) {
+      logger.error('Copilot', 'Error in agentic loop', error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      yield {
+        type: 'error',
+        error: errorMessage,
+        content: `❌ Error: ${errorMessage}`,
+      };
+    }
+  }
+
+  /**
+   * Analyze a turn to determine if task is complete and what tools were executed
+   */
+  private analyzeTurn(
+    iterationNumber: number,
+    toolResults: import('../shared/types').ToolExecutionRecord[],
+    assistantResponse: string
+  ): import('../shared/types').TurnSummary {
+    // Check if agent signals completion
+    const completionSignals = [
+      'task complete',
+      'task is complete',
+      'finished',
+      'all done',
+      'completed successfully',
+      'done!',
+    ];
+
+    const lowerResponse = assistantResponse.toLowerCase();
+    const signalsCompletion = completionSignals.some(signal => lowerResponse.includes(signal));
+
+    return {
+      iterationNumber,
+      toolsExecuted: toolResults,
+      assistantResponse,
+      hasToolCalls: toolResults.length > 0,
+      signalsCompletion,
+      timestamp: new Date(),
+    };
+  }
+
+  /**
+   * Generate a follow-up message with tool execution results
+   */
+  private generateFollowUpMessage(
+    toolResults: import('../shared/types').ToolExecutionRecord[]
+  ): string {
+    if (toolResults.length === 0) {
+      return `No tools were executed in the previous turn.
+
+If the task is complete, respond with "Task complete" and summarize what was accomplished.
+If more actions are needed, explain what should happen next.`;
+    }
+
+    const resultsText = toolResults.map((result, index) => {
+      const status = result.success ? '✅ Success' : '❌ Failed';
+      const resultPreview = result.success
+        ? this.formatToolResult(result.result)
+        : `Error: ${result.error}`;
+
+      return `${index + 1}. **${result.toolName}** → ${status}${resultPreview ? `\n   ${resultPreview}` : ''}`;
+    }).join('\n\n');
+
+    return `The following actions were executed:
+
+${resultsText}
+
+Based on these results:
+- If the task is complete, respond with "Task complete" and summarize what was accomplished.
+- If errors occurred, decide whether to retry with different parameters, try an alternative approach, or report the issue.
+- If more actions are needed, decide what to do next and execute the necessary tools.
+
+What should we do next?`;
+  }
+
+  /**
+   * Format tool result for display in follow-up message
+   */
+  private formatToolResult(result: unknown): string {
+    if (result === null || result === undefined) {
+      return '';
+    }
+
+    if (typeof result === 'string') {
+      return result.length > 200 ? result.substring(0, 200) + '...' : result;
+    }
+
+    if (typeof result === 'object') {
+      // Handle arrays
+      if (Array.isArray(result)) {
+        if (result.length === 0) return 'Empty list';
+        return `Found ${result.length} items`;
+      }
+
+      // Handle objects with common properties
+      const obj = result as Record<string, unknown>;
+      if ('success' in obj) return obj.success ? 'Success' : 'Failed';
+      if ('message' in obj) return String(obj.message);
+      if ('count' in obj) return `Count: ${obj.count}`;
+
+      // Fallback to JSON
+      const json = JSON.stringify(result);
+      return json.length > 200 ? json.substring(0, 200) + '...' : json;
+    }
+
+    return String(result);
+  }
+
+  /**
    * Send a message and stream the response
    * Uses an AsyncGenerator to yield streaming events
    */
@@ -273,6 +543,8 @@ export class CopilotController {
     this.isComplete = false;
     this.isStreaming = false;
     this.eventResolve = null;
+    // Note: Don't reset currentTurnResults or currentAssistantResponse here
+    // They're managed by sendMessageWithLoop for agentic iterations
 
     logger.copilot('Subscribing to session events...');
     // Subscribe to session events BEFORE sending
@@ -341,6 +613,12 @@ export class CopilotController {
         this.isStreaming = true;
         const deltaData = event.data as MessageDeltaData;
         logger.copilot('Message delta', { content: deltaData.deltaContent?.substring(0, 50) });
+
+        // Accumulate assistant response for analysis
+        if (deltaData.deltaContent) {
+          this.currentAssistantResponse += deltaData.deltaContent;
+        }
+
         streamEvent = {
           type: 'text',
           content: deltaData.deltaContent,
@@ -353,7 +631,12 @@ export class CopilotController {
         // Wait for session.idle to know when all work is complete
         const messageData = event.data as AssistantMessageData;
         logger.copilot('Assistant message', { toolRequestCount: messageData.toolRequests?.length || 0, toolRequests: messageData.toolRequests });
-        
+
+        // Store full assistant response if not streaming
+        if (messageData.content && !this.isStreaming) {
+          this.currentAssistantResponse = messageData.content;
+        }
+
         // If there are tool requests, the SDK will execute them and we'll get
         // tool.execution_start/complete events. Don't mark done yet.
         // If there are no tool requests and we have content, this is a final response.
@@ -388,6 +671,15 @@ export class CopilotController {
         // Tool execution completed
         const toolCompleteData = event.data as ToolExecutionCompleteData;
         logger.copilot('Tool execution complete', { success: toolCompleteData.success, result: toolCompleteData.result, error: toolCompleteData.error });
+
+        // Track tool execution for agentic loop
+        this.currentTurnResults.push({
+          toolName: toolCompleteData.toolCallId,
+          success: toolCompleteData.success,
+          result: toolCompleteData.result?.content,
+          error: toolCompleteData.error?.message,
+        });
+
         streamEvent = {
           type: 'tool_result',
           toolName: toolCompleteData.toolCallId,
@@ -416,7 +708,7 @@ export class CopilotController {
           type: 'done',
         };
         break;
-        
+
       default:
         logger.copilot('Unhandled event type', { type: event.type });
     }
@@ -492,12 +784,52 @@ You MUST use these exact tool names when calling tools:
 
 ${toolList}
 
+## Iterative Task Execution
+
+You operate in an **iterative agentic loop**:
+1. Analyze the user's request and current state
+2. Execute appropriate tools to make progress
+3. Observe the results of tool executions
+4. Determine what to do next based on outcomes
+5. Continue iterating until the task is complete
+
+### After Each Tool Execution
+
+You will receive feedback about what happened:
+- Which tools succeeded or failed
+- The results or errors from each tool
+- Context about what has been accomplished so far
+
+Use this information to:
+- Adjust your approach if tools failed
+- Continue with the next logical step if successful
+- Decide if the task is complete
+
+### Signaling Completion
+
+When you have accomplished the user's goal, **explicitly state "Task complete"** in your response and provide a brief summary of what was done.
+
+Examples:
+- "Task complete. I closed 3 Chrome windows and took a screenshot, which was saved to your Desktop."
+- "Task complete. All PDF files have been moved from Downloads to the PDFs folder in Documents."
+- "Task complete. Firefox has been launched successfully."
+
+### Handling Errors
+
+If a tool fails:
+- Analyze the error message
+- Try an alternative approach if possible
+- If the task cannot be completed, explain why clearly
+
+Do not repeat the same failing action more than 2 times. Try a different strategy or report the limitation.
+
 ## Instructions
 
 When the user asks you to perform an action:
 1. Use the appropriate tool(s) listed above to accomplish the task
 2. Call the tool with the correct parameters
-3. Provide clear, concise feedback about what you did
+3. Observe results and continue iterating until done
+4. Explicitly say "Task complete" when finished
 
 Be helpful, efficient, and precise. When listing information, format it in a readable way.
 If you're unsure about a command, ask for clarification rather than making assumptions.
@@ -506,7 +838,25 @@ Important:
 - For file operations, be careful and confirm destructive actions
 - For window operations, identify windows by their title or application name
 - Always report the results of your actions to the user
-- Use app names like "powerpoint", "powerpnt", or "Microsoft PowerPoint" for apps_launch`;
+- Use app names like "powerpoint", "powerpnt", or "Microsoft PowerPoint" for apps_launch
+- Signal completion explicitly with "Task complete" when done
+
+## Troubleshooting Mode
+
+When user describes a problem (e.g., "WiFi disconnects", "computer is slow"):
+
+1. Use troubleshoot_start to initialize session and get diagnostic plan
+2. Run suggested diagnostic tools (system_info, network_info, etc.)
+3. Analyze results and identify issues
+4. Use troubleshoot_propose_fix to structure solutions by risk:
+   - [SAFE]: No permanent changes (restart service, clear cache)
+   - [MODERATE]: Reversible changes (change settings, update drivers)
+   - [RISKY]: Significant changes (registry edits, reinstalls)
+5. Present fixes to user with clear explanations
+6. Execute only approved fixes, requesting permission for each sensitive operation
+7. Verify if issue is resolved, iterate if needed
+
+Always explain findings in plain language. Never execute risky fixes without explicit approval.`;
   }
 }
 

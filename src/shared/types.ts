@@ -81,6 +81,40 @@ export interface SystemInfo {
   dnd: boolean;
 }
 
+// Detailed system information
+export interface SystemInfoData {
+  cpu: { name: string; cores: number; usagePercent: number; speedMHz: number };
+  memory: { totalGB: number; usedGB: number; usagePercent: number };
+  disk: Array<{ drive: string; totalGB: number; freeGB: number; usagePercent: number }>;
+  os: { name: string; version: string; build: string; architecture: string };
+  uptime: { days: number; hours: number; minutes: number; formatted: string };
+  battery?: { chargePercent: number; isCharging: boolean; isPresent: boolean };
+}
+
+// Network information
+export interface NetworkInfoData {
+  hostname: string;
+  interfaces: Array<{ name: string; type: string; status: string; ipv4?: string; mac: string }>;
+  wifi?: { ssid: string; signalStrength: number; channel: number };
+  primaryDns: string[];
+}
+
+// Network test result
+export interface NetworkTestResult {
+  test: 'ping' | 'dns' | 'connectivity';
+  success: boolean;
+  details: Record<string, unknown>;
+}
+
+// Service information
+export interface ServiceInfo {
+  name: string;
+  displayName: string;
+  status: 'running' | 'stopped' | 'paused';
+  startupType: 'automatic' | 'manual' | 'disabled';
+  description?: string;
+}
+
 // Message types for chat
 export interface Message {
   id: string;
@@ -139,6 +173,7 @@ export interface Settings {
     protectedPaths: string[];
     requireConfirmAbove: number;
   };
+  agenticLoop: AgenticLoopConfig;
 }
 
 // IPC Channel names
@@ -218,4 +253,30 @@ export interface ToolDefinition {
     required?: string[];
   };
   permissionLevel: PermissionLevel;
+}
+
+// Agentic Loop Configuration
+export interface AgenticLoopConfig {
+  enabled: boolean;
+  maxIterations: number;
+  maxTotalTimeMinutes: number;
+  iterationTimeoutSeconds: number;
+}
+
+// Tool execution record for agentic loop
+export interface ToolExecutionRecord {
+  toolName: string;
+  success: boolean;
+  result: unknown;
+  error?: string;
+}
+
+// Summary of a single turn/iteration in the agentic loop
+export interface TurnSummary {
+  iterationNumber: number;
+  toolsExecuted: ToolExecutionRecord[];
+  assistantResponse: string;
+  hasToolCalls: boolean;
+  signalsCompletion: boolean;
+  timestamp: Date;
 }

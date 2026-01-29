@@ -2,7 +2,7 @@
 // Wraps the nested platform adapter with a flat interface and consistent result format
 
 import { getPlatformAdapter as getNestedAdapter, IPlatformAdapter } from './index';
-import type { WindowInfo, FileInfo, FileFilter, AppInfo, ProcessInfo } from '../shared/types';
+import type { WindowInfo, FileInfo, FileFilter, AppInfo, ProcessInfo, SystemInfoData, NetworkInfoData, NetworkTestResult, ServiceInfo } from '../shared/types';
 import { clipboard } from 'electron';
 import { logger } from '../utils/logger';
 
@@ -180,6 +180,30 @@ export interface WriteClipboardParams {
   format?: 'text' | 'html';
 }
 
+export interface GetSystemInfoParams {
+  sections?: string[];
+}
+
+export interface GetNetworkInfoParams {
+  includeInactive?: boolean;
+}
+
+export interface TestNetworkParams {
+  test: 'ping' | 'dns' | 'connectivity';
+  host?: string;
+  count?: number;
+}
+
+export interface ListServicesParams {
+  filter?: string;
+  nameContains?: string;
+}
+
+export interface ControlServiceParams {
+  service: string;
+  action: 'start' | 'stop' | 'restart';
+}
+
 // ============================================================================
 // Result Data Types
 // ============================================================================
@@ -203,6 +227,22 @@ export interface DndResult {
 
 export interface ClipboardResult {
   content: string;
+}
+
+export interface SystemInfoResult {
+  data: SystemInfoData;
+}
+
+export interface NetworkInfoResult {
+  data: NetworkInfoData;
+}
+
+export interface NetworkTestResultData {
+  result: NetworkTestResult;
+}
+
+export interface ServicesListResult {
+  services: ServiceInfo[];
 }
 
 // ============================================================================
@@ -628,6 +668,66 @@ class UnifiedPlatformAdapter {
   async clearClipboard(): Promise<OperationResult<void>> {
     try {
       clipboard.clear();
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: this.formatError(error) };
+    }
+  }
+
+  // ==========================================================================
+  // System Information
+  // ==========================================================================
+
+  async getSystemInfo(params: GetSystemInfoParams = {}): Promise<OperationResult<SystemInfoResult>> {
+    try {
+      const data = await this.adapter.system.getSystemInfo(params);
+      return { success: true, data: { data } };
+    } catch (error) {
+      return { success: false, error: this.formatError(error) };
+    }
+  }
+
+  // ==========================================================================
+  // Network
+  // ==========================================================================
+
+  async getNetworkInfo(params: GetNetworkInfoParams = {}): Promise<OperationResult<NetworkInfoResult>> {
+    try {
+      const data = await this.adapter.network.getNetworkInfo(params);
+      return { success: true, data: { data } };
+    } catch (error) {
+      return { success: false, error: this.formatError(error) };
+    }
+  }
+
+  async testNetwork(params: TestNetworkParams): Promise<OperationResult<NetworkTestResultData>> {
+    try {
+      const result = await this.adapter.network.testNetwork(params);
+      return { success: true, data: { result } };
+    } catch (error) {
+      return { success: false, error: this.formatError(error) };
+    }
+  }
+
+  // ==========================================================================
+  // Services
+  // ==========================================================================
+
+  async listServices(params: ListServicesParams = {}): Promise<OperationResult<ServicesListResult>> {
+    try {
+      const services = await this.adapter.services.listServices(params);
+      return { success: true, data: { services } };
+    } catch (error) {
+      return { success: false, error: this.formatError(error) };
+    }
+  }
+
+  async controlService(params: ControlServiceParams): Promise<OperationResult<void>> {
+    try {
+      const result = await this.adapter.services.controlService(params);
+      if (!result) {
+        return { success: false, error: `Failed to ${params.action} service ${params.service}` };
+      }
       return { success: true };
     } catch (error) {
       return { success: false, error: this.formatError(error) };

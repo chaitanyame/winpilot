@@ -5,6 +5,7 @@ import { promisify } from 'util';
 import * as path from 'path';
 import * as os from 'os';
 import { ISystem } from '../index';
+import type { SystemInfoData } from '../../shared/types';
 
 const execAsync = promisify(exec);
 
@@ -166,6 +167,106 @@ export class WindowsSystem implements ISystem {
     } catch (error) {
       console.error('Error putting system to sleep:', error);
       return false;
+    }
+  }
+
+  async getSystemInfo(_params: { sections?: string[] }): Promise<SystemInfoData> {
+    try {
+      const script = `
+        $cpu = Get-WmiObject Win32_Processor | Select-Object -First 1
+        $os = Get-WmiObject Win32_OperatingSystem
+        $disks = Get-WmiObject Win32_LogicalDisk -Filter "DriveType=3"
+        $battery = Get-WmiObject Win32_Battery
+
+        $uptime = (Get-Date) - $os.ConvertToDateTime($os.LastBootUpTime)
+
+        [PSCustomObject]@{
+          CPU = @{
+            Name = $cpu.Name.Trim()
+            Cores = $cpu.NumberOfCores
+            UsagePercent = [math]::Round($cpu.LoadPercentage, 1)
+            SpeedMHz = $cpu.MaxClockSpeed
+          }
+          Memory = @{
+            TotalGB = [math]::Round($os.TotalVisibleMemorySize / 1MB, 2)
+            UsedGB = [math]::Round(($os.TotalVisibleMemorySize - $os.FreePhysicalMemory) / 1MB, 2)
+            UsagePercent = [math]::Round((($os.TotalVisibleMemorySize - $os.FreePhysicalMemory) / $os.TotalVisibleMemorySize) * 100, 1)
+          }
+          Disk = @($disks | ForEach-Object {
+            @{
+              Drive = $_.DeviceID
+              TotalGB = [math]::Round($_.Size / 1GB, 2)
+              FreeGB = [math]::Round($_.FreeSpace / 1GB, 2)
+              UsagePercent = [math]::Round((($_.Size - $_.FreeSpace) / $_.Size) * 100, 1)
+            }
+          })
+          OS = @{
+            Name = $os.Caption
+            Version = $os.Version
+            Build = $os.BuildNumber
+            Architecture = $os.OSArchitecture
+          }
+          Uptime = @{
+            Days = $uptime.Days
+            Hours = $uptime.Hours
+            Minutes = $uptime.Minutes
+            Formatted = "$($uptime.Days)d $($uptime.Hours)h $($uptime.Minutes)m"
+          }
+          Battery = if ($battery) {
+            @{
+              ChargePercent = $battery.EstimatedChargeRemaining
+              IsCharging = $battery.BatteryStatus -eq 2
+              IsPresent = $true
+            }
+          } else {
+            $null
+          }
+        } | ConvertTo-Json -Depth 10 -Compress
+      `;
+
+      const { stdout } = await execAsync(`powershell -NoProfile -Command "${script.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`);
+
+      const data = JSON.parse(stdout.trim());
+
+      return {
+        cpu: {
+          name: data.CPU.Name || 'Unknown',
+          cores: data.CPU.Cores || 0,
+          usagePercent: data.CPU.UsagePercent || 0,
+          speedMHz: data.CPU.SpeedMHz || 0
+        },
+        memory: {
+          totalGB: data.Memory.TotalGB || 0,
+          usedGB: data.Memory.UsedGB || 0,
+          usagePercent: data.Memory.UsagePercent || 0
+        },
+        disk: (data.Disk || []).map((d: any) => ({
+          drive: d.Drive || '',
+          totalGB: d.TotalGB || 0,
+          freeGB: d.FreeGB || 0,
+          usagePercent: d.UsagePercent || 0
+        })),
+        os: {
+          name: data.OS.Name || 'Windows',
+          version: data.OS.Version || '',
+          build: data.OS.Build || '',
+          architecture: data.OS.Architecture || ''
+        },
+        uptime: {
+          days: data.Uptime.Days || 0,
+          hours: data.Uptime.Hours || 0,
+          minutes: data.Uptime.Minutes || 0,
+          formatted: data.Uptime.Formatted || ''
+        },
+        battery: data.Battery ? {
+          chargePercent: data.Battery.ChargePercent || 0,
+          isCharging: data.Battery.IsCharging || false,
+          isPresent: data.Battery.IsPresent || false
+        } : undefined
+      };
+    } catch (error) {
+      console.error('Error getting system info:', error);
+      throw error;
     }
   }
 }

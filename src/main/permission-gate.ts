@@ -43,7 +43,7 @@ export function getPermissionLevelForTool(toolName: string): PermissionLevel {
   const normalized = normalizeToolNameForPermissions(toolName);
 
   // Hard-coded conservative mapping for alpha.
-  if (normalized === 'files.delete' || normalized === 'process.kill' || normalized === 'system.sleep' || normalized === 'system.lock') {
+  if (normalized === 'files.delete' || normalized === 'process.kill' || normalized === 'system.sleep' || normalized === 'system.lock' || normalized === 'service.control') {
     return PermissionLevel.DANGEROUS;
   }
 
