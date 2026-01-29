@@ -46,7 +46,7 @@ export const DEFAULT_SETTINGS = {
     maxIterations: 10,
     maxTotalTimeMinutes: 15,
     iterationTimeoutSeconds: 120,
-    model: 'claude-sonnet-4.5' as const, // Best for agentic loops - excellent reasoning & tool use
+    model: 'gpt-5' as const, // Base GPT-5 model - fast and capable
   },
 };
 
