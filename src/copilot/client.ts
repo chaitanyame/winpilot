@@ -220,12 +220,17 @@ export class CopilotController {
     ];
 
     try {
+      // Get model from settings (defaults to gpt-4o)
+      const { getSettings } = await import('../main/store');
+      const settings = getSettings();
+      const model = settings.agenticLoop?.model || 'gpt-4o';
+
       // Create session with streaming enabled, custom tools, and MCP servers
       // Tools are defined with defineTool() and already have handlers
       // Use excludedTools to disable built-in CLI tools (availableTools doesn't work for custom tools)
       this.session = await this.client.createSession({
         streaming: true,
-        model: 'gpt-4.1',
+        model, // Configurable model from settings (gpt-4o, gpt-4.1, gpt-4o-mini, etc.)
         tools: desktopCommanderTools,
         excludedTools: excludedBuiltinTools, // Disable built-in CLI tools
         mcpServers: Object.keys(mcpServers).length > 0 ? mcpServers : undefined,

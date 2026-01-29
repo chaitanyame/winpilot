@@ -261,6 +261,7 @@ export interface AgenticLoopConfig {
   maxIterations: number;
   maxTotalTimeMinutes: number;
   iterationTimeoutSeconds: number;
+  model?: 'gpt-4.1' | 'gpt-4o' | 'gpt-4o-mini' | 'gpt-3.5-turbo';
 }
 
 // Tool execution record for agentic loop

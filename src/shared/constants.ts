@@ -46,6 +46,7 @@ export const DEFAULT_SETTINGS = {
     maxIterations: 10,
     maxTotalTimeMinutes: 15,
     iterationTimeoutSeconds: 120,
+    model: 'gpt-4o' as const, // Fast and cost-effective, change to 'gpt-4.1' for better reasoning
   },
 };
 
