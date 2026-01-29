@@ -953,6 +953,71 @@ export const serviceControlTool = defineTool('service_control', {
 });
 
 // ============================================================================
+// Web Search Tools
+// ============================================================================
+
+export const webSearchTool = defineTool('web_search', {
+  description: 'Search the web for current information, news, weather, or any topic. Returns search results with titles, snippets, and URLs.',
+  parameters: p({
+    query: z.string().describe('Search query (e.g., "latest AI news", "weather in Seattle", "Python tutorial")'),
+    maxResults: z.number().optional().default(5).describe('Maximum number of results to return (default: 5)')
+  }),
+  handler: async ({ query, maxResults = 5 }) => {
+    try {
+      // Note: This is a placeholder implementation
+      // For production, integrate with a search API:
+      // - Bing Search API: https://www.microsoft.com/en-us/bing/apis/bing-web-search-api
+      // - Google Custom Search: https://developers.google.com/custom-search/v1/overview
+      // - DuckDuckGo API: https://duckduckgo.com/api
+      // - SerpAPI: https://serpapi.com/
+
+      // For now, return a message indicating how to set up search
+      return JSON.stringify({
+        query,
+        maxResults, // Will be used when API is configured
+        message: 'Web search tool is configured but requires an API key.',
+        instructions: [
+          '1. Choose a search provider (Bing, Google, DuckDuckGo, SerpAPI)',
+          '2. Get an API key from the provider',
+          '3. Add the API key to environment variables or settings',
+          '4. The agentic loop will then be able to search the web autonomously'
+        ],
+        alternative: 'Use the built-in web_fetch tool to fetch specific URLs directly',
+        example: 'web_fetch("https://news.ycombinator.com") to fetch Hacker News'
+      }, null, 2);
+
+      // Example implementation with Bing Search API (commented out):
+      /*
+      const BING_API_KEY = process.env.BING_SEARCH_API_KEY;
+      if (!BING_API_KEY) {
+        return 'Error: BING_SEARCH_API_KEY not configured';
+      }
+
+      const response = await fetch(
+        `https://api.bing.microsoft.com/v7.0/search?q=${encodeURIComponent(query)}&count=${maxResults}`,
+        { headers: { 'Ocp-Apim-Subscription-Key': BING_API_KEY } }
+      );
+
+      const data = await response.json();
+      const results = data.webPages?.value || [];
+
+      return JSON.stringify({
+        query,
+        count: results.length,
+        results: results.map((r: any) => ({
+          title: r.name,
+          snippet: r.snippet,
+          url: r.url
+        }))
+      }, null, 2);
+      */
+    } catch (error) {
+      return `Failed to search web: ${error instanceof Error ? error.message : 'Unknown error'}`;
+    }
+  }
+});
+
+// ============================================================================
 // Troubleshooting Tools
 // ============================================================================
 
@@ -1077,6 +1142,8 @@ export const desktopCommanderTools = [
   // Services
   serviceListTool,
   serviceControlTool,
+  // Web Search
+  webSearchTool,
   // Troubleshooting
   troubleshootStartTool,
   troubleshootProposeFix

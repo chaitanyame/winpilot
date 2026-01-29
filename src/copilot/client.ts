@@ -209,13 +209,14 @@ export class CopilotController {
       mcpServerNames: Object.keys(mcpServers)
     });
 
-    // Exclude ALL built-in CLI tools so only our custom tools are available
+    // Exclude most built-in CLI tools, but keep web_fetch for internet access
     // This list comes from the CLI's "Disabled tools" message in session.info events
     const excludedBuiltinTools = [
       'create', 'edit', 'fetch_copilot_cli_documentation', 'glob', 'grep',
       'list_powershell', 'powershell', 'read_powershell', 'report_intent',
-      'stop_powershell', 'update_todo', 'view', 'web_fetch', 'write_powershell',
+      'stop_powershell', 'update_todo', 'view', 'write_powershell',
       'bash', 'shell', 'terminal', 'execute_command'
+      // Note: 'web_fetch' is now enabled for web search/fetch capabilities
     ];
 
     try {
@@ -783,6 +784,16 @@ What should we do next?`;
 You MUST use these exact tool names when calling tools:
 
 ${toolList}
+
+## Web Access
+
+You also have access to the web_fetch tool for internet searches and fetching web content:
+- web_fetch: Fetch and read content from any web URL. Use this to search for current information, news, documentation, or any online content.
+
+Examples:
+- "What's the latest news?" → Use web_fetch to fetch news sites
+- "Search for Python documentation" → Use web_fetch to fetch docs
+- "What's the weather in Seattle?" → Use web_fetch to fetch weather sites
 
 ## Iterative Task Execution
 
