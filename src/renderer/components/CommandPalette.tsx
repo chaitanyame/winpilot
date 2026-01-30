@@ -731,7 +731,7 @@ export function CommandPalette() {
         <div className="flex items-center gap-3">
           <Monitor className="w-5 h-5 text-purple-400" />
           <span className="font-semibold text-stone-100 dark:text-stone-100">
-            Desktop Commander
+            WinPilot
           </span>
         </div>
         <div className="no-drag flex items-center gap-2">

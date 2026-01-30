@@ -149,13 +149,13 @@ public class WindowInfo {
         const parsed = JSON.parse(stdout || '[]');
         const windowsArray = Array.isArray(parsed) ? parsed : [parsed];
 
-        // Filter out our own app's windows (Desktop Commander / electron)
+        // Filter out our own app's windows (WinPilot / electron)
         const filteredWindows = windowsArray.filter((w: any) => {
           const title = (w.title || '').toLowerCase();
           const app = (w.app || '').toLowerCase();
           // Filter out our own window
-          if (title.includes('desktop commander')) return false;
-          if (app === 'electron' || app === 'desktop-commander') return false;
+          if (title.includes('winpilot')) return false;
+          if (app === 'electron' || app === 'winpilot') return false;
           return true;
         });
 

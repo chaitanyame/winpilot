@@ -26,7 +26,7 @@ export function createTray(): Tray {
   }
 
   tray = new Tray(icon);
-  tray.setToolTip('Desktop Commander');
+  tray.setToolTip('WinPilot');
 
   // Create context menu
   updateTrayMenu();

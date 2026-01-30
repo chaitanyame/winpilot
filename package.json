@@ -1,16 +1,16 @@
 {
-  "name": "desktop-commander",
+  "name": "winpilot",
   "version": "0.1.0",
   "description": "Control your entire desktop with natural language using the GitHub Copilot SDK",
   "main": "dist/main/index.js",
   "repository": {
     "type": "git",
-    "url": "https://github.com/burkeholland/desktop-commander.git"
+    "url": "https://github.com/burkeholland/winpilot.git"
   },
   "bugs": {
-    "url": "https://github.com/burkeholland/desktop-commander/issues"
+    "url": "https://github.com/burkeholland/winpilot/issues"
   },
-  "homepage": "https://github.com/burkeholland/desktop-commander#readme",
+  "homepage": "https://github.com/burkeholland/winpilot#readme",
   "scripts": {
     "dev": "vite",
     "dev:wait": "wait-on http://localhost:5173 && npm run dev",

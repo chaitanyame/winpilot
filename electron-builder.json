@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
-  "appId": "com.desktopcommander.app",
-  "productName": "Desktop Commander",
+  "appId": "com.winpilot.app",
+  "productName": "WinPilot",
   "directories": {
     "output": "release/${version}"
   },

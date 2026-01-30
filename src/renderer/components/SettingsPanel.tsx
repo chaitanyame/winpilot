@@ -139,7 +139,7 @@ export function SettingsPanel({ isOpen, onClose }: Props) {
                            bg-dark-50 dark:bg-dark-700 text-dark-700 dark:text-dark-300"
                 />
                 <p className="text-xs text-dark-500 mt-1">
-                  Press the hotkey to open Desktop Commander
+                  Press the hotkey to open WinPilot
                 </p>
               </div>
 
@@ -230,7 +230,7 @@ export function SettingsPanel({ isOpen, onClose }: Props) {
                   </optgroup>
                 </select>
                 <p className="text-xs text-dark-500 mt-2">
-                  Choose the AI model for Desktop Commander's agentic loop
+                  Choose the AI model for WinPilot's agentic loop
                 </p>
               </div>
 
