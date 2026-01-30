@@ -142,6 +142,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Voice input API
   voiceTest: () => ipcRenderer.invoke('voice:test'),
   voiceIsRecording: () => ipcRenderer.invoke('voice:isRecording'),
+  voiceTranscribe: (params: { audio: ArrayBuffer; mimeType: string; language?: string }) =>
+    ipcRenderer.invoke('voice:transcribe', params),
 
   onVoiceRecordingStarted: (callback: () => void) => {
     const handler = () => callback();
@@ -165,6 +167,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
     const handler = (_: unknown, error: string) => callback(error);
     ipcRenderer.on('voice:error', handler);
     return () => ipcRenderer.removeListener('voice:error', handler);
+  },
+
+  // Action log export
+  exportActionLogs: (payload: { logs: ActionLog[]; suggestedName?: string }) =>
+    ipcRenderer.invoke('logs:export', payload),
+
+  // UI navigation (triggered from tray/menu)
+  onOpenSettings: (callback: () => void) => {
+    const handler = () => callback();
+    ipcRenderer.on('ui:openSettings', handler);
+    return () => ipcRenderer.removeListener('ui:openSettings', handler);
+  },
+  onOpenHistory: (callback: () => void) => {
+    const handler = () => callback();
+    ipcRenderer.on('ui:openHistory', handler);
+    return () => ipcRenderer.removeListener('ui:openHistory', handler);
   },
 
   // Timer API
@@ -332,6 +350,11 @@ export interface ElectronAPI {
   onVoiceRecordingStopped: (callback: () => void) => () => void;
   onVoiceTranscript: (callback: (transcript: string) => void) => () => void;
   onVoiceError: (callback: (error: string) => void) => () => void;
+  voiceTranscribe: (params: { audio: ArrayBuffer; mimeType: string; language?: string }) => Promise<{ success: boolean; transcript?: string; error?: string }>;
+
+  exportActionLogs: (payload: { logs: ActionLog[]; suggestedName?: string }) => Promise<{ success: boolean; path?: string; cancelled?: boolean; error?: string }>;
+  onOpenSettings: (callback: () => void) => () => void;
+  onOpenHistory: (callback: () => void) => () => void;
 
   timerList: () => Promise<unknown[]>;
   timerGet: (id: string) => Promise<unknown>;

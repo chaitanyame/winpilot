@@ -1,7 +1,9 @@
 // IPC Handlers for Main Process
 
-import { ipcMain, clipboard, shell } from 'electron';
-import { IPC_CHANNELS, ScheduledTask, Timer } from '../shared/types';
+import { ipcMain, clipboard, shell, dialog, app } from 'electron';
+import fs from 'fs/promises';
+import path from 'path';
+import { IPC_CHANNELS, ScheduledTask, Timer, ActionLog } from '../shared/types';
 import { MCP_IPC_CHANNELS, MCPServerConfig } from '../shared/mcp-types';
 import { getSettings, setSettings, getHistory, addToHistory, clearHistory, getMcpServers, addMcpServer, updateMcpServer, deleteMcpServer, toggleMcpServer, getScheduledTasks, addScheduledTask, updateScheduledTask, deleteScheduledTask, getTaskLogs } from './store';
 import { hideCommandWindow, resizeCommandWindow, minimizeCommandWindow, maximizeCommandWindow, fitWindowToScreen, getCommandWindow } from './windows';
@@ -437,6 +439,109 @@ export function setupIpcHandlers(): void {
     // This is called from renderer when browser speech recognition completes
     voiceInputManager.sendTranscript(transcript);
     return { success: true };
+  });
+
+  ipcMain.handle('voice:transcribe', async (_evt, payload: { audio: ArrayBuffer; mimeType: string; language?: string }) => {
+    try {
+      const settings = getSettings();
+      if (!settings.voiceInput?.enabled) {
+        return { success: false, error: 'Voice input is disabled in settings.' };
+      }
+
+      if (settings.voiceInput.provider !== 'whisper_cpp') {
+        return { success: false, error: 'Voice provider is not set to whisper.cpp.' };
+      }
+
+      const binaryPath = settings.voiceInput.whisperCpp?.binaryPath?.trim();
+      const modelPath = settings.voiceInput.whisperCpp?.modelPath?.trim();
+      if (!binaryPath || !modelPath) {
+        return { success: false, error: 'Configure whisper.cpp binary path and model path in Settings -> Voice.' };
+      }
+
+      const audioBuffer = Buffer.from(payload.audio);
+      const language = payload.language?.trim() || undefined;
+
+      // whisper.cpp CLI expects a WAV file; renderer sends PCM16 WAV.
+      const tmpDir = await fs.mkdtemp(path.join(app.getPath('temp'), 'desktop-commander-whispercpp-'));
+      const inputPath = path.join(tmpDir, 'input.wav');
+      const outBase = path.join(tmpDir, 'output');
+      const outTxt = `${outBase}.txt`;
+
+      await fs.writeFile(inputPath, audioBuffer);
+
+      const { execFile } = await import('child_process');
+      const { promisify } = await import('util');
+      const execFileAsync = promisify(execFile);
+
+      const args: string[] = [
+        '-m', modelPath,
+        '-f', inputPath,
+        '-otxt',
+        '-of', outBase,
+      ];
+      if (language) {
+        args.push('-l', language);
+      }
+
+      const { stdout, stderr } = await execFileAsync(binaryPath, args, {
+        windowsHide: true,
+        timeout: 5 * 60 * 1000,
+        maxBuffer: 1024 * 1024 * 10,
+      });
+
+      let transcript = '';
+      try {
+        transcript = (await fs.readFile(outTxt, 'utf8')).trim();
+      } catch {
+        transcript = (stdout || '').trim();
+      }
+
+      if (!transcript) {
+        return { success: false, error: (stderr || '').trim() || 'whisper.cpp produced no transcript.' };
+      }
+
+      // Best-effort cleanup.
+      await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => undefined);
+
+      return { success: true, transcript };
+    } catch (error: any) {
+      return { success: false, error: error?.message || String(error) };
+    }
+  });
+
+  // Action logs export (renderer keeps logs in-memory; this just persists them to disk)
+  ipcMain.handle('logs:export', async (_evt, payload: { logs: ActionLog[]; suggestedName?: string }) => {
+    try {
+      const suggestedName = (payload.suggestedName && payload.suggestedName.trim()) || `desktop-commander-logs-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+      const result = await dialog.showSaveDialog({
+        title: 'Export Logs',
+        defaultPath: path.join(app.getPath('documents'), suggestedName),
+        filters: [{ name: 'JSON', extensions: ['json'] }],
+      });
+
+      // Electron's typings have varied across versions (some return a string filePath).
+      const resultAny: any = result as any;
+      const filePath = typeof result === 'string' ? result : resultAny.filePath;
+      const cancelled = typeof result === 'string' ? !result : resultAny.canceled;
+
+      if (cancelled || !filePath) {
+        return { success: true, cancelled: true };
+      }
+
+      const output = {
+        exportedAt: Date.now(),
+        app: {
+          name: 'Desktop Commander',
+          version: app.getVersion(),
+        },
+        logs: payload.logs || [],
+      };
+
+      await fs.writeFile(filePath, JSON.stringify(output, null, 2), 'utf8');
+      return { success: true, path: filePath };
+    } catch (error: any) {
+      return { success: false, error: error?.message || String(error) };
+    }
   });
 
   // Timer handlers

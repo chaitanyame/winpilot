@@ -6,7 +6,7 @@ import { getCommandWindow } from './windows';
 /**
  * Voice Input Manager
  * Handles speech-to-text functionality using Web Speech API (browser-based)
- * with optional OpenAI Whisper API support for better accuracy
+ * with optional local whisper.cpp support for better accuracy
  */
 class VoiceInputManager {
   private isRecording = false;

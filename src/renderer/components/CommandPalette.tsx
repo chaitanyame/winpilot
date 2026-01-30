@@ -1,11 +1,11 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { motion } from 'framer-motion';
-import { Send, X, History, Square, Monitor, Plug, Trash2, Settings as SettingsIcon, Clock, Mic, Volume2, Brain, Minus, Maximize2, Expand } from 'lucide-react';
+import { Send, X, History, Square, Monitor, Plug, Trash2, Settings as SettingsIcon, Clock, Mic, Volume2, Brain, Minus, Maximize2, Expand, ScrollText } from 'lucide-react';
 import { MessageStream } from './MessageStream';
 import { MCPServersPanel } from './MCPServersPanel';
 import { SettingsPanel } from './SettingsPanel';
 import { ScheduledTasksPanel } from './ScheduledTasksPanel';
-import { CanvasTab } from './CanvasTab';
+import { ActionLogsPanel } from './ActionLogsPanel';
 import { useCopilot } from '../hooks/useCopilot';
 import { ConfirmationDialog } from './ConfirmationDialog';
 import type { PermissionRequest, PermissionResponse, ActionLog, Settings } from '../../shared/types';
@@ -36,15 +36,20 @@ export function CommandPalette() {
   const [showMcpPanel, setShowMcpPanel] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showTasksPanel, setShowTasksPanel] = useState(false);
+  const [showLogsPanel, setShowLogsPanel] = useState(false);
   const [permissionRequest, setPermissionRequest] = useState<PermissionRequest | null>(null);
   const [isRecording, setIsRecording] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const [voiceLanguage, setVoiceLanguage] = useState('en-US');
   const [isSpeechDetected, setIsSpeechDetected] = useState(false);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [actionLogs, setActionLogs] = useState<ActionLog[]>([]);
+  const [actionLogsClearedAt, setActionLogsClearedAt] = useState(0);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const recognitionRef = useRef<SpeechRecognition | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const voiceProviderRef = useRef<'browser' | 'whisper_cpp'>('browser');
   const voiceErrorTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const speechTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -59,6 +64,9 @@ export function CommandPalette() {
 
   const userMessages = messages.filter(message => message.role === 'user');
   const assistantMessages = messages.filter(message => message.role !== 'user');
+  const visibleActionLogs = actionLogsClearedAt > 0
+    ? actionLogs.filter(l => l.createdAt >= actionLogsClearedAt)
+    : actionLogs;
 
   // Track action logs from tool calls
   useEffect(() => {
@@ -154,6 +162,29 @@ export function CommandPalette() {
     return descriptions[toolName] || `Executed ${toolName}`;
   };
 
+  const insertTranscript = useCallback((transcript: string) => {
+    const text = transcript.trim();
+    if (!text) return;
+
+    const textarea = inputRef.current;
+    if (!textarea) {
+      setInput((prev) => (prev ? `${prev} ${text}` : text));
+      return;
+    }
+
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const currentInput = textarea.value;
+    const newText = currentInput.substring(0, start) + text + currentInput.substring(end);
+    setInput(newText);
+
+    // Move cursor to end of inserted text.
+    setTimeout(() => {
+      textarea.selectionStart = textarea.selectionEnd = start + text.length;
+      textarea.focus();
+    }, 0);
+  }, []);
+
   // Load history on mount
   useEffect(() => {
     loadHistory();
@@ -173,6 +204,29 @@ export function CommandPalette() {
       inputRef.current?.focus();
     });
     return unsubscribe;
+  }, []);
+
+  // Open specific panels when requested from tray/menu
+  useEffect(() => {
+    const unsubSettings = window.electronAPI.onOpenSettings(() => {
+      setShowSettings(true);
+      setShowHistory(false);
+      setShowLogsPanel(false);
+      setShowMcpPanel(false);
+      setShowTasksPanel(false);
+    });
+
+    const unsubHistory = window.electronAPI.onOpenHistory(() => {
+      setShowHistory(true);
+      setShowLogsPanel(false);
+      void loadHistory();
+      inputRef.current?.focus();
+    });
+
+    return () => {
+      unsubSettings();
+      unsubHistory();
+    };
   }, []);
 
   // Listen for action log events from tool executions
@@ -216,6 +270,16 @@ export function CommandPalette() {
     loadSettings();
   }, []);
 
+  // Helper to clear voice error after a delay
+  const clearVoiceError = useCallback(() => {
+    if (voiceErrorTimeoutRef.current) {
+      clearTimeout(voiceErrorTimeoutRef.current);
+    }
+    voiceErrorTimeoutRef.current = setTimeout(() => {
+      setVoiceError(null);
+    }, 3000);
+  }, []);
+
   // Initialize speech recognition (only once, not on input change)
   useEffect(() => {
     // @ts-ignore - webkit prefix
@@ -254,24 +318,7 @@ export function CommandPalette() {
 
       // Clear any previous errors
       setVoiceError(null);
-
-      // Insert transcript at cursor position or append
-      const textarea = inputRef.current;
-      if (textarea) {
-        const start = textarea.selectionStart;
-        const end = textarea.selectionEnd;
-
-        // Use ref to get current input value instead of closure
-        const currentInput = textarea.value;
-        const newText = currentInput.substring(0, start) + transcript + currentInput.substring(end);
-        setInput(newText);
-
-        // Set cursor after inserted text
-        setTimeout(() => {
-          textarea.selectionStart = textarea.selectionEnd = start + transcript.length;
-          textarea.focus();
-        }, 0);
-      }
+      insertTranscript(transcript);
     };
 
     // Speech recognition error
@@ -284,6 +331,7 @@ export function CommandPalette() {
 
       setIsRecording(false);
       setIsSpeechDetected(false);
+      setIsTranscribing(false);
     };
 
     // Speech recognition ended
@@ -291,6 +339,7 @@ export function CommandPalette() {
       console.log('Speech recognition ended');
       setIsRecording(false);
       setIsSpeechDetected(false);
+      setIsTranscribing(false);
     };
 
     recognitionRef.current = recognition;
@@ -300,14 +349,8 @@ export function CommandPalette() {
       if (recognitionRef.current) {
         recognitionRef.current.abort();
       }
-      if (voiceErrorTimeoutRef.current) {
-        clearTimeout(voiceErrorTimeoutRef.current);
-      }
-      if (speechTimeoutRef.current) {
-        clearTimeout(speechTimeoutRef.current);
-      }
     };
-  }, [voiceLanguage]); // Only re-init when language changes
+  }, [voiceLanguage, insertTranscript, clearVoiceError]); // Only re-init when language changes
 
   // Update recognition language when voiceLanguage changes
   useEffect(() => {
@@ -316,73 +359,261 @@ export function CommandPalette() {
     }
   }, [voiceLanguage]);
 
-  // Helper to clear voice error after a delay
-  const clearVoiceError = useCallback(() => {
-    if (voiceErrorTimeoutRef.current) {
-      clearTimeout(voiceErrorTimeoutRef.current);
+  const cleanupMediaStream = useCallback(() => {
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach(t => t.stop());
+      mediaStreamRef.current = null;
     }
-    voiceErrorTimeoutRef.current = setTimeout(() => {
-      setVoiceError(null);
-    }, 3000);
   }, []);
+
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const audioProcessorRef = useRef<ScriptProcessorNode | null>(null);
+  const audioSamplesRef = useRef<Float32Array[]>([]);
+  const audioSampleRateRef = useRef<number>(16000);
+
+  // Ensure timers/streams are cleaned up when the component unmounts.
+  useEffect(() => {
+    const voiceTimeout = voiceErrorTimeoutRef.current;
+    const speechTimeout = speechTimeoutRef.current;
+    return () => {
+      if (voiceTimeout) clearTimeout(voiceTimeout);
+      if (speechTimeout) clearTimeout(speechTimeout);
+      if (audioProcessorRef.current) {
+        try { audioProcessorRef.current.disconnect(); } catch {}
+        audioProcessorRef.current = null;
+      }
+      if (audioContextRef.current) {
+        void audioContextRef.current.close().catch(() => undefined);
+        audioContextRef.current = null;
+      }
+      audioSamplesRef.current = [];
+      cleanupMediaStream();
+    };
+  }, [cleanupMediaStream]);
+
+  const startWhisperRecording = useCallback(async () => {
+    try {
+      // If we're already recording, don't restart.
+      if (audioContextRef.current) return;
+
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaStreamRef.current = stream;
+      audioSamplesRef.current = [];
+
+      const AudioContextCtor = window.AudioContext || (window as any).webkitAudioContext;
+      const audioContext: AudioContext = new AudioContextCtor();
+      audioContextRef.current = audioContext;
+      audioSampleRateRef.current = audioContext.sampleRate;
+
+      const source = audioContext.createMediaStreamSource(stream);
+
+      // ScriptProcessor is deprecated, but widely supported and sufficient here.
+      const processor = audioContext.createScriptProcessor(4096, 1, 1);
+      audioProcessorRef.current = processor;
+
+      processor.onaudioprocess = (e) => {
+        const input = e.inputBuffer.getChannelData(0);
+        audioSamplesRef.current.push(new Float32Array(input));
+      };
+
+      source.connect(processor);
+      processor.connect(audioContext.destination);
+
+      setIsSpeechDetected(true);
+    } catch (err) {
+      console.error('Failed to start whisper.cpp recording:', err);
+      setVoiceError('Failed to access microphone for whisper.cpp transcription.');
+      clearVoiceError();
+      setIsRecording(false);
+      setIsSpeechDetected(false);
+      setIsTranscribing(false);
+      cleanupMediaStream();
+    }
+  }, [clearVoiceError, cleanupMediaStream]);
+
+  const stopWhisperRecordingAndTranscribe = useCallback(async () => {
+    try {
+      setIsSpeechDetected(false);
+      setIsTranscribing(true);
+
+      // Disconnect/close audio graph.
+      if (audioProcessorRef.current) {
+        try {
+          audioProcessorRef.current.disconnect();
+        } catch {}
+        audioProcessorRef.current = null;
+      }
+      if (audioContextRef.current) {
+        try {
+          await audioContextRef.current.close();
+        } catch {}
+        audioContextRef.current = null;
+      }
+
+      // Merge samples and encode PCM16 WAV.
+      const chunks = audioSamplesRef.current;
+      const totalLength = chunks.reduce((sum, c) => sum + c.length, 0);
+      const merged = new Float32Array(totalLength);
+      let offset = 0;
+      for (const c of chunks) {
+        merged.set(c, offset);
+        offset += c.length;
+      }
+
+      const encodeWavPcm16 = (samples: Float32Array, sampleRate: number): ArrayBuffer => {
+        const numChannels = 1;
+        const bitsPerSample = 16;
+        const blockAlign = numChannels * (bitsPerSample / 8);
+        const byteRate = sampleRate * blockAlign;
+        const dataSize = samples.length * (bitsPerSample / 8);
+        const buffer = new ArrayBuffer(44 + dataSize);
+        const view = new DataView(buffer);
+
+        let p = 0;
+        const writeStr = (s: string) => {
+          for (let i = 0; i < s.length; i++) view.setUint8(p++, s.charCodeAt(i));
+        };
+
+        writeStr('RIFF');
+        view.setUint32(p, 36 + dataSize, true); p += 4;
+        writeStr('WAVE');
+        writeStr('fmt ');
+        view.setUint32(p, 16, true); p += 4; // PCM
+        view.setUint16(p, 1, true); p += 2;  // format
+        view.setUint16(p, numChannels, true); p += 2;
+        view.setUint32(p, sampleRate, true); p += 4;
+        view.setUint32(p, byteRate, true); p += 4;
+        view.setUint16(p, blockAlign, true); p += 2;
+        view.setUint16(p, bitsPerSample, true); p += 2;
+        writeStr('data');
+        view.setUint32(p, dataSize, true); p += 4;
+
+        for (let i = 0; i < samples.length; i++) {
+          let s = samples[i];
+          s = Math.max(-1, Math.min(1, s));
+          view.setInt16(p, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+          p += 2;
+        }
+
+        return buffer;
+      };
+
+      const audio = encodeWavPcm16(merged, audioSampleRateRef.current || 16000);
+      const language = (voiceLanguage || 'en-US').split('-')[0];
+
+      const res = await window.electronAPI.voiceTranscribe({
+        audio,
+        mimeType: 'audio/wav',
+        language,
+      });
+
+      if (!res.success) {
+        setVoiceError(res.error || 'Whisper transcription failed.');
+        clearVoiceError();
+      } else if (res.transcript) {
+        insertTranscript(res.transcript);
+      }
+    } catch (err) {
+      console.error('Whisper transcription failed:', err);
+      setVoiceError('Whisper transcription failed.');
+      clearVoiceError();
+    } finally {
+      setIsRecording(false);
+      setIsSpeechDetected(false);
+      setIsTranscribing(false);
+      audioSamplesRef.current = [];
+      cleanupMediaStream();
+    }
+  }, [clearVoiceError, cleanupMediaStream, insertTranscript, voiceLanguage]);
 
   // Listen for voice events from main process
   useEffect(() => {
     const unsubscribeStart = window.electronAPI.onVoiceRecordingStarted(() => {
-      console.log('Voice recording started from hotkey');
-      setVoiceError(null); // Clear any previous errors
-      setIsRecording(true);
-      setIsSpeechDetected(false);
+      void (async () => {
+        console.log('Voice recording started from hotkey');
+        setVoiceError(null); // Clear any previous errors
+        setIsRecording(true);
+        setIsTranscribing(false);
+        setIsSpeechDetected(false);
 
-      // Clear any existing speech timeout
-      if (speechTimeoutRef.current) {
-        clearTimeout(speechTimeoutRef.current);
-      }
-
-      // Start browser speech recognition
-      if (recognitionRef.current) {
+        // Pull latest settings so provider switches apply without restarting.
         try {
-          // Update language before starting
-          recognitionRef.current.lang = voiceLanguage;
-          recognitionRef.current.start();
-        } catch (err) {
-          console.error('Failed to start speech recognition:', err);
-          setIsRecording(false);
-
-          // Check if error is "already started"
-          if (err instanceof Error && err.message.includes('already started')) {
-            setVoiceError('Recording already in progress');
+          const loadedSettings = await window.electronAPI.getSettings() as Settings | null;
+          if (loadedSettings) {
+            setSettings(loadedSettings);
+            if (loadedSettings.voiceInput?.language) setVoiceLanguage(loadedSettings.voiceInput.language);
+            voiceProviderRef.current = loadedSettings.voiceInput?.provider || 'browser';
           } else {
-            setVoiceError('Failed to start speech recognition');
+            voiceProviderRef.current = 'browser';
           }
+        } catch {
+          voiceProviderRef.current = 'browser';
+        }
+
+        // Clear any existing speech timeout
+        if (speechTimeoutRef.current) {
+          clearTimeout(speechTimeoutRef.current);
+        }
+
+        if (voiceProviderRef.current === 'whisper_cpp') {
+          await startWhisperRecording();
+          return;
+        }
+
+        // Start browser speech recognition
+        if (recognitionRef.current) {
+          try {
+            // Update language before starting
+            recognitionRef.current.lang = voiceLanguage;
+            recognitionRef.current.start();
+          } catch (err) {
+            console.error('Failed to start speech recognition:', err);
+            setIsRecording(false);
+
+            // Check if error is "already started"
+            if (err instanceof Error && err.message.includes('already started')) {
+              setVoiceError('Recording already in progress');
+            } else {
+              setVoiceError('Failed to start speech recognition');
+            }
+            clearVoiceError();
+          }
+        } else {
+          setVoiceError('Speech recognition not available');
           clearVoiceError();
         }
-      } else {
-        setVoiceError('Speech recognition not available');
-        clearVoiceError();
-      }
+      })();
     });
 
     const unsubscribeStop = window.electronAPI.onVoiceRecordingStopped(() => {
-      console.log('Voice recording stopped from hotkey');
+      void (async () => {
+        console.log('Voice recording stopped from hotkey');
 
-      // Stop browser speech recognition
-      if (recognitionRef.current) {
-        try {
-          recognitionRef.current.stop();
-        } catch (err) {
-          console.error('Failed to stop speech recognition:', err);
-          // Force stop on error
-          setIsRecording(false);
-          setIsSpeechDetected(false);
+        if (voiceProviderRef.current === 'whisper_cpp') {
+          await stopWhisperRecordingAndTranscribe();
+          return;
         }
-      }
+
+        // Stop browser speech recognition
+        if (recognitionRef.current) {
+          try {
+            recognitionRef.current.stop();
+          } catch (err) {
+            console.error('Failed to stop speech recognition:', err);
+            // Force stop on error
+            setIsRecording(false);
+            setIsSpeechDetected(false);
+            setIsTranscribing(false);
+          }
+        }
+      })();
     });
 
     const unsubscribeError = window.electronAPI.onVoiceError((error: string) => {
       console.error('Voice input error:', error);
       setIsRecording(false);
       setIsSpeechDetected(false);
+      setIsTranscribing(false);
       setVoiceError(error);
       clearVoiceError();
     });
@@ -392,7 +623,7 @@ export function CommandPalette() {
       unsubscribeStop();
       unsubscribeError();
     };
-  }, [voiceLanguage, clearVoiceError]);
+  }, [voiceLanguage, clearVoiceError, startWhisperRecording, stopWhisperRecordingAndTranscribe]);
 
   const loadHistory = async () => {
     try {
@@ -452,6 +683,15 @@ export function CommandPalette() {
     return model;
   };
 
+  const voiceProvider = settings?.voiceInput?.provider || 'browser';
+  const recordingLabel = isTranscribing
+    ? 'Transcribing...'
+    : isSpeechDetected
+      ? 'Capturing...'
+      : voiceProvider === 'whisper_cpp'
+        ? 'Recording...'
+        : 'Listening...';
+
   return (
     <>
     <motion.div
@@ -476,14 +716,14 @@ export function CommandPalette() {
           exit={{ opacity: 0, y: -20 }}
           className="absolute top-4 right-4 z-50 flex items-center gap-2 px-3 py-2 bg-red-500 text-white rounded-full shadow-lg"
         >
-          {isSpeechDetected ? (
+          {isTranscribing ? (
+            <Brain className="w-4 h-4 animate-pulse" />
+          ) : isSpeechDetected ? (
             <Volume2 className="w-4 h-4 animate-pulse" />
           ) : (
             <Mic className="w-4 h-4 animate-pulse" />
           )}
-          <span className="text-sm font-medium">
-            {isSpeechDetected ? 'Capturing...' : 'Listening...'}
-          </span>
+          <span className="text-sm font-medium">{recordingLabel}</span>
         </motion.div>
       )}
       {/* Header */}
@@ -560,6 +800,13 @@ export function CommandPalette() {
             <Trash2 className="w-4 h-4" />
           </button>
           <button
+            onClick={() => setShowLogsPanel(true)}
+            className="p-1.5 rounded-lg hover:bg-stone-100 dark:hover:bg-stone-800 text-stone-500 hover:text-stone-700 dark:hover:text-stone-300 transition-colors"
+            title="Logs & Actions"
+          >
+            <ScrollText className="w-4 h-4" />
+          </button>
+          <button
             onClick={() => setShowHistory(!showHistory)}
             className="p-1.5 rounded-lg hover:bg-stone-100 dark:hover:bg-stone-800 text-stone-500 hover:text-stone-700 dark:hover:text-stone-300 transition-colors"
             title="History"
@@ -620,7 +867,7 @@ export function CommandPalette() {
               </div>
             ) : (
               <div className="flex-1 overflow-y-auto">
-                <MessageStream messages={userMessages} isLoading={false} actionLogs={actionLogs} />
+                <MessageStream messages={userMessages} isLoading={false} actionLogs={visibleActionLogs} />
               </div>
             )}
           </div>
@@ -716,6 +963,14 @@ export function CommandPalette() {
 
       {/* Scheduled Tasks Panel */}
       <ScheduledTasksPanel isOpen={showTasksPanel} onClose={() => setShowTasksPanel(false)} />
+
+      {/* Logs & Actions Panel */}
+      <ActionLogsPanel
+        isOpen={showLogsPanel}
+        onClose={() => setShowLogsPanel(false)}
+        logs={visibleActionLogs}
+        onClearAll={() => setActionLogsClearedAt(Date.now())}
+      />
 
       {/* Permission Dialog */}
       <ConfirmationDialog

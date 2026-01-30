@@ -189,8 +189,13 @@ export interface Settings {
   voiceInput: {
     enabled: boolean;
     hotkey: string;
-    provider: 'browser' | 'whisper';
-    whisperApiKey?: string;
+    provider: 'browser' | 'whisper_cpp';
+    whisperCpp: {
+      /** Path to whisper.cpp CLI executable (e.g. whisper-cli/main). */
+      binaryPath: string;
+      /** Path to a ggml/gguf model file (e.g. ggml-base.en.bin). */
+      modelPath: string;
+    };
     language: string;
     showVisualFeedback: boolean;
   };

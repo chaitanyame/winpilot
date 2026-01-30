@@ -64,6 +64,10 @@ export const DEFAULT_SETTINGS = {
     enabled: false,
     hotkey: 'CommandOrControl+Shift+V',
     provider: 'browser' as const,
+    whisperCpp: {
+      binaryPath: '',
+      modelPath: '',
+    },
     language: 'en-US',
     showVisualFeedback: true,
   },

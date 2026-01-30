@@ -100,6 +100,8 @@ export class CopilotController {
   private loopStartTime = 0;
   private currentIteration = 0;
   private toolExecutionMap = new Map<string, { toolName: string; startTime: number; details?: string }>();
+  // Track user message timestamp for action log grouping
+  private currentUserMessageTimestamp = 0;
 
   constructor() {
     // Check Node.js version for Copilot CLI compatibility
@@ -293,6 +295,9 @@ export class CopilotController {
     const { getSettings } = await import('../main/store');
     const settings = getSettings();
     const loopConfig = { ...settings.agenticLoop, ...config };
+
+    // Capture user message timestamp for action log grouping
+    this.currentUserMessageTimestamp = Date.now();
 
     if (!loopConfig.enabled) {
       // If loop disabled, fall back to single-turn
@@ -724,7 +729,7 @@ What should we do next?`;
           webContents.send('copilot:actionLog', {
             id: `log-${toolStartData.toolCallId}`,
             timestamp: new Date().toLocaleTimeString('en-US', { hour12: false }),
-            createdAt: Date.now(),
+            createdAt: this.currentUserMessageTimestamp,
             tool: toolStartData.toolName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
             description: `Executing ${toolStartData.toolName.replace(/_/g, ' ')}...`,
             status: 'pending' as const,
@@ -768,7 +773,7 @@ What should we do next?`;
           webContents.send('copilot:actionLog', {
             id: `log-${toolCompleteData.toolCallId}`,
             timestamp: new Date().toLocaleTimeString('en-US', { hour12: false }),
-            createdAt: Date.now(),
+            createdAt: this.currentUserMessageTimestamp,
             tool: toolName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
             description: `Completed ${toolName.replace(/_/g, ' ')}`,
             status: toolCompleteData.success ? ('success' as const) : ('error' as const),

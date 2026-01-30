@@ -371,50 +371,66 @@ export function SettingsPanel({ isOpen, onClose }: Props) {
                         onChange={(e) => updateSettings({
                           voiceInput: {
                             ...settings.voiceInput,
-                            provider: e.target.value as 'browser' | 'whisper'
+                            provider: e.target.value as 'browser' | 'whisper_cpp'
                           }
                         })}
                         className="w-full px-4 py-2 rounded-lg border border-dark-200 dark:border-dark-600
                                  bg-white dark:bg-dark-700 text-dark-700 dark:text-dark-300"
                       >
                         <option value="browser">Browser (Free, Offline, Built-in)</option>
-                        <option value="whisper">OpenAI Whisper (More Accurate, Requires API Key)</option>
+                        <option value="whisper_cpp">Whisper.cpp (Local, More Accurate, Requires Model)</option>
                       </select>
                       <p className="text-xs text-dark-500 mt-1">
                         {settings.voiceInput?.provider === 'browser'
                           ? 'Uses browser\'s built-in speech recognition (works offline)'
-                          : 'Uses OpenAI Whisper API for better accuracy (requires internet)'
+                          : 'Runs whisper.cpp locally (offline). You must configure the whisper.cpp binary and a model file.'
                         }
                       </p>
                     </div>
 
-                    {/* Whisper API Key (if selected) */}
-                    {settings.voiceInput?.provider === 'whisper' && (
+                    {/* Whisper.cpp config (if selected) */}
+                    {settings.voiceInput?.provider === 'whisper_cpp' && (
                       <div>
-                        <label className="block text-sm font-medium text-dark-700 dark:text-dark-300 mb-2">
-                          OpenAI API Key
-                        </label>
+                        <label className="block text-sm font-medium text-dark-700 dark:text-dark-300 mb-2">Whisper.cpp Binary Path</label>
                         <input
-                          type="password"
-                          value={settings.voiceInput?.whisperApiKey || ''}
+                          type="text"
+                          value={settings.voiceInput?.whisperCpp?.binaryPath || ''}
                           onChange={(e) => updateSettings({
                             voiceInput: {
                               ...settings.voiceInput,
-                              whisperApiKey: e.target.value
+                              whisperCpp: {
+                                ...settings.voiceInput.whisperCpp,
+                                binaryPath: e.target.value,
+                              }
                             }
                           })}
                           className="w-full px-4 py-2 rounded-lg border border-dark-200 dark:border-dark-600
                                    bg-white dark:bg-dark-700 text-dark-700 dark:text-dark-300"
-                          placeholder="sk-..."
+                          placeholder="C:\\path\\to\\whisper.cpp\\main.exe"
                         />
                         <p className="text-xs text-dark-500 mt-1">
-                          Get your API key from{' '}
-                          <button
-                            onClick={() => window.electronAPI.openExternal('https://platform.openai.com/api-keys')}
-                            className="text-primary-500 hover:underline"
-                          >
-                            OpenAI Platform
-                          </button>
+                          Point this at your locally built whisper.cpp CLI executable.
+                        </p>
+
+                        <label className="block text-sm font-medium text-dark-700 dark:text-dark-300 mb-2 mt-4">Model Path</label>
+                        <input
+                          type="text"
+                          value={settings.voiceInput?.whisperCpp?.modelPath || ''}
+                          onChange={(e) => updateSettings({
+                            voiceInput: {
+                              ...settings.voiceInput,
+                              whisperCpp: {
+                                ...settings.voiceInput.whisperCpp,
+                                modelPath: e.target.value,
+                              }
+                            }
+                          })}
+                          className="w-full px-4 py-2 rounded-lg border border-dark-200 dark:border-dark-600
+                                   bg-white dark:bg-dark-700 text-dark-700 dark:text-dark-300"
+                          placeholder="C:\\path\\to\\ggml-base.en.bin"
+                        />
+                        <p className="text-xs text-dark-500 mt-1">
+                          Example models: `ggml-base.en.bin`, `ggml-small.en.bin` (download from the whisper.cpp project releases).
                         </p>
                       </div>
                     )}

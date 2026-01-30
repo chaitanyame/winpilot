@@ -99,6 +99,18 @@ export function getSettings(): Settings {
     needsUpdate = true;
   }
 
+  // Migrate legacy "whisper" provider (API-based) to local whisper.cpp provider.
+  if (settings.voiceInput?.provider === ('whisper' as any)) {
+    settings.voiceInput.provider = 'whisper_cpp';
+    needsUpdate = true;
+  }
+
+  // Ensure whisper.cpp config exists.
+  if (!settings.voiceInput?.whisperCpp) {
+    settings.voiceInput.whisperCpp = DEFAULT_SETTINGS.voiceInput.whisperCpp;
+    needsUpdate = true;
+  }
+
   if (settings.ui?.menuBarMode === undefined) {
     settings.ui.menuBarMode = DEFAULT_SETTINGS.ui.menuBarMode;
     needsUpdate = true;

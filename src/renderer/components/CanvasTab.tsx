@@ -1,23 +1,29 @@
+import { useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Search, Download, ScrollText, CheckCircle, XCircle, AlertTriangle, Loader2 } from 'lucide-react';
 import type { ActionLog } from '../../shared/types';
 
 interface CanvasTabProps {
   logs: ActionLog[];
+  onClearAll?: () => void;
 }
 
 interface LogsFilterBarProps {
+  query: string;
+  onQueryChange: (value: string) => void;
   onExport?: () => void;
   onClearAll?: () => void;
 }
 
-function LogsFilterBar({ onExport, onClearAll }: LogsFilterBarProps) {
+function LogsFilterBar({ query, onQueryChange, onExport, onClearAll }: LogsFilterBarProps) {
   return (
     <div className="flex items-center gap-1.5 p-3 border-b border-stone-800 dark:border-stone-800">
       <Search className="w-3.5 h-3.5 text-stone-500 flex-shrink-0" />
       <input
         type="text"
         placeholder="Search..."
+        value={query}
+        onChange={(e) => onQueryChange(e.target.value)}
         className="flex-1 px-2 py-1.5 rounded-md bg-stone-900 dark:bg-stone-900 text-stone-200 dark:text-stone-200
           placeholder-stone-500 border border-stone-700 focus:border-purple-500
           focus:ring-1 focus:ring-purple-500/20 text-xs min-w-0"
@@ -96,31 +102,63 @@ function ActionLogEntry({ log }: { log: ActionLog }) {
   );
 }
 
-export function CanvasTab({ logs }: CanvasTabProps) {
-  const handleExport = () => {
-    // TODO: Implement export functionality
-    console.log('Export logs');
+export function CanvasTab({ logs, onClearAll }: CanvasTabProps) {
+  const [query, setQuery] = useState('');
+
+  const filteredLogs = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return logs;
+    return logs.filter((log) => {
+      const haystack = [
+        log.tool,
+        log.description,
+        log.details,
+        log.error,
+        log.timestamp,
+      ]
+        .filter(Boolean)
+        .join('\n')
+        .toLowerCase();
+      return haystack.includes(q);
+    });
+  }, [logs, query]);
+
+  const handleExport = async () => {
+    const suggestedName = `desktop-commander-logs-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+    const res = await window.electronAPI.exportActionLogs({ logs: filteredLogs, suggestedName });
+    if (!res.success && res.error) {
+      // Keep this lightweight; renderer already has toast/notification infra.
+      // eslint-disable-next-line no-alert
+      alert(`Failed to export logs: ${res.error}`);
+    }
   };
 
   const handleClearAll = () => {
-    // TODO: Implement clear all functionality
-    console.log('Clear all logs');
+    setQuery('');
+    onClearAll?.();
   };
 
   return (
     <div className="flex flex-col h-full">
-      <LogsFilterBar onExport={handleExport} onClearAll={handleClearAll} />
+      <LogsFilterBar
+        query={query}
+        onQueryChange={setQuery}
+        onExport={handleExport}
+        onClearAll={onClearAll ? handleClearAll : undefined}
+      />
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
-        {logs.length === 0 ? (
+        {filteredLogs.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full
             text-stone-500 dark:text-stone-500 px-4 text-center">
             <ScrollText className="w-8 h-8 mb-2 opacity-50" />
-            <p className="text-xs">No action logs yet</p>
-            <p className="text-[10px] mt-1">Actions will appear here as you use the app</p>
+            <p className="text-xs">{logs.length === 0 ? 'No action logs yet' : 'No matching logs'}</p>
+            <p className="text-[10px] mt-1">
+              {logs.length === 0 ? 'Actions will appear here as you use the app' : 'Try a different search term'}
+            </p>
           </div>
         ) : (
           <AnimatePresence>
-            {logs.map(log => (
+            {filteredLogs.map(log => (
               <ActionLogEntry key={log.id} log={log} />
             ))}
           </AnimatePresence>

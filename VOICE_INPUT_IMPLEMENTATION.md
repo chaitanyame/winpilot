@@ -50,9 +50,9 @@ Used the **toggle-mode approach** (press once to start, press again to stop) wit
 - New "Voice" tab with comprehensive settings:
   - Enable/disable toggle
   - Customizable hotkey
-  - Provider selection (Browser/Whisper)
+  - Provider selection (Browser/Whisper.cpp)
   - Language selection (18 languages)
-  - OpenAI API key input (for Whisper)
+  - Whisper.cpp binary + model path inputs
   - Visual feedback toggle
   - Test button
   - Helpful tips
@@ -68,8 +68,11 @@ Used the **toggle-mode approach** (press once to start, press again to stop) wit
 voiceInput: {
   enabled: boolean;              // Default: false
   hotkey: string;                // Default: "CommandOrControl+Shift+V"
-  provider: 'browser' | 'whisper'; // Default: "browser"
-  whisperApiKey?: string;        // Optional, for Whisper API
+  provider: 'browser' | 'whisper_cpp'; // Default: "browser"
+  whisperCpp: {
+    binaryPath: string;          // Path to whisper.cpp CLI executable
+    modelPath: string;           // Path to a local model file
+  };
   language: string;              // Default: "en-US"
   showVisualFeedback: boolean;   // Default: true
 }
@@ -130,12 +133,11 @@ voiceInput: {
 - **Fast**: Instant recognition
 - **Good Enough**: Sufficient accuracy for most use cases
 
-### Future Enhancement: Whisper API
-The architecture supports adding OpenAI Whisper API:
-- Settings UI already includes provider selection
-- API key management implemented
-- Main process has placeholder for Whisper integration
-- Would require audio recording implementation (node-mic or similar)
+### Local Whisper (whisper.cpp)
+The architecture supports running Whisper locally via whisper.cpp:
+- Settings UI includes provider selection + local paths
+- Renderer records audio and encodes PCM16 WAV
+- Main process runs whisper.cpp and returns the transcript
 
 ## Testing Checklist
 
@@ -156,12 +158,12 @@ The architecture supports adding OpenAI Whisper API:
 1. **Browser API Accuracy**: May not be as accurate as cloud services for accents or noisy environments
 2. **Toggle Mode UX**: Less intuitive than press-hold-release, but more reliable
 3. **Single Utterance**: Records one sentence at a time (continuous: false)
-4. **No Whisper Yet**: Whisper provider is in settings but not fully implemented (requires audio recording)
+4. **Local Whisper Setup**: You must install/build whisper.cpp and download a model file
 
 ## Future Enhancements
 
 1. **Press-Hold-Release Mode**: Use iohook for more intuitive UX
-2. **Whisper Integration**: Add audio recording and Whisper API calls
+2. **Whisper Improvements**: Better recording UX + robust stdout parsing across whisper.cpp versions
 3. **Wake Word Detection**: "Hey Desktop" activation
 4. **Voice Commands**: Direct execution without typing
 5. **Punctuation Commands**: Say "period", "comma", etc.
@@ -173,8 +175,7 @@ The architecture supports adding OpenAI Whisper API:
 1. **Microphone Permissions**: Browser requests permission on first use
 2. **Visual Indicator**: Always show when recording (red mic icon)
 3. **User Control**: User must explicitly enable in settings
-4. **API Keys**: Whisper API key stored in electron-store (can be encrypted with safeStorage)
-5. **Local Processing**: Browser API processes audio locally, no external transmission
+4. **Local Processing**: whisper.cpp runs locally; no audio is sent to a third party
 
 ## Performance Impact
 

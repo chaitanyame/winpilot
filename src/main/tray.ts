@@ -2,7 +2,7 @@
 
 import { Tray, Menu, nativeImage, app } from 'electron';
 import path from 'path';
-import { toggleCommandWindow } from './windows';
+import { getCommandWindow, showCommandWindow } from './windows';
 import { getSettings } from './store';
 
 let tray: Tray | null = null;
@@ -33,7 +33,7 @@ export function createTray(): Tray {
 
   // Click handler - toggle command window
   tray.on('click', () => {
-    toggleCommandWindow();
+    showCommandWindow();
   });
 
   return tray;
@@ -72,21 +72,23 @@ export function updateTrayMenu(): void {
   const contextMenu = Menu.buildFromTemplate([
     {
       label: `Open Commander (${hotkeyDisplay})`,
-      click: () => toggleCommandWindow(),
+      click: () => showCommandWindow(),
     },
     { type: 'separator' },
     {
       label: 'Settings',
       click: () => {
-        toggleCommandWindow();
-        // TODO: Open settings panel
+        showCommandWindow();
+        const window = getCommandWindow();
+        window?.webContents.send('ui:openSettings');
       },
     },
     {
       label: 'View History',
       click: () => {
-        toggleCommandWindow();
-        // TODO: Open history panel
+        showCommandWindow();
+        const window = getCommandWindow();
+        window?.webContents.send('ui:openHistory');
       },
     },
     { type: 'separator' },
