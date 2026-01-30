@@ -8,6 +8,7 @@ import { WindowsSystem } from './system';
 import { WindowsProcess } from './process';
 import { WindowsNetwork } from './network';
 import { WindowsServices } from './services';
+import { windowsWiFi } from './wifi';
 
 const windowsAdapter: IPlatformAdapter = {
   platform: 'windows',
@@ -18,6 +19,7 @@ const windowsAdapter: IPlatformAdapter = {
   process: new WindowsProcess(),
   network: new WindowsNetwork(),
   services: new WindowsServices(),
+  wifi: windowsWiFi,
 };
 
 export default windowsAdapter;

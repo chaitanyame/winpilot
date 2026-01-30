@@ -6,7 +6,7 @@ import { desktopCommanderTools } from '../tools';
 import { logger } from '../utils/logger';
 import { getEnabledMcpServers } from '../main/store';
 import { MCPLocalServerConfig, MCPRemoteServerConfig } from '../shared/mcp-types';
-import { setActiveWebContents } from '../main/permission-gate';
+import { setActiveWebContents, getActiveWebContents } from '../main/permission-gate';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -35,8 +35,9 @@ interface AssistantMessageData {
 }
 
 interface ToolExecutionStartData {
+  toolCallId: string;
   toolName: string;
-  arguments: Record<string, unknown>;
+  arguments?: Record<string, unknown>;
 }
 
 interface ToolExecutionCompleteData {
@@ -98,10 +99,18 @@ export class CopilotController {
   private currentAssistantResponse = '';
   private loopStartTime = 0;
   private currentIteration = 0;
+  private toolExecutionMap = new Map<string, { toolName: string; startTime: number; details?: string }>();
 
   constructor() {
+    // Check Node.js version for Copilot CLI compatibility
+    const nodeVersion = process.version;
+    const majorVersion = parseInt(nodeVersion.slice(1).split('.')[0]);
+    if (majorVersion < 22) {
+      logger.warn('Copilot', `Node.js v${majorVersion} detected. Copilot CLI requires v22+. Some features may not work correctly.`);
+    }
+
     const cliPath = findCopilotCliPath();
-    logger.copilot('Creating CopilotClient...', { cliPath });
+    logger.copilot('Creating CopilotClient...', { cliPath, nodeVersion });
     this.client = new CopilotClient(cliPath ? { cliPath } : undefined);
   }
 
@@ -219,12 +228,12 @@ export class CopilotController {
       // Note: 'web_fetch' is now enabled for web search/fetch capabilities
     ];
 
-    try {
-      // Get model from settings (defaults to gpt-4o)
-      const { getSettings } = await import('../main/store');
-      const settings = getSettings();
-      const model = settings.agenticLoop?.model || 'gpt-4o';
+    // Get model from settings (defaults to gpt-4o)
+    const { getSettings } = await import('../main/store');
+    const settings = getSettings();
+    const model = settings.agenticLoop?.model || 'gpt-4o';
 
+    try {
       // Create session with streaming enabled, custom tools, and MCP servers
       // Tools are defined with defineTool() and already have handlers
       // Use excludedTools to disable built-in CLI tools (availableTools doesn't work for custom tools)
@@ -243,8 +252,33 @@ export class CopilotController {
       logger.copilot('Session created', { sessionId: this.session.sessionId });
       this.isInitialized = true;
     } catch (error) {
-      logger.error('Copilot', 'Failed to create session', error);
-      throw error;
+      // Check if error is related to MCP server connection
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (errorMessage.includes('MCP') || errorMessage.includes('chrome') || errorMessage.includes('reconnect')) {
+        const mcpServerNames = Object.keys(mcpServers).length > 0
+          ? Object.keys(mcpServers).join(', ')
+          : 'none';
+        logger.warn('Copilot', `MCP server connection failed. Configured servers: ${mcpServerNames}. Retrying without MCP servers.`, error);
+
+        // Retry without MCP servers
+        this.session = await this.client.createSession({
+          streaming: true,
+          model,
+          tools: desktopCommanderTools,
+          excludedTools: excludedBuiltinTools,
+          mcpServers: undefined, // Disable MCP servers on retry
+          systemMessage: {
+            mode: 'replace',
+            content: this.getSystemPrompt(),
+          },
+        });
+
+        logger.copilot('Session created (without MCP)', { sessionId: this.session.sessionId });
+        this.isInitialized = true;
+      } else {
+        logger.error('Copilot', 'Failed to create session', error);
+        throw error;
+      }
     }
   }
 
@@ -664,6 +698,40 @@ What should we do next?`;
         // Tool is being called
         const toolStartData = event.data as ToolExecutionStartData;
         logger.copilot('Tool execution start', { toolName: toolStartData.toolName, arguments: toolStartData.arguments });
+
+        const toolArgs = toolStartData.arguments || {};
+        const commandDetail = toolStartData.toolName === 'run_shell_command' && typeof toolArgs.command === 'string'
+          ? `Command: ${toolArgs.command}`
+          : Object.keys(toolArgs).length > 0
+            ? `Args: ${JSON.stringify(toolArgs, null, 2)}`
+            : undefined;
+        const reasoningDetail = this.currentAssistantResponse?.trim()
+          ? `Reasoning: ${this.currentAssistantResponse.trim()}`
+          : undefined;
+        const details = [commandDetail, reasoningDetail].filter(Boolean).join('\n\n') || undefined;
+
+        if (toolStartData.toolCallId) {
+          this.toolExecutionMap.set(toolStartData.toolCallId, {
+            toolName: toolStartData.toolName,
+            startTime: Date.now(),
+            details,
+          });
+        }
+
+        // Emit action log event
+        const webContents = getActiveWebContents();
+        if (webContents) {
+          webContents.send('copilot:actionLog', {
+            id: `log-${toolStartData.toolCallId}`,
+            timestamp: new Date().toLocaleTimeString('en-US', { hour12: false }),
+            createdAt: Date.now(),
+            tool: toolStartData.toolName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+            description: `Executing ${toolStartData.toolName.replace(/_/g, ' ')}...`,
+            status: 'pending' as const,
+            details,
+          });
+        }
+
         streamEvent = {
           type: 'tool_call',
           toolName: toolStartData.toolName,
@@ -678,13 +746,37 @@ What should we do next?`;
         const toolCompleteData = event.data as ToolExecutionCompleteData;
         logger.copilot('Tool execution complete', { success: toolCompleteData.success, result: toolCompleteData.result, error: toolCompleteData.error });
 
+        const toolExecution = this.toolExecutionMap.get(toolCompleteData.toolCallId);
+        const toolName = toolExecution?.toolName ?? toolCompleteData.toolCallId;
+        const duration = toolExecution ? Date.now() - toolExecution.startTime : undefined;
+        const details = toolExecution?.details;
+        if (toolExecution) {
+          this.toolExecutionMap.delete(toolCompleteData.toolCallId);
+        }
+
         // Track tool execution for agentic loop
         this.currentTurnResults.push({
-          toolName: toolCompleteData.toolCallId,
+          toolName,
           success: toolCompleteData.success,
           result: toolCompleteData.result?.content,
           error: toolCompleteData.error?.message,
         });
+
+        // Emit action log event for completion
+        const webContents = getActiveWebContents();
+        if (webContents) {
+          webContents.send('copilot:actionLog', {
+            id: `log-${toolCompleteData.toolCallId}`,
+            timestamp: new Date().toLocaleTimeString('en-US', { hour12: false }),
+            createdAt: Date.now(),
+            tool: toolName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+            description: `Completed ${toolName.replace(/_/g, ' ')}`,
+            status: toolCompleteData.success ? ('success' as const) : ('error' as const),
+            error: toolCompleteData.error?.message,
+            duration,
+            details,
+          });
+        }
 
         streamEvent = {
           type: 'tool_result',

@@ -9,28 +9,16 @@ const execAsync = promisify(exec);
 
 export class WindowsNetwork implements INetwork {
 
-  async getNetworkInfo(params: { includeInactive?: boolean }): Promise<NetworkInfoData> {
+  async getNetworkInfo(_params: { includeInactive?: boolean }): Promise<NetworkInfoData> {
     try {
       // Get hostname
       const { stdout: hostnameOutput } = await execAsync('hostname');
       const hostname = hostnameOutput.trim();
 
-      // Get network interfaces
-      const interfaceScript = `
-        Get-NetAdapter | Where-Object { ${params.includeInactive ? '$true' : '$_.Status -eq "Up"'} } | ForEach-Object {
-          $adapter = $_
-          $ipConfig = Get-NetIPAddress -InterfaceIndex $adapter.InterfaceIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Select-Object -First 1
-          [PSCustomObject]@{
-            Name = $adapter.Name
-            Type = $adapter.InterfaceDescription
-            Status = $adapter.Status
-            IPv4 = if ($ipConfig) { $ipConfig.IPAddress } else { $null }
-            MAC = $adapter.MacAddress
-          }
-        } | ConvertTo-Json -Compress
-      `;
+      // Get network interfaces - use single-line PowerShell script
+      const interfaceScript = 'Get-NetAdapter | Where-Object { $true } | ForEach-Object { $adapter = $_; $ipConfig = Get-NetIPAddress -InterfaceIndex $adapter.InterfaceIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Select-Object -First 1; [PSCustomObject]@{ Name = $adapter.Name; Type = $adapter.InterfaceDescription; Status = $adapter.Status; IPv4 = if ($ipConfig) { $ipConfig.IPAddress } else { $null }; MAC = $adapter.MacAddress } } | ConvertTo-Json -Compress';
 
-      const { stdout: interfacesOutput } = await execAsync(`powershell -NoProfile -Command "${interfaceScript.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`);
+      const { stdout: interfacesOutput } = await execAsync(`powershell -NoProfile -Command "${interfaceScript}"`);
 
       let interfaces = [];
       try {

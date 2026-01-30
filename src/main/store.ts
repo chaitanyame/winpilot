@@ -1,8 +1,8 @@
 // Electron Store for Settings
 
 import Store from 'electron-store';
-import { Settings } from '../shared/types';
-import { DEFAULT_SETTINGS } from '../shared/constants';
+import { Settings, ScheduledTask, TaskLog, Timer } from '../shared/types';
+import { DEFAULT_SETTINGS, DEFAULT_MCP_SERVERS } from '../shared/constants';
 import { StoredMCPServer, MCPServerConfig } from '../shared/mcp-types';
 
 interface StoreSchema {
@@ -17,6 +17,9 @@ interface StoreSchema {
     timestamp: number;
   }>;
   mcpServers: StoredMCPServer[];
+  scheduledTasks: ScheduledTask[];
+  taskLogs: TaskLog[];
+  activeTimers: Timer[];
 }
 
 let store: Store<StoreSchema>;
@@ -32,18 +35,80 @@ export function initStore(): Store<StoreSchema> {
       history: [],
       permissions: {},
       mcpServers: [],
+      scheduledTasks: [],
+      taskLogs: [],
+      activeTimers: [],
     },
   });
+
+  // Auto-add default MCP servers if not present
+  ensureDefaultMcpServers();
 
   return store;
 }
 
 /**
- * Get application settings
+ * Ensure default MCP servers are added to the store
+ * This runs on every app start, but only adds servers that don't already exist
+ */
+function ensureDefaultMcpServers(): void {
+  const existing = getMcpServers();
+  const existingIds = new Set(existing.map(s => s.id));
+  let added = false;
+
+  for (const defaultServer of DEFAULT_MCP_SERVERS) {
+    if (!existingIds.has(defaultServer.id)) {
+      // Create with fresh timestamps
+      existing.push({
+        ...defaultServer,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      added = true;
+    }
+  }
+
+  if (added) {
+    store.set('mcpServers', existing);
+    console.log('Added default MCP servers');
+  }
+}
+
+/**
+ * Get application settings with migration support
  */
 export function getSettings(): Settings {
   if (!store) initStore();
-  return store.get('settings', DEFAULT_SETTINGS);
+  const settings = store.get('settings', DEFAULT_SETTINGS);
+
+  // Migrate old settings to include new properties
+  let needsUpdate = false;
+
+  if (!settings.notifications) {
+    settings.notifications = DEFAULT_SETTINGS.notifications;
+    needsUpdate = true;
+  }
+
+  if (!settings.scheduledTasks) {
+    settings.scheduledTasks = DEFAULT_SETTINGS.scheduledTasks;
+    needsUpdate = true;
+  }
+
+  if (!settings.voiceInput) {
+    settings.voiceInput = DEFAULT_SETTINGS.voiceInput;
+    needsUpdate = true;
+  }
+
+  if (settings.ui?.menuBarMode === undefined) {
+    settings.ui.menuBarMode = DEFAULT_SETTINGS.ui.menuBarMode;
+    needsUpdate = true;
+  }
+
+  if (needsUpdate) {
+    store.set('settings', settings);
+  }
+
+  return settings;
 }
 
 /**
@@ -211,9 +276,98 @@ export function toggleMcpServer(id: string): StoredMCPServer | null {
   const servers = getMcpServers();
   const index = servers.findIndex(s => s.id === id);
   if (index === -1) return null;
-  
+
   servers[index].config.enabled = !servers[index].config.enabled;
   servers[index].updatedAt = Date.now();
   store.set('mcpServers', servers);
   return servers[index];
+}
+
+/**
+ * Get all scheduled tasks
+ */
+export function getScheduledTasks(): ScheduledTask[] {
+  if (!store) initStore();
+  return store.get('scheduledTasks', []);
+}
+
+/**
+ * Add a new scheduled task
+ */
+export function addScheduledTask(task: Omit<ScheduledTask, 'id' | 'createdAt' | 'updatedAt'>): ScheduledTask {
+  if (!store) initStore();
+  const tasks = getScheduledTasks();
+  const newTask: ScheduledTask = {
+    ...task,
+    id: `task-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+  tasks.push(newTask);
+  store.set('scheduledTasks', tasks);
+  return newTask;
+}
+
+/**
+ * Update an existing scheduled task
+ */
+export function updateScheduledTask(id: string, updates: Partial<ScheduledTask>): ScheduledTask | null {
+  if (!store) initStore();
+  const tasks = getScheduledTasks();
+  const index = tasks.findIndex(t => t.id === id);
+  if (index === -1) return null;
+
+  tasks[index] = {
+    ...tasks[index],
+    ...updates,
+    updatedAt: Date.now(),
+  };
+  store.set('scheduledTasks', tasks);
+  return tasks[index];
+}
+
+/**
+ * Delete a scheduled task
+ */
+export function deleteScheduledTask(id: string): boolean {
+  if (!store) initStore();
+  const tasks = getScheduledTasks();
+  const filtered = tasks.filter(t => t.id !== id);
+  const deleted = filtered.length < tasks.length;
+  if (deleted) {
+    store.set('scheduledTasks', filtered);
+  }
+  return deleted;
+}
+
+/**
+ * Get task execution logs
+ */
+export function getTaskLogs(): TaskLog[] {
+  if (!store) initStore();
+  return store.get('taskLogs', []);
+}
+
+/**
+ * Add a task execution log
+ */
+export function addTaskLog(log: TaskLog): void {
+  if (!store) initStore();
+  const logs = getTaskLogs();
+  logs.unshift(log); // Add to beginning
+
+  // Keep only last 100 logs
+  if (logs.length > 100) {
+    logs.splice(100);
+  }
+
+  store.set('taskLogs', logs);
+}
+
+/**
+ * Clear task execution logs
+ */
+export function clearTaskLogs(): void {
+  if (!store) initStore();
+  store.set('taskLogs', []);
 }

@@ -1,12 +1,13 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { User, Bot, Loader2, CheckCircle, XCircle, ChevronDown, ChevronRight,
-  MonitorUp, FolderOpen, AppWindow, Volume2, Clipboard, Cpu, FileText } from 'lucide-react';
-import type { Message } from '../../shared/types';
+  MonitorUp, FolderOpen, AppWindow, Volume2, Clipboard, Cpu, FileText, AlertTriangle } from 'lucide-react';
+import type { ActionLog, Message } from '../../shared/types';
 
 interface Props {
   messages: Message[];
   isLoading: boolean;
+  actionLogs?: ActionLog[];
 }
 
 // Friendly tool names and icons
@@ -372,12 +373,12 @@ function ToolCallsDisplay({ toolCalls }: { toolCalls: Message['toolCalls'] }) {
                   animate={{ opacity: 1, x: 0 }}
                   className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs ${
                     tool.status === 'running'
-                      ? 'bg-primary-50 dark:bg-primary-900/20 text-primary-700 dark:text-primary-300'
+                      ? 'bg-purple-500/10 dark:bg-purple-500/10 text-purple-700 dark:text-purple-300 border border-purple-500/20 dark:border-purple-500/20'
                       : tool.status === 'success'
-                        ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400'
+                        ? 'bg-emerald-500/10 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/20 dark:border-emerald-500/20'
                         : tool.status === 'error'
-                          ? 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400'
-                          : 'bg-dark-100 dark:bg-dark-700 text-dark-600 dark:text-dark-400'
+                          ? 'bg-rose-500/10 dark:bg-rose-500/10 text-rose-700 dark:text-rose-400 border border-rose-500/20 dark:border-rose-500/20'
+                          : 'bg-stone-100 dark:bg-stone-800 text-stone-600 dark:text-stone-400'
                   }`}
                 >
                   {tool.status === 'running' ? (
@@ -400,8 +401,14 @@ function ToolCallsDisplay({ toolCalls }: { toolCalls: Message['toolCalls'] }) {
   );
 }
 
-export function MessageStream({ messages, isLoading }: Props) {
+export function MessageStream({ messages, isLoading, actionLogs = [] }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  const userMessageTimestamps = useMemo(() =>
+    messages
+      .filter(message => message.role === 'user')
+      .map(message => ({ id: message.id, ts: message.timestamp?.getTime?.() ?? 0 })),
+  [messages]);
 
   // Auto-scroll to bottom when messages change
   useEffect(() => {
@@ -409,47 +416,69 @@ export function MessageStream({ messages, isLoading }: Props) {
   }, [messages]);
 
   return (
-    <div className="p-4 space-y-4">
+    <div className="p-6 space-y-5">
       {messages.map((message, index) => {
+        const messageTimestamp = message.timestamp?.getTime?.() ?? 0;
+        let nextUserTimestamp = Number.POSITIVE_INFINITY;
+
+        if (message.role === 'user') {
+          const currentIndex = userMessageTimestamps.findIndex(item => item.id === message.id);
+          if (currentIndex >= 0 && currentIndex < userMessageTimestamps.length - 1) {
+            nextUserTimestamp = userMessageTimestamps[currentIndex + 1].ts;
+          }
+        }
+
+        const inlineLogs = message.role === 'user'
+          ? actionLogs.filter(log => log.createdAt >= messageTimestamp && log.createdAt < nextUserTimestamp)
+          : [];
+
         return (
           <motion.div
             key={message.id}
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.2 }}
-            className={`flex gap-3 ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
+            className={`flex w-full gap-3 ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
           >
             {message.role === 'assistant' && (
               <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary-100 dark:bg-primary-900/30 flex items-center justify-center">
                 <Bot className="w-4 h-4 text-primary-600 dark:text-primary-400" />
               </div>
             )}
-            
-            <div
-              className={`max-w-[85%] ${
-                message.role === 'user'
-                  ? 'message-user px-4 py-3'
-                  : 'message-assistant px-4 py-3'
-              }`}
-            >
-              {/* Tool calls display */}
-              <ToolCallsDisplay toolCalls={message.toolCalls} />
 
-              {/* Message content */}
-              {message.content && (
-                <div className="break-words leading-relaxed">
-                  {renderContent(message.content)}
-                  {isLoading && index === messages.length - 1 && message.role === 'assistant' && (
-                    <span className="cursor-blink"></span>
-                  )}
-                </div>
-              )}
+            <div className={`flex flex-col ${message.role === 'user' ? 'items-end flex-1' : ''}`}>
+              <div
+                className={`max-w-[82%] rounded-2xl border backdrop-blur-sm shadow-lg/10 ${
+                  message.role === 'user'
+                    ? 'message-user px-5 py-3 border-purple-500/30 bg-purple-500/15'
+                    : 'message-assistant p-5 border-stone-700/60 bg-stone-900/40'
+                }`}
+              >
+                {/* Tool calls display */}
+                <ToolCallsDisplay toolCalls={message.toolCalls} />
 
-              {/* Error display */}
-              {message.error && (
-                <div className="mt-2 text-sm text-red-500 dark:text-red-400 flex items-center gap-1.5">
-                  <XCircle className="w-4 h-4" />
-                  <span>{message.error}</span>
+                {/* Message content */}
+                {message.content && (
+                  <div className="break-words leading-relaxed text-[13px] sm:text-sm">
+                    {renderContent(message.content)}
+                    {isLoading && index === messages.length - 1 && message.role === 'assistant' && (
+                      <span className="cursor-blink"></span>
+                    )}
+                  </div>
+                )}
+
+                {/* Error display */}
+                {message.error && (
+                  <div className="mt-2 text-sm text-red-500 dark:text-red-400 flex items-center gap-1.5">
+                    <XCircle className="w-4 h-4" />
+                    <span>{message.error}</span>
+                  </div>
+                )}
+              </div>
+
+              {message.role === 'user' && inlineLogs.length > 0 && (
+                <div className="w-full mt-2">
+                  <InlineLogs logs={inlineLogs} />
                 </div>
               )}
             </div>
@@ -483,6 +512,74 @@ export function MessageStream({ messages, isLoading }: Props) {
       )}
 
       <div ref={bottomRef} />
+    </div>
+  );
+}
+
+function InlineLogs({ logs }: { logs: ActionLog[] }) {
+  const [expanded, setExpanded] = useState(true);
+
+  const hasRunning = logs.some(log => log.status === 'pending');
+  const hasError = logs.some(log => log.status === 'error');
+  const allSuccess = logs.length > 0 && logs.every(log => log.status === 'success');
+
+  return (
+    <div className="mt-4">
+      <button
+        onClick={() => setExpanded(prev => !prev)}
+        className="flex items-center gap-2 text-[11px] text-stone-400 dark:text-stone-400 hover:text-stone-200 transition-colors"
+      >
+        {expanded ? (
+          <ChevronDown className="w-3.5 h-3.5" />
+        ) : (
+          <ChevronRight className="w-3.5 h-3.5" />
+        )}
+        <span className="flex items-center gap-1.5">
+          Logs & Actions
+          {hasError ? (
+            <XCircle className="w-3.5 h-3.5 text-rose-400" />
+          ) : hasRunning ? (
+            <Loader2 className="w-3.5 h-3.5 text-amber-400 animate-spin" />
+          ) : allSuccess ? (
+            <CheckCircle className="w-3.5 h-3.5 text-emerald-400" />
+          ) : (
+            <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+          )}
+        </span>
+      </button>
+
+      {expanded && (
+        <div className="mt-2 space-y-2">
+          {logs.map(log => (
+            <div key={log.id} className="p-2.5 rounded-lg bg-stone-900/50 border border-stone-700/60">
+              <div className="flex items-center gap-2 text-xs">
+                {log.status === 'success' ? (
+                  <CheckCircle className="w-3.5 h-3.5 text-emerald-400" />
+                ) : log.status === 'error' ? (
+                  <XCircle className="w-3.5 h-3.5 text-rose-400" />
+                ) : log.status === 'pending' ? (
+                  <Loader2 className="w-3.5 h-3.5 text-amber-400 animate-spin" />
+                ) : (
+                  <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+                )}
+                <span className="text-stone-400 font-mono">{log.timestamp}</span>
+                <span className="text-stone-200 font-medium">{log.tool}</span>
+              </div>
+              <div className="text-[11px] text-stone-300 mt-1">{log.description}</div>
+              {log.details && (
+                <div className="text-[10px] text-stone-400 font-mono whitespace-pre-wrap mt-1 rounded-md bg-stone-950/40 border border-stone-800/60 p-2">
+                  {log.details}
+                </div>
+              )}
+              {log.error && (
+                <div className="text-[10px] text-rose-400 font-mono break-all mt-1 rounded-md bg-rose-950/30 border border-rose-900/40 p-2">
+                  {log.error}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

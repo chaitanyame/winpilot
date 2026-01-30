@@ -735,6 +735,70 @@ class UnifiedPlatformAdapter {
   }
 
   // ==========================================================================
+  // WiFi Control
+  // ==========================================================================
+
+  async getWiFiStatus(): Promise<OperationResult<{ enabled: boolean; connected: boolean; ssid?: string; signalStrength?: number; interfaceName: string }>> {
+    try {
+      const status = await this.adapter.wifi.getStatus();
+      return { success: true, data: status };
+    } catch (error) {
+      return { success: false, error: this.formatError(error) };
+    }
+  }
+
+  async enableWiFi(): Promise<OperationResult<void>> {
+    try {
+      const result = await this.adapter.wifi.enable();
+      if (!result) {
+        return { success: false, error: 'Failed to enable WiFi' };
+      }
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: this.formatError(error) };
+    }
+  }
+
+  async disableWiFi(): Promise<OperationResult<void>> {
+    try {
+      const result = await this.adapter.wifi.disable();
+      if (!result) {
+        return { success: false, error: 'Failed to disable WiFi' };
+      }
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: this.formatError(error) };
+    }
+  }
+
+  async toggleWiFi(): Promise<OperationResult<{ enabled: boolean }>> {
+    try {
+      const result = await this.adapter.wifi.toggle();
+      return { success: true, data: result };
+    } catch (error) {
+      return { success: false, error: this.formatError(error) };
+    }
+  }
+
+  async listWiFiNetworks(): Promise<OperationResult<Array<{ ssid: string; signalStrength: number; authentication: string }>>> {
+    try {
+      const networks = await this.adapter.wifi.listNetworks();
+      return { success: true, data: networks };
+    } catch (error) {
+      return { success: false, error: this.formatError(error) };
+    }
+  }
+
+  async listAvailableWiFi(): Promise<OperationResult<Array<{ ssid: string; signalStrength: number; authentication: string }>>> {
+    try {
+      const networks = await this.adapter.wifi.listAvailableNetworks();
+      return { success: true, data: networks };
+    } catch (error) {
+      return { success: false, error: this.formatError(error) };
+    }
+  }
+
+  // ==========================================================================
   // Utilities
   // ==========================================================================
 

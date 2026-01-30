@@ -8,6 +8,10 @@ import { createCommandWindow, getCommandWindow } from './windows';
 import { registerHotkeys, unregisterHotkeys } from './hotkeys';
 import { setupIpcHandlers } from './ipc';
 import { initStore } from './store';
+import { taskScheduler } from './scheduler';
+import { timerManager } from './timers';
+import { initDatabase, closeDatabase } from './database';
+import { reminderManager } from './reminders';
 
 // In development, use a separate userData directory to avoid conflicts
 if (!app.isPackaged) {
@@ -73,6 +77,9 @@ async function initApp() {
   // Initialize settings store
   initStore();
 
+  // Initialize SQLite database
+  initDatabase();
+
   // Create the command window (hidden initially)
   await createCommandWindow();
 
@@ -84,6 +91,9 @@ async function initApp() {
 
   // Setup IPC handlers for tool communication
   setupIpcHandlers();
+
+  // Initialize task scheduler
+  await taskScheduler.init();
 
   console.log('Desktop Commander initialized');
 }
@@ -107,6 +117,10 @@ app.on('activate', () => {
 
 // Cleanup before quit
 app.on('before-quit', () => {
+  taskScheduler.destroy();
+  timerManager.destroy();
+  reminderManager.destroy();
+  closeDatabase();
   unregisterHotkeys();
   destroyTray();
 });

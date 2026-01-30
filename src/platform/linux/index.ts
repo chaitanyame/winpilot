@@ -1,7 +1,11 @@
 // Linux Platform Adapter (Stub - To be implemented in Phase 6)
 
-import { IPlatformAdapter, IWindowManager, IFileSystem, IApps, ISystem, IProcess, INetwork, IServices } from '../index';
+import { IPlatformAdapter, IWindowManager, IFileSystem, IApps, ISystem, IProcess, INetwork, IServices, IWifi } from '../index';
 import { WindowInfo, FileInfo, AppInfo, ProcessInfo, SystemInfoData, NetworkInfoData, NetworkTestResult, ServiceInfo } from '../../shared/types';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+
+const execAsync = promisify(exec);
 
 class LinuxWindowManager implements IWindowManager {
   async listWindows(): Promise<WindowInfo[]> {
@@ -70,6 +74,94 @@ class LinuxServices implements IServices {
   async controlService(): Promise<boolean> { return false; }
 }
 
+class LinuxWifi implements IWifi {
+  async getStatus() {
+    try {
+      const { stdout } = await execAsync('nmcli -t -f WIFI,GENERAL radio');
+      const enabled = stdout.includes('enabled');
+
+      const { stdout: statusOutput } = await execAsync('nmcli -t -f ACTIVE,SSID,SIGNAL connection show --active');
+      const lines = statusOutput.split('\n');
+      const result: any = {
+        enabled,
+        connected: false,
+        interfaceName: 'wlan0'
+      };
+
+      for (const line of lines) {
+        if (line.includes('yes')) {
+          const parts = line.split(':');
+          result.ssid = parts[1];
+          result.signalStrength = parseInt(parts[2], 10);
+          result.connected = true;
+        }
+      }
+
+      return result;
+    } catch {
+      return { enabled: false, connected: false, interfaceName: 'wlan0' };
+    }
+  }
+
+  async enable() {
+    try {
+      await execAsync('nmcli radio wifi on');
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async disable() {
+    try {
+      await execAsync('nmcli radio wifi off');
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async toggle() {
+    const status = await this.getStatus();
+    if (status.enabled) {
+      await this.disable();
+      return { enabled: false };
+    } else {
+      await this.enable();
+      return { enabled: true };
+    }
+  }
+
+  async listNetworks() {
+    try {
+      const { stdout } = await execAsync('nmcli -t -f NAME connection show');
+      return stdout.split('\n')
+        .filter(line => line.trim())
+        .map(ssid => ({ ssid: ssid.trim(), signalStrength: 0, authentication: 'Unknown' }));
+    } catch {
+      return [];
+    }
+  }
+
+  async listAvailableNetworks() {
+    try {
+      const { stdout } = await execAsync('nmcli -t -f SSID,SIGNAL,SECURITY device wifi list');
+      return stdout.split('\n')
+        .filter(line => line.trim())
+        .map(line => {
+          const parts = line.split(':');
+          return {
+            ssid: parts[0],
+            signalStrength: parseInt(parts[1], 10),
+            authentication: parts[2] || 'Unknown'
+          };
+        });
+    } catch {
+      return [];
+    }
+  }
+}
+
 const linuxAdapter: IPlatformAdapter = {
   platform: 'linux',
   windowManager: new LinuxWindowManager(),
@@ -79,6 +171,7 @@ const linuxAdapter: IPlatformAdapter = {
   process: new LinuxProcess(),
   network: new LinuxNetwork(),
   services: new LinuxServices(),
+  wifi: new LinuxWifi(),
 };
 
 export default linuxAdapter;

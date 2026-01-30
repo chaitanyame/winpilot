@@ -1,15 +1,19 @@
 // IPC Handlers for Main Process
 
 import { ipcMain, clipboard, shell } from 'electron';
-import { IPC_CHANNELS } from '../shared/types';
+import { IPC_CHANNELS, ScheduledTask, Timer } from '../shared/types';
 import { MCP_IPC_CHANNELS, MCPServerConfig } from '../shared/mcp-types';
-import { getSettings, setSettings, getHistory, addToHistory, clearHistory, getMcpServers, addMcpServer, updateMcpServer, deleteMcpServer, toggleMcpServer } from './store';
-import { hideCommandWindow, resizeCommandWindow } from './windows';
-import { updateHotkey } from './hotkeys';
+import { getSettings, setSettings, getHistory, addToHistory, clearHistory, getMcpServers, addMcpServer, updateMcpServer, deleteMcpServer, toggleMcpServer, getScheduledTasks, addScheduledTask, updateScheduledTask, deleteScheduledTask, getTaskLogs } from './store';
+import { hideCommandWindow, resizeCommandWindow, minimizeCommandWindow, maximizeCommandWindow, fitWindowToScreen, getCommandWindow } from './windows';
+import { updateHotkey, registerVoiceHotkey, unregisterVoiceHotkey } from './hotkeys';
 import { updateTrayMenu } from './tray';
 import { getPlatformAdapter } from '../platform';
 import { copilotController } from '../copilot/client';
 import { cancelAllPendingPermissions, handlePermissionResponse } from './permission-gate';
+import { taskScheduler } from './scheduler';
+import { voiceInputManager } from './voice-input';
+import { timerManager } from './timers';
+import { reminderManager } from './reminders';
 
 /**
  * Setup all IPC handlers
@@ -20,25 +24,39 @@ export function setupIpcHandlers(): void {
   // App control handlers
   ipcMain.handle('app:getSettings', () => getSettings());
   
-  ipcMain.handle('app:setSettings', async (_, settings) => {
+  ipcMain.handle('app:setSettings', async (_event: Electron.IpcMainInvokeEvent, settings) => {
     const updated = setSettings(settings);
-    
+
     // Update hotkey if changed
     if (settings.hotkey) {
       updateHotkey(settings.hotkey);
     }
-    
+
+    // Update voice hotkey if voice input settings changed
+    if (settings.voiceInput) {
+      if (settings.voiceInput.enabled) {
+        registerVoiceHotkey();
+      } else {
+        unregisterVoiceHotkey();
+      }
+    }
+
     // Update tray menu
     updateTrayMenu();
-    
+
     return updated;
   });
 
   ipcMain.handle('app:getHistory', () => getHistory());
   ipcMain.handle('app:clearHistory', () => clearHistory());
-  
+
   ipcMain.on('app:hide', () => hideCommandWindow());
-  ipcMain.on('app:resize', (_, height: number) => resizeCommandWindow(height));
+  ipcMain.on('app:resize', (_event: Electron.IpcMainEvent, height: number) => resizeCommandWindow(height));
+
+  // Window control handlers
+  ipcMain.on('app:window:minimize', () => minimizeCommandWindow());
+  ipcMain.on('app:window:maximize', () => maximizeCommandWindow());
+  ipcMain.on('app:window:fitToScreen', () => fitWindowToScreen());
 
   // Window management handlers
   ipcMain.handle(IPC_CHANNELS.WINDOW_LIST, async () => {
@@ -219,10 +237,10 @@ export function setupIpcHandlers(): void {
             sender.send(IPC_CHANNELS.COPILOT_STREAM_CHUNK, streamEvent.content);
             break;
           case 'tool_call':
-            sender.send(IPC_CHANNELS.COPILOT_STREAM_CHUNK, streamEvent.content);
+            // Tool execution details are shown in the Logs panel; avoid duplicating in chat output.
             break;
           case 'tool_result':
-            sender.send(IPC_CHANNELS.COPILOT_STREAM_CHUNK, streamEvent.content);
+            // Tool execution details are shown in the Logs panel; avoid duplicating in chat output.
             break;
           case 'iteration_start':
             sender.send(IPC_CHANNELS.COPILOT_STREAM_CHUNK, streamEvent.content || '');
@@ -275,8 +293,8 @@ export function setupIpcHandlers(): void {
   });
 
   // Permission handlers
-  ipcMain.on(IPC_CHANNELS.APP_PERMISSION_RESPONSE, (_, response) => {
-    handlePermissionResponse(response);
+  ipcMain.on(IPC_CHANNELS.APP_PERMISSION_RESPONSE, (_event: Electron.IpcMainEvent, response: unknown) => {
+    handlePermissionResponse(response as import('../shared/types').PermissionResponse);
   });
 
   // Shell handlers
@@ -341,5 +359,322 @@ export function setupIpcHandlers(): void {
       copilotController.notifyMcpServersChanged();
     }
     return server;
+  });
+
+  // Scheduled Tasks handlers
+  ipcMain.handle('task:list', () => {
+    return getScheduledTasks();
+  });
+
+  ipcMain.handle('task:add', async (_, task: Omit<ScheduledTask, 'id' | 'createdAt' | 'updatedAt'>) => {
+    const newTask = addScheduledTask(task);
+
+    if (newTask.enabled) {
+      taskScheduler.scheduleTask(newTask);
+    }
+
+    return newTask;
+  });
+
+  ipcMain.handle('task:update', async (_, id: string, updates: Partial<ScheduledTask>) => {
+    const updated = updateScheduledTask(id, updates);
+
+    if (!updated) {
+      throw new Error('Task not found');
+    }
+
+    // Reschedule if enabled
+    if (updated.enabled) {
+      taskScheduler.scheduleTask(updated);
+    } else {
+      taskScheduler.unscheduleTask(id);
+    }
+
+    return updated;
+  });
+
+  ipcMain.handle('task:delete', async (_, id: string) => {
+    taskScheduler.unscheduleTask(id);
+    return deleteScheduledTask(id);
+  });
+
+  ipcMain.handle('task:toggle', async (_, id: string) => {
+    const task = getScheduledTasks().find(t => t.id === id);
+    if (!task) throw new Error('Task not found');
+
+    const updated = updateScheduledTask(id, { enabled: !task.enabled });
+
+    if (updated && updated.enabled) {
+      taskScheduler.scheduleTask(updated);
+    } else if (updated) {
+      taskScheduler.unscheduleTask(id);
+    }
+
+    return updated;
+  });
+
+  ipcMain.handle('task:execute', async (_, id: string) => {
+    await taskScheduler.executeTask(id);
+    return { success: true };
+  });
+
+  ipcMain.handle('task:logs', () => {
+    return getTaskLogs();
+  });
+
+  // Voice input handlers
+  ipcMain.handle('voice:test', async () => {
+    // Test voice recognition by toggling
+    await voiceInputManager.toggleRecording();
+    return { success: true };
+  });
+
+  ipcMain.handle('voice:isRecording', () => {
+    return voiceInputManager.getIsRecording();
+  });
+
+  ipcMain.handle('voice:transcript', (_, transcript: string) => {
+    // This is called from renderer when browser speech recognition completes
+    voiceInputManager.sendTranscript(transcript);
+    return { success: true };
+  });
+
+  // Timer handlers
+  ipcMain.handle('timer:list', () => {
+    return timerManager.getAllTimers();
+  });
+
+  ipcMain.handle('timer:get', (_, id: string) => {
+    return timerManager.getTimer(id);
+  });
+
+  ipcMain.handle('timer:create', (_, { type, name, options }) => {
+    const timer = timerManager.createTimer(type, name, options);
+    // Notify renderer about timer update
+    const mainWindow = getCommandWindow();
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('timer:updated', timer);
+    }
+    return timer;
+  });
+
+  ipcMain.handle('timer:start', (_, id: string) => {
+    const timer = timerManager.startTimer(id);
+    const mainWindow = getCommandWindow();
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('timer:updated', timer);
+    }
+    return timer;
+  });
+
+  ipcMain.handle('timer:pause', (_, id: string) => {
+    const timer = timerManager.pauseTimer(id);
+    const mainWindow = getCommandWindow();
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('timer:updated', timer);
+    }
+    return timer;
+  });
+
+  ipcMain.handle('timer:reset', (_, id: string) => {
+    const timer = timerManager.resetTimer(id);
+    const mainWindow = getCommandWindow();
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('timer:updated', timer);
+    }
+    return timer;
+  });
+
+  ipcMain.handle('timer:delete', (_, id: string) => {
+    const success = timerManager.deleteTimer(id);
+    const mainWindow = getCommandWindow();
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('timer:deleted', id);
+    }
+    return success;
+  });
+
+  ipcMain.handle('timer:skip', (_, id: string) => {
+    const timer = timerManager.skipPomodoroPhase(id);
+    const mainWindow = getCommandWindow();
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('timer:updated', timer);
+    }
+    return timer;
+  });
+
+  // Subscribe to timer updates
+  ipcMain.on('timer:subscribe', (event: Electron.IpcMainEvent) => {
+    const timerTickHandler = (timer: Timer) => {
+      if (!event.sender.isDestroyed()) {
+        event.sender.send('timer:tick', timer);
+      }
+    };
+
+    const timerCreatedHandler = (timer: Timer) => {
+      if (!event.sender.isDestroyed()) {
+        event.sender.send('timer:created', timer);
+      }
+    };
+
+    const timerCompletedHandler = (timer: Timer) => {
+      if (!event.sender.isDestroyed()) {
+        event.sender.send('timer:completed', timer);
+      }
+    };
+
+    timerManager.on('timer-tick', timerTickHandler);
+    timerManager.on('timer-created', timerCreatedHandler);
+    timerManager.on('timer-completed', timerCompletedHandler);
+
+    // Clean up on window close
+    event.sender.on('destroyed', () => {
+      timerManager.off('timer-tick', timerTickHandler);
+      timerManager.off('timer-created', timerCreatedHandler);
+      timerManager.off('timer-completed', timerCompletedHandler);
+    });
+  });
+
+  // Reminder handlers
+  ipcMain.handle('reminder:list', () => {
+    return reminderManager.getActiveReminders();
+  });
+
+  ipcMain.handle('reminder:cancel', async (_event: Electron.IpcMainInvokeEvent, id: string) => {
+    return reminderManager.cancelReminder(id);
+  });
+
+  ipcMain.handle('reminder:delete', async (_event: Electron.IpcMainInvokeEvent, id: string) => {
+    return reminderManager.cancelReminder(id);
+  });
+
+  ipcMain.handle('reminder:create', async (_event: Electron.IpcMainInvokeEvent, { message, delayMinutes, scheduledTime }) => {
+    const time = scheduledTime ? new Date(scheduledTime) : undefined;
+    const reminder = delayMinutes
+      ? reminderManager.createReminderWithDelay(message, delayMinutes)
+      : reminderManager.createReminder(message, time!);
+    return reminder;
+  });
+
+  // Subscribe to reminder events
+  ipcMain.on('reminder:subscribe', (event: Electron.IpcMainEvent) => {
+    const reminderCreatedHandler = (reminder: unknown) => {
+      if (!event.sender.isDestroyed()) {
+        event.sender.send('reminder:created', reminder);
+      }
+    };
+
+    const reminderTriggeredHandler = (reminder: unknown) => {
+      if (!event.sender.isDestroyed()) {
+        event.sender.send('reminder:triggered', reminder);
+      }
+    };
+
+    const reminderCancelledHandler = (id: unknown) => {
+      if (!event.sender.isDestroyed()) {
+        event.sender.send('reminder:cancelled', id);
+      }
+    };
+
+    reminderManager.on('reminder-created', reminderCreatedHandler);
+    reminderManager.on('reminder-triggered', reminderTriggeredHandler);
+    reminderManager.on('reminder-cancelled', reminderCancelledHandler);
+
+    // Clean up on window close
+    event.sender.on('destroyed', () => {
+      reminderManager.off('reminder-created', reminderCreatedHandler);
+      reminderManager.off('reminder-triggered', reminderTriggeredHandler);
+      reminderManager.off('reminder-cancelled', reminderCancelledHandler);
+    });
+  });
+
+  // Chat history handlers
+  ipcMain.handle('chat:start', (_, title) => {
+    const { startChatSession } = require('./chat-history');
+    return startChatSession(title);
+  });
+
+  ipcMain.handle('chat:getHistory', (_, conversationId) => {
+    const { getConversationHistory } = require('./chat-history');
+    return getConversationHistory(conversationId);
+  });
+
+  ipcMain.handle('chat:getConversations', () => {
+    const { getAllConversations } = require('./chat-history');
+    return getAllConversations();
+  });
+
+  ipcMain.handle('chat:loadConversation', (_, id) => {
+    const { loadConversation } = require('./chat-history');
+    return loadConversation(id);
+  });
+
+  ipcMain.handle('chat:deleteConversation', (_, id) => {
+    const { deleteConversation } = require('./chat-history');
+    return deleteConversation(id);
+  });
+
+  ipcMain.handle('chat:search', (_, query) => {
+    const { searchConversations } = require('./chat-history');
+    return searchConversations(query);
+  });
+
+  ipcMain.handle('chat:getStats', () => {
+    const { getChatStatistics } = require('./chat-history');
+    return getChatStatistics();
+  });
+
+  // Menu bar mode handlers
+  ipcMain.handle('menubar:init', (_, config) => {
+    const { initCompactWindow } = require('./menubar');
+    const platform = process.platform;
+
+    if (platform === 'darwin') {
+      const { initMenuBar } = require('./menubar');
+      initMenuBar(config);
+      return { mode: 'menubar', platform };
+    } else {
+      initCompactWindow();
+      return { mode: 'compact', platform };
+    }
+  });
+
+  ipcMain.handle('menubar:show', () => {
+    if (process.platform === 'darwin') {
+      const { showMenuBar } = require('./menubar');
+      showMenuBar();
+    } else {
+      const { showCompactWindow } = require('./menubar');
+      showCompactWindow();
+    }
+  });
+
+  ipcMain.handle('menubar:hide', () => {
+    if (process.platform === 'darwin') {
+      const { hideMenuBar } = require('./menubar');
+      hideMenuBar();
+    } else {
+      const { hideCompactWindow } = require('./menubar');
+      hideCompactWindow();
+    }
+  });
+
+  ipcMain.handle('menubar:toggle', () => {
+    if (process.platform === 'darwin') {
+      const { toggleMenuBar } = require('./menubar');
+      toggleMenuBar();
+    } else {
+      const { toggleCompactWindow } = require('./menubar');
+      toggleCompactWindow();
+    }
+  });
+
+  ipcMain.handle('menubar:isActive', () => {
+    if (process.platform === 'darwin') {
+      const { isMenuBarActive } = require('./menubar');
+      return isMenuBarActive();
+    } else {
+      return true; // Compact window is always "active" if initialized
+    }
   });
 }

@@ -3,8 +3,10 @@
 import { globalShortcut } from 'electron';
 import { toggleCommandWindow } from './windows';
 import { getSettings } from './store';
+import { voiceInputManager } from './voice-input';
 
 let registeredHotkey: string | null = null;
+let registeredVoiceHotkey: string | null = null;
 
 /**
  * Register global hotkeys
@@ -20,11 +22,12 @@ export function registerHotkeys(): void {
     }
 
     // Register the new hotkey
-    const success = globalShortcut.register(hotkey, () => {
+    globalShortcut.register(hotkey, () => {
       console.log('Hotkey triggered:', hotkey);
       toggleCommandWindow();
     });
 
+    const success = globalShortcut.isRegistered(hotkey);
     if (success) {
       registeredHotkey = hotkey;
       console.log('Hotkey registered:', hotkey);
@@ -34,6 +37,9 @@ export function registerHotkeys(): void {
   } catch (error) {
     console.error('Error registering hotkey:', error);
   }
+
+  // Register voice input hotkey if enabled
+  registerVoiceHotkey();
 }
 
 /**
@@ -44,6 +50,10 @@ export function unregisterHotkeys(): void {
     globalShortcut.unregister(registeredHotkey);
     registeredHotkey = null;
   }
+  if (registeredVoiceHotkey) {
+    globalShortcut.unregister(registeredVoiceHotkey);
+    registeredVoiceHotkey = null;
+  }
   globalShortcut.unregisterAll();
 }
 
@@ -53,10 +63,11 @@ export function unregisterHotkeys(): void {
 export function updateHotkey(newHotkey: string): boolean {
   try {
     // Try to register the new hotkey first
-    const success = globalShortcut.register(newHotkey, () => {
+    globalShortcut.register(newHotkey, () => {
       toggleCommandWindow();
     });
 
+    const success = globalShortcut.isRegistered(newHotkey);
     if (success) {
       // Unregister old hotkey
       if (registeredHotkey) {
@@ -87,4 +98,52 @@ export function isHotkeyRegistered(hotkey: string): boolean {
  */
 export function getRegisteredHotkey(): string | null {
   return registeredHotkey;
+}
+
+/**
+ * Register voice input hotkey
+ */
+export function registerVoiceHotkey(): void {
+  const settings = getSettings();
+
+  if (!settings.voiceInput?.enabled) {
+    console.log('Voice input is disabled, skipping hotkey registration');
+    return;
+  }
+
+  const voiceHotkey = settings.voiceInput.hotkey;
+
+  try {
+    // Unregister any existing voice hotkey
+    if (registeredVoiceHotkey) {
+      globalShortcut.unregister(registeredVoiceHotkey);
+    }
+
+    // Register the voice hotkey with toggle behavior
+    globalShortcut.register(voiceHotkey, () => {
+      console.log('Voice hotkey triggered:', voiceHotkey);
+      voiceInputManager.toggleRecording();
+    });
+
+    const success = globalShortcut.isRegistered(voiceHotkey);
+    if (success) {
+      registeredVoiceHotkey = voiceHotkey;
+      console.log('Voice hotkey registered:', voiceHotkey);
+    } else {
+      console.error('Failed to register voice hotkey:', voiceHotkey);
+    }
+  } catch (error) {
+    console.error('Error registering voice hotkey:', error);
+  }
+}
+
+/**
+ * Unregister voice input hotkey
+ */
+export function unregisterVoiceHotkey(): void {
+  if (registeredVoiceHotkey) {
+    globalShortcut.unregister(registeredVoiceHotkey);
+    registeredVoiceHotkey = null;
+    console.log('Voice hotkey unregistered');
+  }
 }

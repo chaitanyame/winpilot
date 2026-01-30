@@ -69,5 +69,6 @@ export const logger = {
   tool: (message: string, data?: unknown) => log('Tool', message, data),
   platform: (message: string, data?: unknown) => log('Platform', message, data),
   ipc: (message: string, data?: unknown) => log('IPC', message, data),
+  warn: (category: string, message: string, data?: unknown) => log(category, `WARNING: ${message}`, data),
   error: (category: string, message: string, error: unknown) => logError(category, message, error),
 };

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { X, Moon, Sun, Monitor, Keyboard, Shield, FolderClosed, Brain } from 'lucide-react';
+import { X, Moon, Sun, Monitor, Keyboard, Shield, FolderClosed, Brain, Mic } from 'lucide-react';
 import type { Settings, AIModel } from '../../shared/types';
 
 interface Props {
@@ -10,7 +10,7 @@ interface Props {
 
 export function SettingsPanel({ isOpen, onClose }: Props) {
   const [settings, setSettings] = useState<Settings | null>(null);
-  const [activeTab, setActiveTab] = useState<'general' | 'ai' | 'permissions' | 'safety'>('general');
+  const [activeTab, setActiveTab] = useState<'general' | 'ai' | 'voice' | 'permissions' | 'safety'>('general');
 
   useEffect(() => {
     if (isOpen) {
@@ -44,6 +44,7 @@ export function SettingsPanel({ isOpen, onClose }: Props) {
   const tabs = [
     { id: 'general', label: 'General', icon: Monitor },
     { id: 'ai', label: 'AI Model', icon: Brain },
+    { id: 'voice', label: 'Voice', icon: Mic },
     { id: 'permissions', label: 'Permissions', icon: Shield },
     { id: 'safety', label: 'Safety', icon: FolderClosed },
   ] as const;
@@ -305,6 +306,198 @@ export function SettingsPanel({ isOpen, onClose }: Props) {
                 <p className="text-xs text-primary-700 dark:text-primary-300">
                   💡 <strong>Tip:</strong> Claude Sonnet 4.5 and GPT-5.1 Codex offer the best balance
                   of speed, reasoning, and tool use for autonomous desktop control.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'voice' && (
+            <div className="space-y-6">
+              {/* Enable Voice Input */}
+              <div>
+                <label className="flex items-center gap-2 cursor-pointer mb-4">
+                  <input
+                    type="checkbox"
+                    checked={settings.voiceInput?.enabled ?? false}
+                    onChange={(e) => updateSettings({
+                      voiceInput: {
+                        ...settings.voiceInput,
+                        enabled: e.target.checked,
+                        hotkey: settings.voiceInput?.hotkey || 'CommandOrControl+Shift+V',
+                        provider: settings.voiceInput?.provider || 'browser',
+                        language: settings.voiceInput?.language || 'en-US',
+                        showVisualFeedback: settings.voiceInput?.showVisualFeedback ?? true,
+                      }
+                    })}
+                    className="w-4 h-4 rounded border-dark-300 text-primary-500"
+                  />
+                  <span className="text-sm font-medium text-dark-700 dark:text-dark-300">
+                    Enable voice input
+                  </span>
+                </label>
+
+                {settings.voiceInput?.enabled && (
+                  <div className="space-y-4 pl-6 border-l-2 border-primary-200 dark:border-primary-800">
+                    {/* Voice Hotkey */}
+                    <div>
+                      <label className="block text-sm font-medium text-dark-700 dark:text-dark-300 mb-2">
+                        Voice Input Hotkey
+                      </label>
+                      <input
+                        type="text"
+                        value={settings.voiceInput?.hotkey || 'CommandOrControl+Shift+V'}
+                        onChange={(e) => updateSettings({
+                          voiceInput: {
+                            ...settings.voiceInput,
+                            hotkey: e.target.value
+                          }
+                        })}
+                        className="w-full px-4 py-2 rounded-lg border border-dark-200 dark:border-dark-600
+                                 bg-white dark:bg-dark-700 text-dark-700 dark:text-dark-300"
+                        placeholder="CommandOrControl+Shift+V"
+                      />
+                      <p className="text-xs text-dark-500 mt-1">
+                        Press once to start recording, press again to stop and transcribe
+                      </p>
+                    </div>
+
+                    {/* Provider Selection */}
+                    <div>
+                      <label className="block text-sm font-medium text-dark-700 dark:text-dark-300 mb-2">
+                        Speech Recognition Provider
+                      </label>
+                      <select
+                        value={settings.voiceInput?.provider || 'browser'}
+                        onChange={(e) => updateSettings({
+                          voiceInput: {
+                            ...settings.voiceInput,
+                            provider: e.target.value as 'browser' | 'whisper'
+                          }
+                        })}
+                        className="w-full px-4 py-2 rounded-lg border border-dark-200 dark:border-dark-600
+                                 bg-white dark:bg-dark-700 text-dark-700 dark:text-dark-300"
+                      >
+                        <option value="browser">Browser (Free, Offline, Built-in)</option>
+                        <option value="whisper">OpenAI Whisper (More Accurate, Requires API Key)</option>
+                      </select>
+                      <p className="text-xs text-dark-500 mt-1">
+                        {settings.voiceInput?.provider === 'browser'
+                          ? 'Uses browser\'s built-in speech recognition (works offline)'
+                          : 'Uses OpenAI Whisper API for better accuracy (requires internet)'
+                        }
+                      </p>
+                    </div>
+
+                    {/* Whisper API Key (if selected) */}
+                    {settings.voiceInput?.provider === 'whisper' && (
+                      <div>
+                        <label className="block text-sm font-medium text-dark-700 dark:text-dark-300 mb-2">
+                          OpenAI API Key
+                        </label>
+                        <input
+                          type="password"
+                          value={settings.voiceInput?.whisperApiKey || ''}
+                          onChange={(e) => updateSettings({
+                            voiceInput: {
+                              ...settings.voiceInput,
+                              whisperApiKey: e.target.value
+                            }
+                          })}
+                          className="w-full px-4 py-2 rounded-lg border border-dark-200 dark:border-dark-600
+                                   bg-white dark:bg-dark-700 text-dark-700 dark:text-dark-300"
+                          placeholder="sk-..."
+                        />
+                        <p className="text-xs text-dark-500 mt-1">
+                          Get your API key from{' '}
+                          <button
+                            onClick={() => window.electronAPI.openExternal('https://platform.openai.com/api-keys')}
+                            className="text-primary-500 hover:underline"
+                          >
+                            OpenAI Platform
+                          </button>
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Language Selection */}
+                    <div>
+                      <label className="block text-sm font-medium text-dark-700 dark:text-dark-300 mb-2">
+                        Language
+                      </label>
+                      <select
+                        value={settings.voiceInput?.language || 'en-US'}
+                        onChange={(e) => updateSettings({
+                          voiceInput: {
+                            ...settings.voiceInput,
+                            language: e.target.value
+                          }
+                        })}
+                        className="w-full px-4 py-2 rounded-lg border border-dark-200 dark:border-dark-600
+                                 bg-white dark:bg-dark-700 text-dark-700 dark:text-dark-300"
+                      >
+                        <option value="en-US">English (US)</option>
+                        <option value="en-GB">English (UK)</option>
+                        <option value="en-IN">English (India)</option>
+                        <option value="en-AU">English (Australia)</option>
+                        <option value="es-ES">Spanish (Spain)</option>
+                        <option value="es-MX">Spanish (Mexico)</option>
+                        <option value="fr-FR">French</option>
+                        <option value="de-DE">German</option>
+                        <option value="it-IT">Italian</option>
+                        <option value="pt-BR">Portuguese (Brazil)</option>
+                        <option value="pt-PT">Portuguese (Portugal)</option>
+                        <option value="ja-JP">Japanese</option>
+                        <option value="ko-KR">Korean</option>
+                        <option value="zh-CN">Chinese (Simplified)</option>
+                        <option value="zh-TW">Chinese (Traditional)</option>
+                        <option value="hi-IN">Hindi</option>
+                        <option value="ar-SA">Arabic</option>
+                        <option value="ru-RU">Russian</option>
+                      </select>
+                    </div>
+
+                    {/* Visual Feedback */}
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={settings.voiceInput?.showVisualFeedback ?? true}
+                        onChange={(e) => updateSettings({
+                          voiceInput: {
+                            ...settings.voiceInput,
+                            showVisualFeedback: e.target.checked
+                          }
+                        })}
+                        className="w-4 h-4 rounded border-dark-300 text-primary-500"
+                      />
+                      <span className="text-sm text-dark-600 dark:text-dark-400">
+                        Show recording indicator
+                      </span>
+                    </label>
+
+                    {/* Test Button */}
+                    <button
+                      onClick={async () => {
+                        try {
+                          await window.electronAPI.voiceTest();
+                        } catch (err) {
+                          console.error('Voice test failed:', err);
+                        }
+                      }}
+                      className="w-full px-4 py-2 bg-primary-500 hover:bg-primary-600 text-white rounded-lg
+                               transition-colors font-medium flex items-center justify-center gap-2"
+                    >
+                      <Mic className="w-4 h-4" />
+                      Test Voice Input
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Info Box */}
+              <div className="p-3 bg-primary-50 dark:bg-primary-900/20 rounded-lg">
+                <p className="text-xs text-primary-700 dark:text-primary-300">
+                  💡 <strong>Tip:</strong> Press {settings.voiceInput?.hotkey || 'Ctrl+Shift+V'} once to start
+                  recording, then press it again to stop and transcribe. The text will appear in the input field.
                 </p>
               </div>
             </div>

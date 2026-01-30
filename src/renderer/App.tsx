@@ -1,5 +1,7 @@
 import { useEffect } from 'react';
 import { CommandPalette } from './components/CommandPalette';
+import { ToastContainer } from './components/ToastNotifications';
+import { TimerWidgets } from './components/TimerWidgets';
 import { useTheme } from './hooks/useTheme';
 
 function App() {
@@ -24,6 +26,8 @@ function App() {
   return (
     <div className={`app ${theme}`}>
       <CommandPalette />
+      <TimerWidgets />
+      <ToastContainer />
     </div>
   );
 }

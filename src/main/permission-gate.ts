@@ -15,6 +15,10 @@ export function setActiveWebContents(contents: WebContents | null): void {
   activeWebContents = contents;
 }
 
+export function getActiveWebContents(): WebContents | null {
+  return activeWebContents;
+}
+
 export function cancelAllPendingPermissions(): void {
   for (const [id, resolve] of pending.entries()) {
     pending.delete(id);

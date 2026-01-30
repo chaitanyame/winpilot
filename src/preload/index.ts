@@ -3,7 +3,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import { IPC_CHANNELS } from '../shared/types';
 import { MCP_IPC_CHANNELS } from '../shared/mcp-types';
-import type { PermissionRequest, PermissionResponse } from '../shared/types';
+import type { PermissionRequest, PermissionResponse, ActionLog } from '../shared/types';
 
 // Expose protected methods to the renderer process
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -14,6 +14,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   clearHistory: () => ipcRenderer.invoke('app:clearHistory'),
   hide: () => ipcRenderer.send('app:hide'),
   resize: (height: number) => ipcRenderer.send('app:resize', height),
+  minimize: () => ipcRenderer.send(IPC_CHANNELS.APP_WINDOW_MINIMIZE),
+  maximize: () => ipcRenderer.send(IPC_CHANNELS.APP_WINDOW_MAXIMIZE),
+  fitToScreen: () => ipcRenderer.send(IPC_CHANNELS.APP_WINDOW_FIT_TO_SCREEN),
 
   // Window management
   windowList: () => ipcRenderer.invoke(IPC_CHANNELS.WINDOW_LIST),
@@ -75,6 +78,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on(IPC_CHANNELS.COPILOT_STREAM_END, handler);
     return () => ipcRenderer.removeListener(IPC_CHANNELS.COPILOT_STREAM_END, handler);
   },
+  onActionLog: (callback: (log: import('../shared/types').ActionLog) => void) => {
+    const handler = (_: unknown, log: import('../shared/types').ActionLog) => callback(log);
+    ipcRenderer.on(IPC_CHANNELS.COPILOT_ACTION_LOG, handler);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.COPILOT_ACTION_LOG, handler);
+  },
 
   // Permissions
   onPermissionRequest: (callback: (request: PermissionRequest) => void) => {
@@ -98,6 +106,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
   mcpDelete: (id: string) => ipcRenderer.invoke(MCP_IPC_CHANNELS.MCP_DELETE, id),
   mcpToggle: (id: string) => ipcRenderer.invoke(MCP_IPC_CHANNELS.MCP_TOGGLE, id),
 
+  // Scheduled Tasks
+  taskList: () => ipcRenderer.invoke('task:list'),
+  taskAdd: (task: unknown) => ipcRenderer.invoke('task:add', task),
+  taskUpdate: (id: string, updates: unknown) => ipcRenderer.invoke('task:update', id, updates),
+  taskDelete: (id: string) => ipcRenderer.invoke('task:delete', id),
+  taskToggle: (id: string) => ipcRenderer.invoke('task:toggle', id),
+  taskExecute: (id: string) => ipcRenderer.invoke('task:execute', id),
+  taskLogs: () => ipcRenderer.invoke('task:logs'),
+
+  // Notifications
+  onNotification: (callback: (options: unknown) => void) => {
+    const handler = (_: unknown, options: unknown) => callback(options);
+    ipcRenderer.on('notification:show', handler);
+    return () => ipcRenderer.removeListener('notification:show', handler);
+  },
+
   // Window events
   onWindowShown: (callback: () => void) => {
     const handler = () => callback();
@@ -114,6 +138,106 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('focus:input', handler);
     return () => ipcRenderer.removeListener('focus:input', handler);
   },
+
+  // Voice input API
+  voiceTest: () => ipcRenderer.invoke('voice:test'),
+  voiceIsRecording: () => ipcRenderer.invoke('voice:isRecording'),
+
+  onVoiceRecordingStarted: (callback: () => void) => {
+    const handler = () => callback();
+    ipcRenderer.on('voice:recordingStarted', handler);
+    return () => ipcRenderer.removeListener('voice:recordingStarted', handler);
+  },
+
+  onVoiceRecordingStopped: (callback: () => void) => {
+    const handler = () => callback();
+    ipcRenderer.on('voice:recordingStopped', handler);
+    return () => ipcRenderer.removeListener('voice:recordingStopped', handler);
+  },
+
+  onVoiceTranscript: (callback: (transcript: string) => void) => {
+    const handler = (_: unknown, transcript: string) => callback(transcript);
+    ipcRenderer.on('voice:transcript', handler);
+    return () => ipcRenderer.removeListener('voice:transcript', handler);
+  },
+
+  onVoiceError: (callback: (error: string) => void) => {
+    const handler = (_: unknown, error: string) => callback(error);
+    ipcRenderer.on('voice:error', handler);
+    return () => ipcRenderer.removeListener('voice:error', handler);
+  },
+
+  // Timer API
+  timerList: () => ipcRenderer.invoke('timer:list'),
+  timerGet: (id: string) => ipcRenderer.invoke('timer:get', id),
+  timerCreate: (type: string, name: string, options?: { duration?: number; workDuration?: number; breakDuration?: number }) =>
+    ipcRenderer.invoke('timer:create', { type, name, options }),
+  timerStart: (id: string) => ipcRenderer.invoke('timer:start', id),
+  timerPause: (id: string) => ipcRenderer.invoke('timer:pause', id),
+  timerReset: (id: string) => ipcRenderer.invoke('timer:reset', id),
+  timerDelete: (id: string) => ipcRenderer.invoke('timer:delete', id),
+  timerSkip: (id: string) => ipcRenderer.invoke('timer:skip', id),
+  onTimerTick: (callback: (timer: unknown) => void) => {
+    const handler = (_: unknown, timer: unknown) => callback(timer);
+    ipcRenderer.on('timer:tick', handler);
+    return () => ipcRenderer.removeListener('timer:tick', handler);
+  },
+  onTimerCreated: (callback: (timer: unknown) => void) => {
+    const handler = (_: unknown, timer: unknown) => callback(timer);
+    ipcRenderer.on('timer:created', handler);
+    return () => ipcRenderer.removeListener('timer:created', handler);
+  },
+  onTimerCompleted: (callback: (timer: unknown) => void) => {
+    const handler = (_: unknown, timer: unknown) => callback(timer);
+    ipcRenderer.on('timer:completed', handler);
+    return () => ipcRenderer.removeListener('timer:completed', handler);
+  },
+  onTimerDeleted: (callback: (id: string) => void) => {
+    const handler = (_: unknown, id: string) => callback(id);
+    ipcRenderer.on('timer:deleted', handler);
+    return () => ipcRenderer.removeListener('timer:deleted', handler);
+  },
+  subscribeToTimers: () => ipcRenderer.send('timer:subscribe'),
+
+  // Reminder API
+  reminderList: () => ipcRenderer.invoke('reminder:list'),
+  reminderCreate: (message: string, delayMinutes?: number, scheduledTime?: string) =>
+    ipcRenderer.invoke('reminder:create', { message, delayMinutes, scheduledTime }),
+  reminderCancel: (id: string) => ipcRenderer.invoke('reminder:cancel', id),
+  reminderDelete: (id: string) => ipcRenderer.invoke('reminder:delete', id),
+  onReminderCreated: (callback: (reminder: unknown) => void) => {
+    const handler = (_: unknown, reminder: unknown) => callback(reminder);
+    ipcRenderer.on('reminder:created', handler);
+    return () => ipcRenderer.removeListener('reminder:created', handler);
+  },
+  onReminderTriggered: (callback: (reminder: unknown) => void) => {
+    const handler = (_: unknown, reminder: unknown) => callback(reminder);
+    ipcRenderer.on('reminder:triggered', handler);
+    return () => ipcRenderer.removeListener('reminder:triggered', handler);
+  },
+  onReminderCancelled: (callback: (id: string) => void) => {
+    const handler = (_: unknown, id: string) => callback(id);
+    ipcRenderer.on('reminder:cancelled', handler);
+    return () => ipcRenderer.removeListener('reminder:cancelled', handler);
+  },
+  subscribeToReminders: () => ipcRenderer.send('reminder:subscribe'),
+
+  // Chat history API
+  chatStart: (title?: string) => ipcRenderer.invoke('chat:start', title),
+  chatGetHistory: (conversationId?: string) => ipcRenderer.invoke('chat:getHistory', conversationId),
+  chatGetConversations: () => ipcRenderer.invoke('chat:getConversations'),
+  chatLoadConversation: (id: string) => ipcRenderer.invoke('chat:loadConversation', id),
+  chatDeleteConversation: (id: string) => ipcRenderer.invoke('chat:deleteConversation', id),
+  chatSearch: (query: string) => ipcRenderer.invoke('chat:search', query),
+  chatGetStats: () => ipcRenderer.invoke('chat:getStats'),
+
+  // Menu bar API
+  menubarInit: (config?: { iconPath?: string; tooltip?: string; showDockIcon?: boolean }) =>
+    ipcRenderer.invoke('menubar:init', config),
+  menubarShow: () => ipcRenderer.invoke('menubar:show'),
+  menubarHide: () => ipcRenderer.invoke('menubar:hide'),
+  menubarToggle: () => ipcRenderer.invoke('menubar:toggle'),
+  menubarIsActive: () => ipcRenderer.invoke('menubar:isActive'),
 });
 
 // Type definitions for the exposed API
@@ -124,6 +248,9 @@ export interface ElectronAPI {
   clearHistory: () => Promise<void>;
   hide: () => void;
   resize: (height: number) => void;
+  minimize: () => void;
+  maximize: () => void;
+  fitToScreen: () => void;
   
   windowList: () => Promise<unknown>;
   windowFocus: (params: unknown) => Promise<unknown>;
@@ -169,6 +296,8 @@ export interface ElectronAPI {
   clearSession: () => Promise<void>;
   onStreamChunk: (callback: (chunk: string) => void) => () => void;
   onStreamEnd: (callback: (error?: { error: string }) => void) => () => void;
+  onActionLog: (callback: (log: ActionLog) => void) => () => void;
+
 
   onPermissionRequest: (callback: (request: PermissionRequest) => void) => () => void;
   respondPermission: (response: PermissionResponse) => void;
@@ -182,10 +311,64 @@ export interface ElectronAPI {
   mcpUpdate: (id: string, config: unknown) => Promise<unknown>;
   mcpDelete: (id: string) => Promise<boolean>;
   mcpToggle: (id: string) => Promise<unknown>;
-  
+
+  taskList: () => Promise<unknown>;
+  taskAdd: (task: unknown) => Promise<unknown>;
+  taskUpdate: (id: string, updates: unknown) => Promise<unknown>;
+  taskDelete: (id: string) => Promise<boolean>;
+  taskToggle: (id: string) => Promise<unknown>;
+  taskExecute: (id: string) => Promise<{ success: boolean }>;
+  taskLogs: () => Promise<unknown>;
+
+  onNotification: (callback: (options: unknown) => void) => () => void;
+
   onWindowShown: (callback: () => void) => () => void;
   onWindowHidden: (callback: () => void) => () => void;
   onFocusInput: (callback: () => void) => () => void;
+
+  voiceTest: () => Promise<{ success: boolean }>;
+  voiceIsRecording: () => Promise<boolean>;
+  onVoiceRecordingStarted: (callback: () => void) => () => void;
+  onVoiceRecordingStopped: (callback: () => void) => () => void;
+  onVoiceTranscript: (callback: (transcript: string) => void) => () => void;
+  onVoiceError: (callback: (error: string) => void) => () => void;
+
+  timerList: () => Promise<unknown[]>;
+  timerGet: (id: string) => Promise<unknown>;
+  timerCreate: (type: string, name: string, options?: { duration?: number; workDuration?: number; breakDuration?: number }) => Promise<unknown>;
+  timerStart: (id: string) => Promise<unknown>;
+  timerPause: (id: string) => Promise<unknown>;
+  timerReset: (id: string) => Promise<unknown>;
+  timerDelete: (id: string) => Promise<boolean>;
+  timerSkip: (id: string) => Promise<unknown>;
+  onTimerTick: (callback: (timer: unknown) => void) => () => void;
+  onTimerCreated: (callback: (timer: unknown) => void) => () => void;
+  onTimerCompleted: (callback: (timer: unknown) => void) => () => void;
+  onTimerDeleted: (callback: (id: string) => void) => () => void;
+  subscribeToTimers: () => void;
+
+  reminderList: () => Promise<unknown[]>;
+  reminderCreate: (message: string, delayMinutes?: number, scheduledTime?: string) => Promise<unknown>;
+  reminderCancel: (id: string) => Promise<boolean>;
+  reminderDelete: (id: string) => Promise<boolean>;
+  onReminderCreated: (callback: (reminder: unknown) => void) => () => void;
+  onReminderTriggered: (callback: (reminder: unknown) => void) => () => void;
+  onReminderCancelled: (callback: (id: string) => void) => () => void;
+  subscribeToReminders: () => void;
+
+  chatStart: (title?: string) => Promise<string>;
+  chatGetHistory: (conversationId?: string) => Promise<unknown[]>;
+  chatGetConversations: () => Promise<unknown[]>;
+  chatLoadConversation: (id: string) => Promise<unknown>;
+  chatDeleteConversation: (id: string) => Promise<boolean>;
+  chatSearch: (query: string) => Promise<unknown[]>;
+  chatGetStats: () => Promise<unknown>;
+
+  menubarInit: (config?: { iconPath?: string; tooltip?: string; showDockIcon?: boolean }) => Promise<{ mode: string; platform: string }>;
+  menubarShow: () => Promise<void>;
+  menubarHide: () => Promise<void>;
+  menubarToggle: () => Promise<void>;
+  menubarIsActive: () => Promise<boolean>;
 }
 
 declare global {

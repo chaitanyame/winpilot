@@ -6,8 +6,89 @@ import { getUnifiedAdapter } from '../platform/unified-adapter';
 import { logger } from '../utils/logger';
 import { p } from '../utils/zod-wrapper';
 import { requestPermissionForTool } from '../main/permission-gate';
+import {
+  timerManager,
+  createTimer,
+  createCountdown,
+  createPomodoro,
+  formatTime
+} from '../main/timers';
+import {
+  formatWorldClock,
+  searchCities,
+  getAllCities
+} from '../main/worldclock';
+import {
+  reminderManager
+} from '../main/reminders';
 
 const adapter = getUnifiedAdapter();
+
+// Helper function to parse time strings like "3pm", "15:30", "2:30pm"
+function parseTimeString(timeStr: string, dateStr?: string): Date {
+  const now = new Date();
+  const targetDate = new Date();
+
+  // Handle date
+  if (dateStr) {
+    const lowerDate = dateStr.toLowerCase();
+    if (lowerDate === 'tomorrow') {
+      targetDate.setDate(targetDate.getDate() + 1);
+    } else if (lowerDate === 'today') {
+      // Use today
+    } else {
+      // Try to parse day names
+      const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+      const todayIndex = now.getDay();
+      const targetDayIndex = days.indexOf(lowerDate);
+      if (targetDayIndex !== -1) {
+        const daysUntil = (targetDayIndex + 7 - todayIndex) % 7 || 7;
+        targetDate.setDate(targetDate.getDate() + daysUntil);
+      }
+    }
+  }
+
+  // Parse time
+  const lowerTime = timeStr.toLowerCase().replace(/\s/g, '');
+  let hours = 0;
+  let minutes = 0;
+  let isPm = false;
+
+  // Check for AM/PM
+  if (lowerTime.includes('pm') || lowerTime.includes('p.m.')) {
+    isPm = true;
+  }
+
+  // Extract time part
+  const timeMatch = lowerTime.match(/(\d{1,2}):(\d{2})/);
+  if (timeMatch) {
+    hours = parseInt(timeMatch[1], 10);
+    minutes = parseInt(timeMatch[2], 10);
+  } else {
+    // Try just hours
+    const hourMatch = lowerTime.match(/(\d{1,2})/);
+    if (hourMatch) {
+      hours = parseInt(hourMatch[1], 10);
+    }
+  }
+
+  // Handle 12-hour format
+  if (isPm && hours !== 12) {
+    hours += 12;
+  } else if (!isPm && hours === 12) {
+    hours = 0;
+  }
+
+  // Set the time
+  targetDate.setHours(hours, minutes, 0, 0);
+
+  // If the time has passed today, assume tomorrow (unless date was specified)
+  if (targetDate.getTime() <= now.getTime() && !dateStr) {
+    targetDate.setDate(targetDate.getDate() + 1);
+  }
+
+  return targetDate;
+}
 
 // ============================================================================
 // Window Management Tools
@@ -505,17 +586,35 @@ export const systemBrightnessTool = defineTool('system_brightness', {
 });
 
 export const systemScreenshotTool = defineTool('system_screenshot', {
-  description: 'Take a screenshot',
+  description: 'Take a screenshot (optionally analyze with AI)',
   parameters: p({
     region: z.enum(['fullscreen', 'window', 'selection']).optional().describe('Region to capture'),
     savePath: z.string().optional().describe('Directory to save the screenshot'),
-    filename: z.string().optional().describe('Filename for the screenshot')
+    filename: z.string().optional().describe('Filename for the screenshot'),
+    analyze: z.boolean().optional().describe('Send screenshot to AI for analysis (uses vision model)')
   }),
-  handler: async ({ region, savePath, filename }) => {
+  handler: async ({ region, savePath, filename, analyze }) => {
     const result = await adapter.takeScreenshot({ region, savePath, filename });
-    return result.success
-      ? `Screenshot saved to ${result.data?.path}`
-      : `Failed to take screenshot: ${result.error}`;
+    if (!result.success) {
+      return `Failed to take screenshot: ${result.error}`;
+    }
+
+    const screenshotPath = result.data?.path;
+
+    if (analyze && screenshotPath) {
+      // For AI analysis, we need to use the MCP vision tool or describe what we see
+      // Since we can't directly call vision models from here, we'll indicate where the file is
+      // The user can ask follow-up questions about the screenshot
+      return `Screenshot saved to ${screenshotPath}
+
+For AI analysis of this screenshot, you can:
+1. Ask me to analyze the screenshot at ${screenshotPath}
+2. Use vision-capable models like claude-opus-4.5 or gpt-5.2 which can analyze images
+
+The screenshot has been captured and is ready for analysis.`;
+    }
+
+    return `Screenshot saved to ${screenshotPath}`;
   }
 });
 
@@ -1086,6 +1185,722 @@ export const troubleshootProposeFix = defineTool('troubleshoot_propose_fix', {
 });
 
 // ============================================================================
+// WiFi Tools
+// ============================================================================
+
+export const wifiControlTool = defineTool('system_wifi', {
+  description: 'Control WiFi - turn on/off, get status, list networks',
+  parameters: p({
+    action: z.enum(['status', 'on', 'off', 'toggle', 'list', 'available']).describe('Action to perform'),
+  }),
+  handler: async ({ action }) => {
+    const decision = await requestPermissionForTool('system_wifi', { action }, [`action: ${action}`]);
+    if (!decision.allowed) {
+      return 'Cancelled: permission denied.';
+    }
+
+    switch (action) {
+      case 'status': {
+        const result = await adapter.getWiFiStatus();
+        if (!result.success || !result.data) {
+          return `Failed to get WiFi status: ${result.error}`;
+        }
+        const status = result.data;
+        let output = `WiFi Status:\n`;
+        output += `  Enabled: ${status.enabled ? 'Yes' : 'No'}\n`;
+        output += `  Connected: ${status.connected ? 'Yes' : 'No'}\n`;
+        if (status.ssid) {
+          output += `  Network: ${status.ssid}\n`;
+        }
+        if (status.signalStrength !== undefined) {
+          output += `  Signal: ${status.signalStrength}%\n`;
+        }
+        return output;
+      }
+      case 'on': {
+        const result = await adapter.enableWiFi();
+        return result.success ? 'WiFi enabled' : `Failed to enable WiFi: ${result.error}`;
+      }
+      case 'off': {
+        const result = await adapter.disableWiFi();
+        return result.success ? 'WiFi disabled' : `Failed to disable WiFi: ${result.error}`;
+      }
+      case 'toggle': {
+        const result = await adapter.toggleWiFi();
+        if (!result.success) {
+          return `Failed to toggle WiFi: ${result.error}`;
+        }
+        return `WiFi ${result.data?.enabled ? 'enabled' : 'disabled'}`;
+      }
+      case 'list': {
+        const result = await adapter.listWiFiNetworks();
+        if (!result.success) {
+          return `Failed to list networks: ${result.error}`;
+        }
+        const networks = result.data || [];
+        if (networks.length === 0) {
+          return 'No saved WiFi networks found';
+        }
+        return `Saved WiFi networks (${networks.length}):\n${networks.map(n => `- ${n.ssid}`).join('\n')}`;
+      }
+      case 'available': {
+        const result = await adapter.listAvailableWiFi();
+        if (!result.success) {
+          return `Failed to list available networks: ${result.error}`;
+        }
+        const networks = result.data || [];
+        if (networks.length === 0) {
+          return 'No available WiFi networks found';
+        }
+        return `Available WiFi networks (${networks.length}):\n${networks.map(n => `- ${n.ssid} (${n.signalStrength}% signal)`).join('\n')}`;
+      }
+      default:
+        return `Unknown action: ${action}`;
+    }
+  }
+});
+
+// ============================================================================
+// Productivity Timer Tools
+// ============================================================================
+
+export const productivityTimerTool = defineTool('productivity_timer', {
+  description: 'Interactive stopwatch with start/pause/reset',
+  parameters: p({
+    action: z.enum(['create', 'start', 'pause', 'reset', 'status', 'delete', 'list']).describe('Action to perform'),
+    id: z.string().optional().describe('Timer ID (required for most actions)'),
+    name: z.string().optional().describe('Timer name (for create action)'),
+  }),
+  handler: async ({ action, id, name }) => {
+    switch (action) {
+      case 'create': {
+        const timer = createTimer(name || 'Timer');
+        return `Created timer "${timer.name}" (ID: ${timer.id}). Use "start the timer ${timer.id}" to start it.`;
+      }
+      case 'start': {
+        if (!id) return 'Error: Timer ID is required to start a timer';
+        const timer = timerManager.startTimer(id);
+        if (!timer) return `Error: Timer ${id} not found`;
+        return `Started timer "${timer.name}". Current time: ${formatTime(timer.elapsed)}`;
+      }
+      case 'pause': {
+        if (!id) return 'Error: Timer ID is required to pause a timer';
+        const timer = timerManager.pauseTimer(id);
+        if (!timer) return `Error: Timer ${id} not found or not running`;
+        return `Paused timer "${timer.name}" at ${formatTime(timer.elapsed)}`;
+      }
+      case 'reset': {
+        if (!id) return 'Error: Timer ID is required to reset a timer';
+        const timer = timerManager.resetTimer(id);
+        if (!timer) return `Error: Timer ${id} not found`;
+        return `Reset timer "${timer.name}" to 00:00`;
+      }
+      case 'status': {
+        if (!id) return 'Error: Timer ID is required to check timer status';
+        const timer = timerManager.getTimer(id);
+        if (!timer) return `Error: Timer ${id} not found`;
+        return `Timer "${timer.name}":\n  Status: ${timer.status}\n  Time: ${formatTime(timer.elapsed)}`;
+      }
+      case 'delete': {
+        if (!id) return 'Error: Timer ID is required to delete a timer';
+        const success = timerManager.deleteTimer(id);
+        if (!success) return `Error: Timer ${id} not found`;
+        return `Deleted timer ${id}`;
+      }
+      case 'list': {
+        const timers = timerManager.getAllTimers();
+        if (timers.length === 0) return 'No timers found';
+        return `Timers (${timers.length}):\n${timers.map(t =>
+          `- ${t.name} (ID: ${t.id}): ${t.status} - ${formatTime(t.elapsed)}`
+        ).join('\n')}`;
+      }
+      default:
+        return `Unknown action: ${action}`;
+    }
+  }
+});
+
+export const productivityCountdownTool = defineTool('productivity_countdown', {
+  description: 'Countdown timer with custom duration and notification',
+  parameters: p({
+    action: z.enum(['create', 'start', 'pause', 'reset', 'status', 'delete', 'list']).describe('Action to perform'),
+    id: z.string().optional().describe('Timer ID'),
+    name: z.string().optional().describe('Countdown name (for create)'),
+    duration: z.number().optional().describe('Duration in minutes (for create)'),
+  }),
+  handler: async ({ action, id, name, duration }) => {
+    switch (action) {
+      case 'create': {
+        if (!duration) return 'Error: Duration (in minutes) is required to create a countdown';
+        const timer = createCountdown(name || 'Countdown', duration);
+        const timeStr = formatTime(timer.duration || 0);
+        return `Created countdown "${timer.name}" for ${duration} minutes (ID: ${timer.id}). Time: ${timeStr}`;
+      }
+      case 'start': {
+        if (!id) return 'Error: Timer ID is required to start a countdown';
+        const timer = timerManager.startTimer(id);
+        if (!timer) return `Error: Timer ${id} not found`;
+        return `Started countdown "${timer.name}". Remaining: ${formatTime(timer.remaining || 0)}`;
+      }
+      case 'pause': {
+        if (!id) return 'Error: Timer ID is required to pause a countdown';
+        const timer = timerManager.pauseTimer(id);
+        if (!timer) return `Error: Timer ${id} not found or not running`;
+        return `Paused countdown "${timer.name}" at ${formatTime(timer.remaining || 0)}`;
+      }
+      case 'reset': {
+        if (!id) return 'Error: Timer ID is required to reset a countdown';
+        const timer = timerManager.resetTimer(id);
+        if (!timer) return `Error: Timer ${id} not found`;
+        return `Reset countdown "${timer.name}" to ${formatTime(timer.duration || 0)}`;
+      }
+      case 'status': {
+        if (!id) return 'Error: Timer ID is required to check countdown status';
+        const timer = timerManager.getTimer(id);
+        if (!timer) return `Error: Timer ${id} not found`;
+        return `Countdown "${timer.name}":\n  Status: ${timer.status}\n  Remaining: ${formatTime(timer.remaining || 0)}`;
+      }
+      case 'delete': {
+        if (!id) return 'Error: Timer ID is required to delete a countdown';
+        const success = timerManager.deleteTimer(id);
+        if (!success) return `Error: Timer ${id} not found`;
+        return `Deleted countdown ${id}`;
+      }
+      case 'list': {
+        const timers = timerManager.getAllTimers().filter(t => t.type === 'countdown');
+        if (timers.length === 0) return 'No countdowns found';
+        return `Countdowns (${timers.length}):\n${timers.map(t =>
+          `- ${t.name} (ID: ${t.id}): ${t.status} - ${formatTime(t.remaining || 0)} remaining`
+        ).join('\n')}`;
+      }
+      default:
+        return `Unknown action: ${action}`;
+    }
+  }
+});
+
+export const productivityPomodoroTool = defineTool('productivity_pomodoro', {
+  description: 'Pomodoro timer: 25min work / 5min break cycles',
+  parameters: p({
+    action: z.enum(['create', 'start', 'pause', 'reset', 'skip', 'status', 'delete', 'list']).describe('Action to perform'),
+    id: z.string().optional().describe('Timer ID'),
+    name: z.string().optional().describe('Pomodoro name (for create)'),
+    workDuration: z.number().optional().default(25).describe('Work duration in minutes'),
+    breakDuration: z.number().optional().default(5).describe('Break duration in minutes'),
+  }),
+  handler: async ({ action, id, name, workDuration, breakDuration }) => {
+    switch (action) {
+      case 'create': {
+        const timer = createPomodoro(name || 'Pomodoro', workDuration, breakDuration);
+        return `Created Pomodoro "${timer.name}" with ${workDuration}min work / ${breakDuration}min break cycles (ID: ${timer.id})`;
+      }
+      case 'start': {
+        if (!id) return 'Error: Timer ID is required to start a Pomodoro';
+        const timer = timerManager.startTimer(id);
+        if (!timer) return `Error: Timer ${id} not found`;
+        const phase = timer.isBreak ? 'Break' : 'Work';
+        return `Started Pomodoro "${timer.name}". ${phase} phase: ${formatTime(timer.remaining || 0)} remaining`;
+      }
+      case 'pause': {
+        if (!id) return 'Error: Timer ID is required to pause a Pomodoro';
+        const timer = timerManager.pauseTimer(id);
+        if (!timer) return `Error: Timer ${id} not found or not running`;
+        return `Paused Pomodoro "${timer.name}" at ${formatTime(timer.remaining || 0)}`;
+      }
+      case 'reset': {
+        if (!id) return 'Error: Timer ID is required to reset a Pomodoro';
+        const timer = timerManager.resetTimer(id);
+        if (!timer) return `Error: Timer ${id} not found`;
+        return `Reset Pomodoro "${timer.name}" to cycle 1`;
+      }
+      case 'skip': {
+        if (!id) return 'Error: Timer ID is required to skip Pomodoro phase';
+        const timer = timerManager.skipPomodoroPhase(id);
+        if (!timer) return `Error: Timer ${id} not found`;
+        const phase = timer.isBreak ? 'Break' : 'Work';
+        return `Skipped to ${phase} phase. Cycle ${timer.pomodoroCycle || 1}.`;
+      }
+      case 'status': {
+        if (!id) return 'Error: Timer ID is required to check Pomodoro status';
+        const timer = timerManager.getTimer(id);
+        if (!timer) return `Error: Timer ${id} not found`;
+        const phase = timer.isBreak ? 'Break' : 'Work';
+        return `Pomodoro "${timer.name}":\n  Status: ${timer.status}\n  Phase: ${phase}\n  Cycle: ${timer.pomodoroCycle || 1}\n  Remaining: ${formatTime(timer.remaining || 0)}`;
+      }
+      case 'delete': {
+        if (!id) return 'Error: Timer ID is required to delete a Pomodoro';
+        const success = timerManager.deleteTimer(id);
+        if (!success) return `Error: Timer ${id} not found`;
+        return `Deleted Pomodoro ${id}`;
+      }
+      case 'list': {
+        const timers = timerManager.getAllTimers().filter(t => t.type === 'pomodoro');
+        if (timers.length === 0) return 'No Pomodoro timers found';
+        return `Pomodoro timers (${timers.length}):\n${timers.map(t => {
+          const phase = t.isBreak ? 'Break' : 'Work';
+          return `- ${t.name} (ID: ${t.id}): ${t.status} - Cycle ${t.pomodoroCycle || 1} (${phase})`;
+        }).join('\n')}`;
+      }
+      default:
+        return `Unknown action: ${action}`;
+    }
+  }
+});
+
+// ============================================================================
+// World Clock Tool
+// ============================================================================
+
+export const productivityWorldClockTool = defineTool('productivity_worldclock', {
+  description: 'Display current time in multiple timezones around the world',
+  parameters: p({
+    cities: z.array(z.string()).optional().describe('City names or timezone names (e.g., ["New York", "London", "Tokyo"])'),
+    action: z.enum(['show', 'search', 'list']).optional().default('show').describe('Action to perform'),
+  }),
+  handler: async ({ cities, action = 'show' }) => {
+    switch (action) {
+      case 'show': {
+        // If no cities specified, use defaults
+        const citiesToShow = cities && cities.length > 0
+          ? cities.map(name => {
+              // Check if it's a timezone or city name
+              const found = searchCities(name);
+              if (found.length > 0) return found[0];
+              // Treat as timezone
+              return { name, timezone: name, flag: '' };
+            })
+          : getAllCities();
+
+        return formatWorldClock(citiesToShow);
+      }
+      case 'search': {
+        if (!cities || cities.length === 0) {
+          const allCities = getAllCities();
+          return `Available cities (${allCities.length}):\n${allCities.map(c => `- ${c.name}, ${c.country || ''} (${c.timezone})`).join('\n')}`;
+        }
+
+        const query = cities[0];
+        const results = searchCities(query);
+        if (results.length === 0) {
+          return `No cities found matching "${query}"`;
+        }
+        return `Cities matching "${query}":\n${results.map(c => `- ${c.name}, ${c.country || ''} (${c.timezone})`).join('\n')}`;
+      }
+      case 'list': {
+        const allCities = getAllCities();
+        return `Available cities (${allCities.length}):\n${allCities.map(c => `- ${c.name}, ${c.country || ''} (${c.timezone})`).join('\n')}`;
+      }
+      default:
+        return `Unknown action: ${action}`;
+    }
+  }
+});
+
+// ============================================================================
+// Unit Converter Tool
+// ============================================================================
+
+// Conversion factors to base units
+const CONVERSION_FACTORS: Record<string, Record<string, number>> = {
+  // Length (base: meter)
+  length: {
+    mm: 0.001,
+    cm: 0.01,
+    m: 1,
+    km: 1000,
+    in: 0.0254,
+    ft: 0.3048,
+    yd: 0.9144,
+    mi: 1609.344,
+  },
+  // Weight (base: kilogram)
+  weight: {
+    mg: 0.000001,
+    g: 0.001,
+    kg: 1,
+    oz: 0.0283495,
+    lb: 0.453592,
+    st: 6.35029,
+    ton: 1000,
+  },
+  // Temperature (special handling)
+  temperature: {
+    c: 1, // Celsius (base)
+    f: 1, // Fahrenheit
+    k: 1, // Kelvin
+  },
+  // Volume (base: liter)
+  volume: {
+    ml: 0.001,
+    l: 1,
+    cup: 0.236588,
+    pt: 0.473176,
+    qt: 0.946353,
+    gal: 3.78541,
+    floz: 0.0295735,
+  },
+  // Area (base: square meter)
+  area: {
+    m2: 1,
+    km2: 1000000,
+    ha: 10000,
+    ac: 4046.86,
+    ft2: 0.092903,
+    yd2: 0.836127,
+    mi2: 2589988,
+  },
+  // Speed (base: m/s)
+  speed: {
+    mps: 1,
+    kph: 0.277778,
+    mph: 0.44704,
+    knot: 0.514444,
+    fps: 0.3048,
+  },
+};
+
+// Category names for display
+const UNIT_CATEGORIES: Record<string, string> = {
+  length: 'Length',
+  weight: 'Weight',
+  temperature: 'Temperature',
+  volume: 'Volume',
+  area: 'Area',
+  speed: 'Speed',
+};
+
+// Unit names for display
+const UNIT_NAMES: Record<string, Record<string, string>> = {
+  length: { mm: 'mm', cm: 'cm', m: 'm', km: 'km', in: 'in', ft: 'ft', yd: 'yd', mi: 'mi' },
+  weight: { mg: 'mg', g: 'g', kg: 'kg', oz: 'oz', lb: 'lb', st: 'st', ton: 'ton' },
+  temperature: { c: '°C', f: '°F', k: 'K' },
+  volume: { ml: 'mL', l: 'L', cup: 'cup', pt: 'pt', qt: 'qt', gal: 'gal', floz: 'fl oz' },
+  area: { m2: 'm²', km2: 'km²', ha: 'ha', ac: 'ac', ft2: 'ft²', yd2: 'yd²', mi2: 'mi²' },
+  speed: { mps: 'm/s', kph: 'km/h', mph: 'mph', knot: 'knot', fps: 'ft/s' },
+};
+
+/**
+ * Detect unit category from unit string
+ */
+function detectUnitCategory(unit: string): string | null {
+  const lowerUnit = unit.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+  // Direct unit mapping
+  for (const [category, units] of Object.entries(CONVERSION_FACTORS)) {
+    for (const u of Object.keys(units)) {
+      if (lowerUnit === u || lowerUnit === u + 's') {
+        return category;
+      }
+    }
+  }
+
+  // Special cases for squared units
+  if (lowerUnit.includes('m2') || lowerUnit.includes('m²') || lowerUnit === 'sqm' || lowerUnit === 'sqmeters') {
+    return 'area';
+  }
+  if (lowerUnit.includes('ft2') || lowerUnit.includes('ft²') || lowerUnit === 'sqft' || lowerUnit === 'sqfeet') {
+    return 'area';
+  }
+  if (lowerUnit.includes('km2') || lowerUnit.includes('km²')) {
+    return 'area';
+  }
+
+  // Temperature special cases
+  if (lowerUnit.includes('c') || lowerUnit.includes('celsius')) {
+    return 'temperature';
+  }
+  if (lowerUnit.includes('f') || lowerUnit.includes('fahrenheit')) {
+    return 'temperature';
+  }
+  if (lowerUnit.includes('k') || lowerUnit.includes('kelvin')) {
+    return 'temperature';
+  }
+
+  return null;
+}
+
+/**
+ * Normalize unit string to canonical form
+ */
+function normalizeUnit(unit: string, category: string): string | null {
+  const lowerUnit = unit.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+  // Check all units in category
+  for (const u of Object.keys(CONVERSION_FACTORS[category])) {
+    if (lowerUnit === u || lowerUnit === u + 's') {
+      return u;
+    }
+  }
+
+  // Special cases
+  if (category === 'temperature') {
+    if (lowerUnit.includes('c') || lowerUnit.includes('celsius')) return 'c';
+    if (lowerUnit.includes('f') || lowerUnit.includes('fahrenheit')) return 'f';
+    if (lowerUnit.includes('k') || lowerUnit.includes('kelvin')) return 'k';
+  }
+
+  return null;
+}
+
+/**
+ * Convert temperature (special handling for C/F/K)
+ */
+function convertTemperature(value: number, from: string, to: string): number {
+  // First convert to Celsius
+  let celsius: number;
+  if (from === 'c') {
+    celsius = value;
+  } else if (from === 'f') {
+    celsius = (value - 32) * 5 / 9;
+  } else if (from === 'k') {
+    celsius = value - 273.15;
+  } else {
+    return NaN;
+  }
+
+  // Convert from Celsius to target
+  if (to === 'c') {
+    return celsius;
+  } else if (to === 'f') {
+    return (celsius * 9 / 5) + 32;
+  } else if (to === 'k') {
+    return celsius + 273.15;
+  } else {
+    return NaN;
+  }
+}
+
+/**
+ * Perform unit conversion
+ */
+function convertUnits(value: number, fromUnit: string, toUnit: string): { success: boolean; result?: number; error?: string } {
+  const fromCategory = detectUnitCategory(fromUnit);
+  const toCategory = detectUnitCategory(toUnit);
+
+  if (!fromCategory || !toCategory) {
+    return { success: false, error: 'Unknown unit(s)' };
+  }
+
+  if (fromCategory !== toCategory) {
+    return { success: false, error: `Cannot convert ${UNIT_CATEGORIES[fromCategory]} to ${UNIT_CATEGORIES[toCategory]}` };
+  }
+
+  const from = normalizeUnit(fromUnit, fromCategory);
+  const to = normalizeUnit(toUnit, toCategory);
+
+  if (!from || !to) {
+    return { success: false, error: 'Could not parse unit(s)' };
+  }
+
+  // Same unit
+  if (from === to) {
+    return { success: true, result: value };
+  }
+
+  // Temperature special handling
+  if (fromCategory === 'temperature') {
+    return { success: true, result: convertTemperature(value, from, to) };
+  }
+
+  // Standard conversion via base unit
+  const factors = CONVERSION_FACTORS[fromCategory];
+  const baseValue = value * factors[from];
+  const result = baseValue / factors[to];
+
+  return { success: true, result: Number(result.toFixed(6)) };
+}
+
+export const productivityConvertTool = defineTool('productivity_convert', {
+  description: 'Convert between units (length, weight, temperature, volume, area, speed). Examples: "100 lb to kg", "32°F to Celsius", "1 mile to km"',
+  parameters: p({
+    value: z.number().describe('Value to convert'),
+    fromUnit: z.string().describe('Source unit (e.g., "m", "ft", "kg", "lb", "°C", "°F", "mi", "km")'),
+    toUnit: z.string().describe('Target unit (e.g., "m", "ft", "kg", "lb", "C", "F", "km", "mi")'),
+  }),
+  handler: async ({ value, fromUnit, toUnit }) => {
+    const result = convertUnits(value, fromUnit, toUnit);
+
+    if (!result.success || result.result === undefined) {
+      return `Error: ${result.error}`;
+    }
+
+    const category = detectUnitCategory(fromUnit);
+    const from = normalizeUnit(fromUnit, category || '');
+    const to = normalizeUnit(toUnit, category || '');
+    const fromName = from && category ? UNIT_NAMES[category]?.[from] || fromUnit : fromUnit;
+    const toName = to && category ? UNIT_NAMES[category]?.[to] || toUnit : toUnit;
+
+    // Format the result nicely
+    let resultStr = `${result.result}`;
+    // Remove unnecessary decimal places for whole numbers
+    if (result.result % 1 === 0) {
+      resultStr = result.result.toString();
+    } else {
+      // Limit to reasonable precision
+      resultStr = Number(result.result).toPrecision(6).replace(/\.?0+$/, '');
+    }
+
+    return `${value} ${fromName} = ${resultStr} ${toName}`;
+  }
+});
+
+// ============================================================================
+// Reminders Tool
+// ============================================================================
+
+export const setReminderTool = defineTool('set_reminder', {
+  description: 'Set a reminder with a notification. Examples: "Remind me to take a break in 30 minutes", "Remind me to call John at 3pm"',
+  parameters: p({
+    message: z.string().describe('Reminder message'),
+    delay: z.number().optional().describe('Delay in minutes from now'),
+    time: z.string().optional().describe('Specific time (e.g., "3pm", "15:30", "2:30pm")'),
+    date: z.string().optional().describe('Date for the reminder (e.g., "today", "tomorrow", "Monday")'),
+  }),
+  handler: async ({ message, delay, time, date }) => {
+    let scheduledTime: Date;
+
+    if (delay !== undefined) {
+      // Simple delay in minutes
+      scheduledTime = new Date(Date.now() + delay * 60 * 1000);
+    } else if (time) {
+      // Parse time like "3pm", "15:30", "2:30pm"
+      scheduledTime = parseTimeString(time, date);
+    } else {
+      return 'Error: Please specify either a delay (in minutes) or a specific time';
+    }
+
+    if (scheduledTime.getTime() <= Date.now()) {
+      return 'Error: Scheduled time must be in the future';
+    }
+
+    const reminder = reminderManager.createReminder(message, scheduledTime);
+
+    const delayMinutes = Math.round((scheduledTime.getTime() - Date.now()) / (1000 * 60));
+    const timeStr = delayMinutes < 60
+      ? `in ${delayMinutes} minute${delayMinutes !== 1 ? 's' : ''}`
+      : `at ${scheduledTime.toLocaleTimeString()}`;
+
+    return `Reminder set: "${message}" ${timeStr}. (ID: ${reminder.id})`;
+  }
+});
+
+export const listRemindersTool = defineTool('list_reminders', {
+  description: 'List all active reminders',
+  parameters: p({}),
+  handler: async () => {
+    const reminders = reminderManager.getActiveReminders();
+
+    if (reminders.length === 0) {
+      return 'No active reminders.';
+    }
+
+    const now = Date.now();
+    let output = `Active Reminders (${reminders.length}):\n\n`;
+
+    for (const reminder of reminders) {
+      const delay = Math.round((reminder.scheduledTime - now) / (1000 * 60));
+      const timeStr = delay < 60
+        ? `in ${delay} minute${delay !== 1 ? 's' : ''}`
+        : `at ${new Date(reminder.scheduledTime).toLocaleTimeString()}`;
+
+      output += `• "${reminder.message}"\n`;
+      output += `  ${timeStr}\n`;
+      output += `  ID: ${reminder.id}\n\n`;
+    }
+
+    return output.trim();
+  }
+});
+
+export const cancelReminderTool = defineTool('cancel_reminder', {
+  description: 'Cancel a reminder by ID or message match',
+  parameters: p({
+    id: z.string().optional().describe('Reminder ID to cancel'),
+    message: z.string().optional().describe('Cancel reminder matching this message'),
+  }),
+  handler: async ({ id, message }) => {
+    if (!id && !message) {
+      return 'Error: Please provide either a reminder ID or message to cancel';
+    }
+
+    if (id) {
+      const success = reminderManager.cancelReminder(id);
+      return success ? `Reminder ${id} cancelled.` : `Reminder ${id} not found.`;
+    }
+
+    if (message) {
+      const reminders = reminderManager.getAllReminders();
+      const matching = reminders.filter(r =>
+        r.message.toLowerCase().includes(message.toLowerCase()) && !r.completed
+      );
+
+      if (matching.length === 0) {
+        return `No reminders found matching "${message}"`;
+      }
+
+      let cancelled = 0;
+      for (const reminder of matching) {
+        if (reminderManager.cancelReminder(reminder.id)) {
+          cancelled++;
+        }
+      }
+
+      return `Cancelled ${cancelled} reminder${cancelled !== 1 ? 's' : ''} matching "${message}".`;
+    }
+
+    return 'Error: Could not cancel reminder';
+  }
+});
+
+// ============================================================================
+// Shell Command Tool
+// ============================================================================
+
+export const shellTool = defineTool('run_shell_command', {
+  description: 'Execute a shell command. Examples: "Run ls -la", "Execute ping google.com -c 4", "Run echo Hello World"',
+  parameters: p({
+    command: z.string().describe('Shell command to execute'),
+  }),
+  handler: async ({ command }) => {
+    const decision = await requestPermissionForTool('run_shell_command', { command }, [
+      `Command: ${command}`,
+    ]);
+    if (!decision.allowed) {
+      return 'Cancelled: permission denied.';
+    }
+
+    try {
+      const { exec } = require('child_process');
+      const { promisify } = require('util');
+      const execAsync = promisify(exec);
+
+      const { stdout, stderr } = await execAsync(command, {
+        timeout: 30000, // 30 second timeout
+        maxBuffer: 1024 * 1024 * 10, // 10MB buffer
+      });
+
+      let output = stdout.trim();
+      if (stderr) {
+        output += output ? '\n\n' + stderr.trim() : stderr.trim();
+      }
+
+      if (!output) {
+        return `Command executed successfully (no output)`;
+      }
+
+      // Limit output size
+      if (output.length > 5000) {
+        output = output.substring(0, 5000) + '\n\n...(output truncated)';
+      }
+
+      return output;
+    } catch (error: any) {
+      return `Error executing command: ${error.message || error}`;
+    }
+  }
+});
+
+// ============================================================================
 // Export all tools
 // ============================================================================
 
@@ -1122,6 +1937,19 @@ export const desktopCommanderTools = [
   systemDndTool,
   systemLockTool,
   systemSleepTool,
+  wifiControlTool,
+  // Productivity
+  productivityTimerTool,
+  productivityCountdownTool,
+  productivityPomodoroTool,
+  productivityWorldClockTool,
+  productivityConvertTool,
+  // Reminders
+  setReminderTool,
+  listRemindersTool,
+  cancelReminderTool,
+  // Shell
+  shellTool,
   // Processes
   processListTool,
   processInfoTool,

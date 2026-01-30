@@ -35,6 +35,7 @@ export const DEFAULT_SETTINGS = {
     showInTray: true,
     floatingWindow: true,
     toastNotifications: true,
+    menuBarMode: false,
   },
   safety: {
     maxFilesPerOperation: 100,
@@ -184,7 +185,7 @@ export const DEFAULT_MCP_SERVERS: StoredMCPServer[] = [
       command: 'uvx',
       args: ['windows-mcp'],
       tools: '*',
-      enabled: false,
+      enabled: true,
       description: 'Direct Windows UI automation: click, type, scroll, drag, screenshots, shell commands. Requires Python 3.13+ and uv.',
     },
     createdAt: Date.now(),

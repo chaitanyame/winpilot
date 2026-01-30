@@ -13,6 +13,8 @@ export interface MCPServerConfigBase {
   enabled: boolean;
   /** Optional timeout in milliseconds for tool calls */
   timeout?: number;
+  /** Optional description of what this server does */
+  description?: string;
 }
 
 /**

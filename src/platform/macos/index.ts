@@ -1,7 +1,11 @@
 // macOS Platform Adapter (Stub - To be implemented in Phase 5)
 
-import { IPlatformAdapter, IWindowManager, IFileSystem, IApps, ISystem, IProcess, INetwork, IServices } from '../index';
+import { IPlatformAdapter, IWindowManager, IFileSystem, IApps, ISystem, IProcess, INetwork, IServices, IWifi } from '../index';
 import { WindowInfo, FileInfo, AppInfo, ProcessInfo, SystemInfoData, NetworkInfoData, NetworkTestResult, ServiceInfo } from '../../shared/types';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+
+const execAsync = promisify(exec);
 
 class MacOSWindowManager implements IWindowManager {
   async listWindows(): Promise<WindowInfo[]> {
@@ -70,6 +74,93 @@ class MacOSServices implements IServices {
   async controlService(): Promise<boolean> { return false; }
 }
 
+class MacOSWifi implements IWifi {
+  async getStatus() {
+    try {
+      const { stdout } = await execAsync('/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport -I');
+      const lines = stdout.split('\n');
+      const result: any = {
+        enabled: false,
+        connected: false,
+        interfaceName: 'en0'
+      };
+
+      for (const line of lines) {
+        if (line.includes('SSID:')) {
+          result.ssid = line.split(':')[1].trim();
+          result.connected = true;
+          result.enabled = true;
+        } else if (line.includes('agrCtlRSSI:')) {
+          const rssi = parseInt(line.split(':')[1].trim(), 10);
+          result.signalStrength = Math.max(0, Math.min(100, (rssi + 100)));
+        }
+      }
+
+      return result;
+    } catch {
+      return { enabled: false, connected: false, interfaceName: 'en0' };
+    }
+  }
+
+  async enable() {
+    try {
+      await execAsync('networksetup -setairportpower en0 on');
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async disable() {
+    try {
+      await execAsync('networksetup -setairportpower en0 off');
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async toggle() {
+    const status = await this.getStatus();
+    if (status.enabled) {
+      await this.disable();
+      return { enabled: false };
+    } else {
+      await this.enable();
+      return { enabled: true };
+    }
+  }
+
+  async listNetworks() {
+    try {
+      const { stdout } = await execAsync('networksetup -listpreferredwirelessnetworks en0');
+      return stdout.split('\n')
+        .filter(line => line.trim())
+        .map(line => ({ ssid: line.trim().replace(/^\d+\.\s*/, ''), signalStrength: 0, authentication: 'Unknown' }));
+    } catch {
+      return [];
+    }
+  }
+
+  async listAvailableNetworks() {
+    try {
+      const { stdout } = await execAsync('/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport -s');
+      return stdout.split('\n').slice(1)
+        .filter(line => line.trim())
+        .map(line => {
+          const parts = line.split(/\s+/);
+          return {
+            ssid: parts[0],
+            signalStrength: 0,
+            authentication: parts[4] || 'Unknown'
+          };
+        });
+    } catch {
+      return [];
+    }
+  }
+}
+
 const macosAdapter: IPlatformAdapter = {
   platform: 'macos',
   windowManager: new MacOSWindowManager(),
@@ -79,6 +170,7 @@ const macosAdapter: IPlatformAdapter = {
   process: new MacOSProcess(),
   network: new MacOSNetwork(),
   services: new MacOSServices(),
+  wifi: new MacOSWifi(),
 };
 
 export default macosAdapter;

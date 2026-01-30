@@ -312,34 +312,61 @@ interface ServerCardProps {
 function ServerCard({ server, onEdit, onDelete, onToggle }: ServerCardProps) {
   const config = server.config;
   const isLocal = config.type === 'local' || config.type === 'stdio';
+  const isBuiltIn = server.id.startsWith('mcp-default-');
 
   return (
     <div className={`p-4 rounded-lg border ${
-      config.enabled 
-        ? 'border-green-200 bg-green-50 dark:bg-green-900/20 dark:border-green-800' 
+      config.enabled
+        ? 'border-green-200 bg-green-50 dark:bg-green-900/20 dark:border-green-800'
         : 'border-gray-200 bg-gray-50 dark:bg-gray-700/50 dark:border-gray-600'
     }`}>
       <div className="flex items-start justify-between">
         <div className="flex-1">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 mb-2">
             <h3 className="font-medium text-gray-900 dark:text-white">
               {config.name}
             </h3>
+
+            {/* Built-in badge */}
+            {isBuiltIn && (
+              <span className="px-2 py-0.5 text-xs rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 font-medium">
+                Built-in
+              </span>
+            )}
+
+            {/* Type badge */}
             <span className={`px-2 py-0.5 text-xs rounded ${
-              isLocal 
-                ? 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300' 
+              isLocal
+                ? 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300'
                 : 'bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300'
             }`}>
               {config.type}
             </span>
-            {!config.enabled && (
+
+            {/* Ready to enable badge for built-in servers */}
+            {isBuiltIn && !config.enabled && (
+              <span className="px-2 py-0.5 text-xs rounded-full bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300">
+                Ready to enable
+              </span>
+            )}
+
+            {/* Disabled badge */}
+            {!config.enabled && !isBuiltIn && (
               <span className="px-2 py-0.5 text-xs bg-gray-200 text-gray-600 dark:bg-gray-600 dark:text-gray-300 rounded">
                 Disabled
               </span>
             )}
           </div>
+
+          {/* Description text */}
+          {config.description && (
+            <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
+              {config.description}
+            </p>
+          )}
+
           <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
-            {isLocal 
+            {isLocal
               ? `${(config as MCPLocalServerConfig).command} ${(config as MCPLocalServerConfig).args.join(' ')}`
               : (config as MCPRemoteServerConfig).url
             }

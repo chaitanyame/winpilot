@@ -167,6 +167,7 @@ export interface Settings {
     showInTray: boolean;
     floatingWindow: boolean;
     toastNotifications: boolean;
+    menuBarMode: boolean;
   };
   safety: {
     maxFilesPerOperation: number;
@@ -174,6 +175,25 @@ export interface Settings {
     requireConfirmAbove: number;
   };
   agenticLoop: AgenticLoopConfig;
+  notifications: {
+    enabled: boolean;
+    useNative: boolean;
+    useToast: boolean;
+    toastDuration: number;
+    sound: boolean;
+  };
+  scheduledTasks: {
+    enabled: boolean;
+    maxConcurrent: number;
+  };
+  voiceInput: {
+    enabled: boolean;
+    hotkey: string;
+    provider: 'browser' | 'whisper';
+    whisperApiKey?: string;
+    language: string;
+    showVisualFeedback: boolean;
+  };
 }
 
 // IPC Channel names
@@ -230,12 +250,18 @@ export const IPC_CHANNELS = {
   APP_PERMISSION_REQUEST: 'app:permissionRequest',
   APP_PERMISSION_RESPONSE: 'app:permissionResponse',
 
+  // App window controls (for controlling the Desktop Commander window)
+  APP_WINDOW_MINIMIZE: 'app:window:minimize',
+  APP_WINDOW_MAXIMIZE: 'app:window:maximize',
+  APP_WINDOW_FIT_TO_SCREEN: 'app:window:fitToScreen',
+
   // Copilot
   COPILOT_SEND_MESSAGE: 'copilot:sendMessage',
   COPILOT_STREAM_CHUNK: 'copilot:streamChunk',
   COPILOT_STREAM_END: 'copilot:streamEnd',
   COPILOT_CANCEL: 'copilot:cancel',
   COPILOT_CLEAR_SESSION: 'copilot:clearSession',
+  COPILOT_ACTION_LOG: 'copilot:actionLog',
 } as const;
 
 // Tool definitions for Copilot
@@ -302,4 +328,75 @@ export interface TurnSummary {
   hasToolCalls: boolean;
   signalsCompletion: boolean;
   timestamp: Date;
+}
+
+// Scheduled Task types
+export interface ScheduledTask {
+  id: string;
+  name: string;
+  prompt: string;
+  cronExpression: string;
+  enabled: boolean;
+  createdAt: number;
+  updatedAt: number;
+  lastRun?: {
+    timestamp: number;
+    status: 'success' | 'error';
+    result?: string;
+    error?: string;
+  };
+}
+
+export interface TaskLog {
+  taskId: string;
+  taskName: string;
+  timestamp: number;
+  status: 'success' | 'error';
+  result?: string;
+  error?: string;
+  duration: number;
+}
+
+// Timer types (re-exported from timers.ts for shared access)
+export enum TimerType {
+  TIMER = 'timer',
+  COUNTDOWN = 'countdown',
+  POMODORO = 'pomodoro'
+}
+
+export enum TimerStatus {
+  IDLE = 'idle',
+  RUNNING = 'running',
+  PAUSED = 'paused',
+  COMPLETED = 'completed'
+}
+
+export interface Timer {
+  id: string;
+  type: TimerType;
+  status: TimerStatus;
+  name: string;
+  startTime?: number;
+  elapsed: number;
+  duration?: number;
+  remaining?: number;
+  pomodoroCycle?: number;
+  pomodoroWorkDuration?: number;
+  pomodoroBreakDuration?: number;
+  isBreak?: boolean;
+}
+
+// Action Log types for Canvas/Logs tab
+export type ActionLogStatus = 'success' | 'error' | 'pending' | 'warning';
+
+export interface ActionLog {
+  id: string;
+  timestamp: string; // HH:MM:SS format
+  createdAt: number; // epoch ms for grouping per prompt
+  tool: string;
+  description: string;
+  status: ActionLogStatus;
+  duration?: number; // milliseconds
+  details?: string;
+  error?: string;
 }

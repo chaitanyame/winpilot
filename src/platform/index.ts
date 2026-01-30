@@ -61,6 +61,16 @@ export interface INetwork {
   testNetwork(params: { test: 'ping' | 'dns' | 'connectivity'; host?: string; count?: number }): Promise<NetworkTestResult>;
 }
 
+// WiFi Interface
+export interface IWifi {
+  getStatus(): Promise<{ enabled: boolean; connected: boolean; ssid?: string; signalStrength?: number; interfaceName: string }>;
+  enable(): Promise<boolean>;
+  disable(): Promise<boolean>;
+  toggle(): Promise<{ enabled: boolean }>;
+  listNetworks(): Promise<Array<{ ssid: string; signalStrength: number; authentication: string }>>;
+  listAvailableNetworks(): Promise<Array<{ ssid: string; signalStrength: number; authentication: string }>>;
+}
+
 // Services Interface
 export interface IServices {
   listServices(params: { filter?: string; nameContains?: string }): Promise<ServiceInfo[]>;
@@ -77,6 +87,7 @@ export interface IPlatformAdapter {
   readonly process: IProcess;
   readonly network: INetwork;
   readonly services: IServices;
+  readonly wifi: IWifi;
 }
 
 // Import all platform adapters statically

@@ -28,11 +28,12 @@ export async function createCommandWindow(): Promise<BrowserWindow> {
     transparent: true,
     resizable: true,
     movable: true,
-    minimizable: false,
-    maximizable: false,
+    minimizable: true,
+    maximizable: true,
     fullscreenable: false,
     alwaysOnTop: true,
-    skipTaskbar: true,
+    skipTaskbar: false, // Show in taskbar when minimized
+    title: 'Desktop Commander',
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
       nodeIntegration: false,
@@ -43,7 +44,8 @@ export async function createCommandWindow(): Promise<BrowserWindow> {
 
   // Load the renderer - detect dev mode
   const isDev = !app.isPackaged;
-  const devServerUrl = process.env.VITE_DEV_SERVER_URL || 'http://localhost:5173';
+  const rawDevServerUrl = process.env.VITE_DEV_SERVER_URL || 'http://localhost:5173';
+  const devServerUrl = rawDevServerUrl;
 
   console.log(`Desktop Commander: isDev=${isDev}, devServerUrl=${devServerUrl}`);
 
@@ -113,19 +115,45 @@ export async function createCommandWindow(): Promise<BrowserWindow> {
  * Show the command window
  */
 export function showCommandWindow(): void {
-  if (!commandWindow) return;
+  if (!commandWindow || commandWindow.isDestroyed()) return;
 
   // Center on current screen
+  const safeNumber = (value: number, fallback: number) => (Number.isFinite(value) ? value : fallback);
+
   const cursorPoint = screen.getCursorScreenPoint();
-  const currentDisplay = screen.getDisplayNearestPoint(cursorPoint);
-  const { width: screenWidth, height: screenHeight } = currentDisplay.workAreaSize;
-  const { x: screenX, y: screenY } = currentDisplay.bounds;
+  const display = screen.getDisplayNearestPoint(cursorPoint) || screen.getPrimaryDisplay();
+  const screenWidth = safeNumber(display.workAreaSize.width, COMMAND_PALETTE_WIDTH);
+  const screenHeight = safeNumber(display.workAreaSize.height, COMMAND_PALETTE_HEIGHT);
+  const screenX = safeNumber(display.bounds.x, 0);
+  const screenY = safeNumber(display.bounds.y, 0);
 
   const windowBounds = commandWindow.getBounds();
-  const x = Math.round(screenX + (screenWidth - windowBounds.width) / 2);
-  const y = Math.round(screenY + (screenHeight - windowBounds.height) / 3);
+  const windowWidth = safeNumber(windowBounds.width, COMMAND_PALETTE_WIDTH);
+  const windowHeight = safeNumber(windowBounds.height, COMMAND_PALETTE_HEIGHT);
 
-  commandWindow.setPosition(x, y);
+  const rawX = screenX + (screenWidth - windowWidth) / 2;
+  const rawY = screenY + (screenHeight - windowHeight) / 3;
+  const x = Math.round(safeNumber(rawX, screenX));
+  const y = Math.round(safeNumber(rawY, screenY));
+
+  let positioned = false;
+
+  if (Number.isFinite(x) && Number.isFinite(y)) {
+    try {
+      commandWindow.setPosition(x, y);
+      positioned = true;
+    } catch (error) {
+      console.warn('Failed to set window position, falling back to center:', error);
+    }
+  }
+
+  if (!positioned) {
+    try {
+      commandWindow.center();
+    } catch (error) {
+      console.warn('Failed to center window:', error);
+    }
+  }
   commandWindow.show();
   commandWindow.focus();
 
@@ -172,6 +200,49 @@ export function focusCommandInput(): void {
   if (commandWindow && commandWindow.isVisible()) {
     commandWindow.webContents.send('focus:input');
   }
+}
+
+/**
+ * Minimize the command window
+ */
+export function minimizeCommandWindow(): void {
+  if (commandWindow) {
+    commandWindow.minimize();
+  }
+}
+
+/**
+ * Maximize the command window
+ */
+export function maximizeCommandWindow(): void {
+  if (commandWindow) {
+    if (commandWindow.isMaximized()) {
+      commandWindow.unmaximize();
+    } else {
+      commandWindow.maximize();
+    }
+  }
+}
+
+/**
+ * Fit window to screen (maximize but keep always on top)
+ */
+export function fitWindowToScreen(): void {
+  if (!commandWindow) return;
+
+  const primaryDisplay = screen.getPrimaryDisplay();
+  const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
+
+  // Set window to fill most of the screen with some margin
+  const margin = 40;
+  commandWindow.setBounds({
+    x: margin,
+    y: margin,
+    width: screenWidth - (margin * 2),
+    height: screenHeight - (margin * 2),
+  });
+  commandWindow.show();
+  commandWindow.focus();
 }
 
 /**
