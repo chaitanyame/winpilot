@@ -3,6 +3,11 @@
 import { ipcMain, clipboard, shell, dialog, app } from 'electron';
 import fs from 'fs/promises';
 import path from 'path';
+import { execFile as execFileCallback } from 'child_process';
+import { promisify } from 'util';
+
+// Cache voice transcription utilities at module level for performance
+const execFileAsync = promisify(execFileCallback);
 import { IPC_CHANNELS, ScheduledTask, Timer, ActionLog } from '../shared/types';
 import { MCP_IPC_CHANNELS, MCPServerConfig } from '../shared/mcp-types';
 import { getSettings, setSettings, getHistory, addToHistory, clearHistory, getMcpServers, addMcpServer, updateMcpServer, deleteMcpServer, toggleMcpServer, getScheduledTasks, addScheduledTask, updateScheduledTask, deleteScheduledTask, getTaskLogs } from './store';
@@ -505,10 +510,6 @@ export function setupIpcHandlers(): void {
       const outTxt = `${outBase}.txt`;
 
       await fs.writeFile(inputPath, audioBuffer);
-
-      const { execFile } = await import('child_process');
-      const { promisify } = await import('util');
-      const execFileAsync = promisify(execFile);
 
       const args: string[] = [
         '-m', modelPath,

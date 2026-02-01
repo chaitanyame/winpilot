@@ -217,7 +217,7 @@ class TimerManager extends EventEmitter {
         break;
     }
 
-    this.saveTimers();
+    // Removed saveTimers() - now only save on pause/stop/complete for performance
   }
 
   /**

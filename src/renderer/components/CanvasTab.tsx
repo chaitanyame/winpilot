@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useDeferredValue } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Search, Download, ScrollText, CheckCircle, XCircle, AlertTriangle, Loader2 } from 'lucide-react';
 import type { ActionLog } from '../../shared/types';
@@ -104,9 +104,11 @@ function ActionLogEntry({ log }: { log: ActionLog }) {
 
 export function CanvasTab({ logs, onClearAll }: CanvasTabProps) {
   const [query, setQuery] = useState('');
+  // Debounce search query for better performance
+  const deferredQuery = useDeferredValue(query);
 
   const filteredLogs = useMemo(() => {
-    const q = query.trim().toLowerCase();
+    const q = deferredQuery.trim().toLowerCase();
     if (!q) return logs;
     return logs.filter((log) => {
       const haystack = [
@@ -121,7 +123,7 @@ export function CanvasTab({ logs, onClearAll }: CanvasTabProps) {
         .toLowerCase();
       return haystack.includes(q);
     });
-  }, [logs, query]);
+  }, [logs, deferredQuery]);
 
   const handleExport = async () => {
     const suggestedName = `desktop-commander-logs-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;

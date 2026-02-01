@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, memo } from 'react';
 import { Timer, TimerType, TimerStatus } from '../../shared/types';
 
 // Format milliseconds to HH:MM:SS or MM:SS
@@ -33,15 +33,15 @@ function getStatusIcon(status: TimerStatus): string {
   }
 }
 
-// Individual Timer Widget
-function TimerWidget({ timer, onStart, onPause, onReset, onDelete, onSkip }: {
+// Individual Timer Widget - memoized to prevent re-renders when other timers update
+const TimerWidget = memo(({ timer, onStart, onPause, onReset, onDelete, onSkip }: {
   timer: Timer;
   onStart: (id: string) => void;
   onPause: (id: string) => void;
   onReset: (id: string) => void;
   onDelete: (id: string) => void;
   onSkip?: (id: string) => void;
-}) {
+}) => {
   const displayTime = timer.type === TimerType.TIMER
     ? timer.elapsed
     : timer.remaining || 0;
@@ -88,7 +88,8 @@ function TimerWidget({ timer, onStart, onPause, onReset, onDelete, onSkip }: {
       </div>
     </div>
   );
-}
+});
+TimerWidget.displayName = 'TimerWidget';
 
 // Main Timer Widgets Container
 export function TimerWidgets() {

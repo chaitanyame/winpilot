@@ -78,7 +78,7 @@ html, body {
 }
 
 .message-assistant {
-  @apply bg-stone-800/50 dark:bg-stone-800/50 backdrop-blur-sm text-stone-100 dark:text-stone-100 rounded-2xl rounded-bl-sm border border-stone-700/50 dark:border-stone-700/50 shadow-lg;
+  @apply bg-stone-800/95 dark:bg-stone-800/95 text-stone-100 dark:text-stone-100 rounded-2xl rounded-bl-sm border border-stone-700/50 dark:border-stone-700/50 shadow-lg;
 }
 
 /* Tool call indicator */
@@ -92,10 +92,9 @@ html, body {
   @apply focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 dark:focus:ring-purple-500/20 dark:focus:border-purple-500;
 }
 
-/* Glass effect */
+/* Glass effect - blur removed for performance */
 .glass {
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
+  background: rgba(28, 25, 23, 0.95);
 }
 
 /* Markdown content styles */
@@ -159,8 +158,7 @@ html, body {
 }
 
 .timer-widget {
-  background: rgba(255, 255, 255, 0.95);
-  backdrop-filter: blur(20px);
+  background: rgba(255, 255, 255, 0.98);
   border-radius: 16px;
   padding: 16px;
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
