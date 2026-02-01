@@ -12,6 +12,7 @@ import { taskScheduler } from './scheduler';
 import { timerManager } from './timers';
 import { initDatabase, closeDatabase } from './database';
 import { reminderManager } from './reminders';
+import { copilotController } from '../copilot/client';
 
 // In development, use a separate userData directory to avoid conflicts
 if (!app.isPackaged) {
@@ -95,6 +96,16 @@ async function initApp() {
   // Initialize task scheduler
   await taskScheduler.init();
 
+  // Pre-initialize the copilot session to reduce first-question latency
+  try {
+    await copilotController.initialize();
+    console.log('Copilot session pre-initialized');
+  } catch (error) {
+    console.error('Failed to pre-initialize copilot session:', error);
+    // Don't block app startup if copilot fails to initialize
+    // It will be retried when the user sends their first message
+  }
+
   console.log('Desktop Commander initialized');
 }
 
@@ -116,7 +127,8 @@ app.on('activate', () => {
 });
 
 // Cleanup before quit
-app.on('before-quit', () => {
+app.on('before-quit', async () => {
+  await copilotController.destroy();
   taskScheduler.destroy();
   timerManager.destroy();
   reminderManager.destroy();
