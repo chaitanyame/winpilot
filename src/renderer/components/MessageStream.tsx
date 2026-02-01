@@ -410,10 +410,13 @@ export function MessageStream({ messages, isLoading, actionLogs = [] }: Props) {
       .map(message => ({ id: message.id, ts: message.timestamp?.getTime?.() ?? 0 })),
   [messages]);
 
-  // Auto-scroll to bottom when messages change
+  // Auto-scroll to bottom to show latest message
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+    const timeoutId = setTimeout(() => {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    }, 100);
+    return () => clearTimeout(timeoutId);
+  }, [messages.length]);
 
   return (
     <div className="p-6 space-y-5">
@@ -438,17 +441,21 @@ export function MessageStream({ messages, isLoading, actionLogs = [] }: Props) {
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.2 }}
-            className={`flex w-full gap-3 ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
+            className="flex w-full gap-3 justify-start"
           >
-            {message.role === 'assistant' && (
+            {message.role === 'assistant' ? (
               <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary-100 dark:bg-primary-900/30 flex items-center justify-center">
                 <Bot className="w-4 h-4 text-primary-600 dark:text-primary-400" />
               </div>
+            ) : (
+              <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary-500 flex items-center justify-center">
+                <User className="w-4 h-4 text-white" />
+              </div>
             )}
 
-            <div className={`flex flex-col ${message.role === 'user' ? 'items-end flex-1' : ''}`}>
+            <div className="flex flex-col flex-1">
               <div
-                className={`max-w-[82%] rounded-2xl border backdrop-blur-sm shadow-lg/10 ${
+                className={`rounded-2xl border backdrop-blur-sm shadow-lg/10 ${
                   message.role === 'user'
                     ? 'message-user px-5 py-3 border-purple-500/30 bg-purple-500/15'
                     : 'message-assistant p-5 border-stone-700/60 bg-stone-900/40'
@@ -482,17 +489,11 @@ export function MessageStream({ messages, isLoading, actionLogs = [] }: Props) {
                 </div>
               )}
             </div>
-
-            {message.role === 'user' && (
-              <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary-500 flex items-center justify-center">
-                <User className="w-4 h-4 text-white" />
-              </div>
-            )}
           </motion.div>
         );
       })}
 
-      {/* Loading indicator */}
+      {/* Loading indicator at bottom */}
       {isLoading && messages[messages.length - 1]?.role === 'user' && (
         <motion.div
           initial={{ opacity: 0 }}

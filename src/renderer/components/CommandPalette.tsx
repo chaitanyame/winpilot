@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { motion } from 'framer-motion';
 import { Send, X, History, Square, Monitor, Plug, Trash2, Settings as SettingsIcon, Clock, Mic, Volume2, Brain, Minus, Maximize2, Expand, ScrollText } from 'lucide-react';
 import { MessageStream } from './MessageStream';
@@ -62,75 +62,17 @@ export function CommandPalette() {
     clearMessages,
   } = useCopilot();
 
-  const userMessages = messages.filter(message => message.role === 'user');
-  const assistantMessages = messages.filter(message => message.role !== 'user');
-  const visibleActionLogs = actionLogsClearedAt > 0
-    ? actionLogs.filter(l => l.createdAt >= actionLogsClearedAt)
-    : actionLogs;
+  const userMessages = useMemo(() => messages.filter(message => message.role === 'user'), [messages]);
+  const assistantMessages = useMemo(() => messages.filter(message => message.role !== 'user'), [messages]);
+  const visibleActionLogs = useMemo(
+    () => actionLogsClearedAt > 0
+      ? actionLogs.filter(l => l.createdAt >= actionLogsClearedAt)
+      : actionLogs,
+    [actionLogs, actionLogsClearedAt]
+  );
 
-  // Track action logs from tool calls
-  useEffect(() => {
-    setActionLogs(prev => {
-      const updated = [...prev];
-      const logIds = new Set(updated.map(l => l.id));
-
-      // Add or update logs from messages
-      messages.forEach((message) => {
-        if (message.toolCalls && message.toolCalls.length > 0) {
-          message.toolCalls.forEach(toolCall => {
-            const timestamp = new Date(message.timestamp);
-            const timeStr = timestamp.toLocaleTimeString('en-US', { hour12: false });
-
-            let status: ActionLog['status'] = 'success';
-            if (toolCall.status === 'running') status = 'pending';
-            else if (toolCall.status === 'error') status = 'error';
-            else if (toolCall.status === 'pending') status = 'warning';
-
-            const logId = `log-${toolCall.id}`;
-
-            const toolDetails = (() => {
-              if (toolCall.name === 'run_shell_command' && typeof toolCall.params?.command === 'string') {
-                return `Command: ${toolCall.params.command}`;
-              }
-              if (toolCall.params && Object.keys(toolCall.params).length > 0) {
-                return `Args: ${JSON.stringify(toolCall.params, null, 2)}`;
-              }
-              return undefined;
-            })();
-
-            // Create or update log entry
-            const logEntry: ActionLog = {
-              id: logId,
-              timestamp: timeStr,
-              createdAt: timestamp.getTime(),
-              tool: toolCall.name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
-              description: getToolDescription(toolCall.name),
-              status,
-              error: toolCall.error,
-              details: toolDetails,
-            };
-
-            // Update existing log or add new one
-            const existingIndex = updated.findIndex(l => l.id === logId);
-            if (existingIndex >= 0) {
-              updated[existingIndex] = logEntry;
-            } else {
-              updated.push(logEntry);
-            }
-            logIds.add(logId);
-          });
-        }
-      });
-
-      // Sort by timestamp (most recent first) and keep last 100
-      return updated
-        .sort((a, b) => b.timestamp.localeCompare(a.timestamp))
-        .slice(0, 100);
-    });
-  }, [messages]);
-
-  // Helper function to get tool description
-  const getToolDescription = (toolName: string): string => {
+  // Helper function to get tool description (memoized outside of useEffect)
+  const getToolDescription = useCallback((toolName: string): string => {
     const descriptions: Record<string, string> = {
       window_list: 'Listed open windows',
       window_focus: 'Focused window',
@@ -150,17 +92,103 @@ export function CommandPalette() {
       apps_launch: 'Launched application',
       apps_list: 'Listed applications',
       apps_quit: 'Quit application',
-      system_info: 'Retrieved system info',
+      apps_switch: 'Switched application',
       system_volume: 'Adjusted volume',
       system_brightness: 'Adjusted brightness',
       system_screenshot: 'Took screenshot',
+      system_dnd: 'Toggled Do Not Disturb',
+      system_lock: 'Locked system',
+      system_sleep: 'Put system to sleep',
+      system_wifi: 'Toggled WiFi',
+      system_info: 'Retrieved system info',
+      network_info: 'Retrieved network info',
+      network_test: 'Tested network',
+      productivity_timer: 'Started timer',
+      productivity_countdown: 'Started countdown',
+      productivity_pomodoro: 'Started Pomodoro',
+      productivity_worldclock: 'Checked world clock',
+      productivity_convert: 'Converted units',
+      set_reminder: 'Set reminder',
+      list_reminders: 'Listed reminders',
+      cancel_reminder: 'Cancelled reminder',
+      run_shell_command: 'Executed shell command',
+      process_list: 'Listed processes',
+      process_info: 'Retrieved process info',
+      process_kill: 'Killed process',
+      process_top: 'Showed top processes',
       clipboard_read: 'Read clipboard',
       clipboard_write: 'Wrote to clipboard',
-      processes_list: 'Listed processes',
-      processes_kill: 'Killed process',
+      clipboard_clear: 'Cleared clipboard',
+      office_create: 'Created Office document',
+      powerpoint_create: 'Created PowerPoint',
+      service_list: 'Listed services',
+      service_control: 'Controlled service',
+      web_search: 'Searched the web',
+      troubleshoot_start: 'Started troubleshooting',
+      troubleshoot_propose_fix: 'Proposed fix',
     };
-    return descriptions[toolName] || `Executed ${toolName}`;
-  };
+    return descriptions[toolName] || toolName;
+  }, []);
+
+  // Track action logs from tool calls - optimized to only process new tool calls
+  useEffect(() => {
+    // Only process messages with tool calls
+    const messagesWithTools = messages.filter(m => m.toolCalls && m.toolCalls.length > 0);
+    if (messagesWithTools.length === 0) return;
+
+    setActionLogs(prev => {
+      const logMap = new Map(prev.map(log => [log.id, log]));
+      let hasChanges = false;
+
+      messagesWithTools.forEach((message) => {
+        message.toolCalls!.forEach(toolCall => {
+          const logId = `log-${toolCall.id}`;
+          const timestamp = new Date(message.timestamp);
+          const timeStr = timestamp.toLocaleTimeString('en-US', { hour12: false });
+
+          let status: ActionLog['status'] = 'success';
+          if (toolCall.status === 'running') status = 'pending';
+          else if (toolCall.status === 'error') status = 'error';
+          else if (toolCall.status === 'pending') status = 'warning';
+
+          const toolDetails = (() => {
+            if (toolCall.name === 'run_shell_command' && typeof toolCall.params?.command === 'string') {
+              return `Command: ${toolCall.params.command}`;
+            }
+            if (toolCall.params && Object.keys(toolCall.params).length > 0) {
+              return `Args: ${JSON.stringify(toolCall.params, null, 2)}`;
+            }
+            return undefined;
+          })();
+
+          const logEntry: ActionLog = {
+            id: logId,
+            timestamp: timeStr,
+            createdAt: timestamp.getTime(),
+            tool: toolCall.name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+            description: getToolDescription(toolCall.name),
+            status,
+            error: toolCall.error,
+            details: toolDetails,
+          };
+
+          const existingLog = logMap.get(logId);
+          // Only update if there's a change
+          if (!existingLog || existingLog.status !== status || existingLog.error !== toolCall.error) {
+            logMap.set(logId, logEntry);
+            hasChanges = true;
+          }
+        });
+      });
+
+      if (!hasChanges) return prev;
+
+      // Convert map to array, sort, and limit
+      return Array.from(logMap.values())
+        .sort((a, b) => b.createdAt - a.createdAt)
+        .slice(0, 100);
+    });
+  }, [messages, getToolDescription]);
 
   const insertTranscript = useCallback((transcript: string) => {
     const text = transcript.trim();
@@ -825,10 +853,10 @@ export function CommandPalette() {
 
       {/* Split View: Questions (Left) + Output (Right) */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Left Panel - Questions + Logs */}
-        <div className="flex-1 flex flex-col border-r-2 border-stone-700 dark:border-stone-700 min-w-0">
+        {/* Conversation Panel - Unified Q&A */}
+        <div className="flex-1 flex flex-col min-w-0">
           <div className="flex-1 min-h-0 flex flex-col">
-            {userMessages.length === 0 && !showHistory ? (
+            {messages.length === 0 && !showHistory ? (
               <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
                 <Monitor className="w-12 h-12 text-purple-500/50 mb-4" />
                 <h2 className="text-lg font-medium text-stone-300 dark:text-stone-300 mb-2">
@@ -866,22 +894,10 @@ export function CommandPalette() {
                 </div>
               </div>
             ) : (
-              <div className="flex-1 overflow-y-auto">
-                <MessageStream messages={userMessages} isLoading={false} actionLogs={visibleActionLogs} />
+              <div className="flex-1 overflow-y-auto flex flex-col justify-end">
+                <MessageStream messages={messages} isLoading={isLoading} actionLogs={visibleActionLogs} />
               </div>
             )}
-          </div>
-        </div>
-
-        {/* Right Panel - Output */}
-        <div className="flex-1 flex flex-col flex-shrink-0 min-w-0">
-          <div className="px-4 py-3 border-b border-stone-800 dark:border-stone-800 bg-stone-900/50 dark:bg-stone-900/50">
-            <h3 className="text-sm font-semibold text-stone-300 dark:text-stone-300">
-              Output
-            </h3>
-          </div>
-          <div className="flex-1 overflow-y-auto">
-            <MessageStream messages={assistantMessages} isLoading={isLoading} />
           </div>
         </div>
       </div>

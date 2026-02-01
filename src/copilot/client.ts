@@ -298,6 +298,10 @@ export class CopilotController {
 
     // Capture user message timestamp for action log grouping
     this.currentUserMessageTimestamp = Date.now();
+    
+    // Reset assistant response from previous message to avoid stale reasoning in logs
+    this.currentAssistantResponse = '';
+    this.currentTurnResults = [];
 
     if (!loopConfig.enabled) {
       // If loop disabled, fall back to single-turn

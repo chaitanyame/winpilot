@@ -16,6 +16,19 @@ import { taskScheduler } from './scheduler';
 import { voiceInputManager } from './voice-input';
 import { timerManager } from './timers';
 import { reminderManager } from './reminders';
+import { IntentRouter } from '../intent/router';
+
+// Initialize intent router
+const intentRouter = new IntentRouter();
+let intentRouterInitialized = false;
+
+// Initialize intent router on first use
+async function ensureIntentRouterInitialized() {
+  if (!intentRouterInitialized) {
+    await intentRouter.initialize();
+    intentRouterInitialized = true;
+  }
+}
 
 /**
  * Setup all IPC handlers
@@ -221,6 +234,30 @@ export function setupIpcHandlers(): void {
     addToHistory(message);
 
     try {
+      // Ensure intent router is initialized
+      await ensureIntentRouterInitialized();
+
+      // Try intent-based routing first (Tier 1 & 2)
+      console.log('[IPC] Attempting intent-based routing...');
+      const routeResult = await intentRouter.route(message);
+
+      if (routeResult.handled) {
+        // Local execution successful - stream result and end
+        console.log('[IPC] Intent routing handled locally', {
+          tier: routeResult.tier,
+          tool: routeResult.toolName,
+          confidence: routeResult.confidence?.toFixed(2),
+        });
+
+        if (!sender.isDestroyed()) {
+          sender.send(IPC_CHANNELS.COPILOT_STREAM_CHUNK, routeResult.response);
+          sender.send(IPC_CHANNELS.COPILOT_STREAM_END);
+        }
+        return;
+      }
+
+      // Fall back to LLM for complex queries
+      console.log('[IPC] Falling back to LLM', { reason: routeResult.reason });
       console.log('[IPC] Starting sendMessageWithLoop generator...');
 
       // Ensure tool execution can request permissions from the active window.

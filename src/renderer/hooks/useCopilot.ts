@@ -25,13 +25,14 @@ export function useCopilot(): UseCopilotReturn {
       setMessages((prev) => {
         const lastMessage = prev[prev.length - 1];
         if (lastMessage?.role === 'assistant') {
+          // Update existing assistant message
           return [
             ...prev.slice(0, -1),
             { ...lastMessage, content: currentAssistantMessageRef.current },
           ];
         } else {
           // Create new assistant message
-          return [
+          const newMessages = [
             ...prev,
             {
               id: generateId(),
@@ -40,6 +41,8 @@ export function useCopilot(): UseCopilotReturn {
               timestamp: new Date(),
             },
           ];
+          // Keep only last 50 messages
+          return newMessages.length > 50 ? newMessages.slice(-50) : newMessages;
         }
       });
     });
@@ -74,7 +77,11 @@ export function useCopilot(): UseCopilotReturn {
       timestamp: new Date(),
     };
 
-    setMessages((prev) => [...prev, userMessage]);
+    setMessages((prev) => {
+      // Keep only last 50 messages to prevent performance degradation
+      const updated = [...prev, userMessage];
+      return updated.length > 50 ? updated.slice(-50) : updated;
+    });
 
     try {
       await window.electronAPI.sendMessage(content);
