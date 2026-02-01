@@ -102,6 +102,8 @@ export class CopilotController {
   private toolExecutionMap = new Map<string, { toolName: string; startTime: number; details?: string }>();
   // Track user message timestamp for action log grouping
   private currentUserMessageTimestamp = 0;
+  // Cleanup interval for stale tool executions
+  private cleanupIntervalId: NodeJS.Timeout | null = null;
 
   constructor() {
     // Check Node.js version for Copilot CLI compatibility
@@ -114,6 +116,24 @@ export class CopilotController {
     const cliPath = findCopilotCliPath();
     logger.copilot('Creating CopilotClient...', { cliPath, nodeVersion });
     this.client = new CopilotClient(cliPath ? { cliPath } : undefined);
+
+    // Start cleanup interval for stale tool executions (every 30 seconds)
+    this.cleanupIntervalId = setInterval(() => this.cleanupStaleToolExecutions(), 30000);
+  }
+
+  /**
+   * Clean up stale tool executions from the map (older than 60 seconds)
+   */
+  private cleanupStaleToolExecutions(): void {
+    const now = Date.now();
+    const staleThreshold = 60000; // 60 seconds
+
+    for (const [id, exec] of this.toolExecutionMap) {
+      if (now - exec.startTime > staleThreshold) {
+        this.toolExecutionMap.delete(id);
+        logger.copilot(`Cleaned up stale tool execution: ${id} (${exec.toolName})`);
+      }
+    }
   }
 
   /**
@@ -858,22 +878,6 @@ What should we do next?`;
   }
 
   /**
-   * Clean up resources
-   */
-  async destroy(): Promise<void> {
-    if (this.unsubscribe) {
-      this.unsubscribe();
-      this.unsubscribe = null;
-    }
-    if (this.session) {
-      await this.session.destroy();
-      this.session = null;
-    }
-    await this.client.stop();
-    this.isInitialized = false;
-  }
-
-  /**
    * Get the system prompt for Desktop Commander
    */
   private getSystemPrompt(): string {
@@ -974,6 +978,27 @@ When user describes a problem (e.g., "WiFi disconnects", "computer is slow"):
 7. Verify if issue is resolved, iterate if needed
 
 Always explain findings in plain language. Never execute risky fixes without explicit approval.`;
+  }
+
+  /**
+   * Clean up resources when controller is destroyed
+   */
+  async destroy(): Promise<void> {
+    if (this.cleanupIntervalId) {
+      clearInterval(this.cleanupIntervalId);
+      this.cleanupIntervalId = null;
+    }
+    if (this.unsubscribe) {
+      this.unsubscribe();
+      this.unsubscribe = null;
+    }
+    if (this.session) {
+      await this.session.destroy();
+      this.session = null;
+    }
+    await this.client.stop();
+    this.toolExecutionMap.clear();
+    this.isInitialized = false;
   }
 }
 

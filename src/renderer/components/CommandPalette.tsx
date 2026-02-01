@@ -29,6 +29,64 @@ interface HistoryItem {
   timestamp: number;
 }
 
+// Tool descriptions mapping - moved outside component for performance
+const TOOL_DESCRIPTIONS: Record<string, string> = {
+  window_list: 'Listed open windows',
+  window_focus: 'Focused window',
+  window_minimize: 'Minimized window',
+  window_maximize: 'Maximized window',
+  window_close: 'Closed window',
+  window_move: 'Moved window',
+  window_arrange: 'Arranged windows',
+  files_list: 'Listed files',
+  files_read: 'Read file',
+  files_write: 'Wrote file',
+  files_delete: 'Deleted file',
+  files_move: 'Moved file',
+  files_copy: 'Copied file',
+  files_search: 'Searched files',
+  files_create_folder: 'Created folder',
+  apps_launch: 'Launched application',
+  apps_list: 'Listed applications',
+  apps_quit: 'Quit application',
+  apps_switch: 'Switched application',
+  system_volume: 'Adjusted volume',
+  system_brightness: 'Adjusted brightness',
+  system_screenshot: 'Took screenshot',
+  system_dnd: 'Toggled Do Not Disturb',
+  system_lock: 'Locked system',
+  system_sleep: 'Put system to sleep',
+  system_wifi: 'Toggled WiFi',
+  system_info: 'Retrieved system info',
+  network_info: 'Retrieved network info',
+  network_test: 'Tested network',
+  productivity_timer: 'Started timer',
+  productivity_countdown: 'Started countdown',
+  productivity_pomodoro: 'Started Pomodoro',
+  productivity_worldclock: 'Checked world clock',
+  productivity_convert: 'Converted units',
+  set_reminder: 'Set reminder',
+  list_reminders: 'Listed reminders',
+  cancel_reminder: 'Cancelled reminder',
+  run_shell_command: 'Executed shell command',
+  process_list: 'Listed processes',
+  process_info: 'Retrieved process info',
+  process_kill: 'Killed process',
+  process_top: 'Showed top processes',
+  clipboard_read: 'Read clipboard',
+  clipboard_write: 'Wrote to clipboard',
+  clipboard_clear: 'Cleared clipboard',
+  office_create: 'Created Office document',
+  powerpoint_create: 'Created PowerPoint',
+  service_list: 'Listed services',
+  service_control: 'Controlled service',
+  web_search: 'Searched the web',
+  troubleshoot_start: 'Started troubleshooting',
+  troubleshoot_propose_fix: 'Proposed fix',
+};
+
+const getToolDescription = (toolName: string): string => TOOL_DESCRIPTIONS[toolName] || toolName;
+
 export function CommandPalette() {
   const [input, setInput] = useState('');
   const [history, setHistory] = useState<HistoryItem[]>([]);
@@ -44,7 +102,6 @@ export function CommandPalette() {
   const [voiceLanguage, setVoiceLanguage] = useState('en-US');
   const [isSpeechDetected, setIsSpeechDetected] = useState(false);
   const [settings, setSettings] = useState<Settings | null>(null);
-  const [actionLogs, setActionLogs] = useState<ActionLog[]>([]);
   const [actionLogsClearedAt, setActionLogsClearedAt] = useState(0);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const recognitionRef = useRef<SpeechRecognition | null>(null);
@@ -62,133 +119,55 @@ export function CommandPalette() {
     clearMessages,
   } = useCopilot();
 
-  const userMessages = useMemo(() => messages.filter(message => message.role === 'user'), [messages]);
-  const assistantMessages = useMemo(() => messages.filter(message => message.role !== 'user'), [messages]);
-  const visibleActionLogs = useMemo(
-    () => actionLogsClearedAt > 0
-      ? actionLogs.filter(l => l.createdAt >= actionLogsClearedAt)
-      : actionLogs,
-    [actionLogs, actionLogsClearedAt]
-  );
-
-  // Helper function to get tool description (memoized outside of useEffect)
-  const getToolDescription = useCallback((toolName: string): string => {
-    const descriptions: Record<string, string> = {
-      window_list: 'Listed open windows',
-      window_focus: 'Focused window',
-      window_minimize: 'Minimized window',
-      window_maximize: 'Maximized window',
-      window_close: 'Closed window',
-      window_move: 'Moved window',
-      window_arrange: 'Arranged windows',
-      files_list: 'Listed files',
-      files_read: 'Read file',
-      files_write: 'Wrote file',
-      files_delete: 'Deleted file',
-      files_move: 'Moved file',
-      files_copy: 'Copied file',
-      files_search: 'Searched files',
-      files_create_folder: 'Created folder',
-      apps_launch: 'Launched application',
-      apps_list: 'Listed applications',
-      apps_quit: 'Quit application',
-      apps_switch: 'Switched application',
-      system_volume: 'Adjusted volume',
-      system_brightness: 'Adjusted brightness',
-      system_screenshot: 'Took screenshot',
-      system_dnd: 'Toggled Do Not Disturb',
-      system_lock: 'Locked system',
-      system_sleep: 'Put system to sleep',
-      system_wifi: 'Toggled WiFi',
-      system_info: 'Retrieved system info',
-      network_info: 'Retrieved network info',
-      network_test: 'Tested network',
-      productivity_timer: 'Started timer',
-      productivity_countdown: 'Started countdown',
-      productivity_pomodoro: 'Started Pomodoro',
-      productivity_worldclock: 'Checked world clock',
-      productivity_convert: 'Converted units',
-      set_reminder: 'Set reminder',
-      list_reminders: 'Listed reminders',
-      cancel_reminder: 'Cancelled reminder',
-      run_shell_command: 'Executed shell command',
-      process_list: 'Listed processes',
-      process_info: 'Retrieved process info',
-      process_kill: 'Killed process',
-      process_top: 'Showed top processes',
-      clipboard_read: 'Read clipboard',
-      clipboard_write: 'Wrote to clipboard',
-      clipboard_clear: 'Cleared clipboard',
-      office_create: 'Created Office document',
-      powerpoint_create: 'Created PowerPoint',
-      service_list: 'Listed services',
-      service_control: 'Controlled service',
-      web_search: 'Searched the web',
-      troubleshoot_start: 'Started troubleshooting',
-      troubleshoot_propose_fix: 'Proposed fix',
-    };
-    return descriptions[toolName] || toolName;
-  }, []);
-
   // Track action logs from tool calls - optimized to only process new tool calls
-  useEffect(() => {
-    // Only process messages with tool calls
+  // Memoize the action logs computation to avoid expensive recalculation
+  const actionLogs = useMemo(() => {
     const messagesWithTools = messages.filter(m => m.toolCalls && m.toolCalls.length > 0);
-    if (messagesWithTools.length === 0) return;
+    if (messagesWithTools.length === 0) return [];
 
-    setActionLogs(prev => {
-      const logMap = new Map(prev.map(log => [log.id, log]));
-      let hasChanges = false;
+    const logMap = new Map<string, ActionLog>();
 
-      messagesWithTools.forEach((message) => {
-        message.toolCalls!.forEach(toolCall => {
-          const logId = `log-${toolCall.id}`;
-          const timestamp = new Date(message.timestamp);
-          const timeStr = timestamp.toLocaleTimeString('en-US', { hour12: false });
+    messagesWithTools.forEach((message) => {
+      message.toolCalls!.forEach(toolCall => {
+        const logId = `log-${toolCall.id}`;
+        const timestamp = new Date(message.timestamp);
+        const timeStr = timestamp.toLocaleTimeString('en-US', { hour12: false });
 
-          let status: ActionLog['status'] = 'success';
-          if (toolCall.status === 'running') status = 'pending';
-          else if (toolCall.status === 'error') status = 'error';
-          else if (toolCall.status === 'pending') status = 'warning';
+        let status: ActionLog['status'] = 'success';
+        if (toolCall.status === 'running') status = 'pending';
+        else if (toolCall.status === 'error') status = 'error';
+        else if (toolCall.status === 'pending') status = 'warning';
 
-          const toolDetails = (() => {
-            if (toolCall.name === 'run_shell_command' && typeof toolCall.params?.command === 'string') {
-              return `Command: ${toolCall.params.command}`;
-            }
-            if (toolCall.params && Object.keys(toolCall.params).length > 0) {
-              return `Args: ${JSON.stringify(toolCall.params, null, 2)}`;
-            }
-            return undefined;
-          })();
-
-          const logEntry: ActionLog = {
-            id: logId,
-            timestamp: timeStr,
-            createdAt: timestamp.getTime(),
-            tool: toolCall.name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
-            description: getToolDescription(toolCall.name),
-            status,
-            error: toolCall.error,
-            details: toolDetails,
-          };
-
-          const existingLog = logMap.get(logId);
-          // Only update if there's a change
-          if (!existingLog || existingLog.status !== status || existingLog.error !== toolCall.error) {
-            logMap.set(logId, logEntry);
-            hasChanges = true;
+        const toolDetails = (() => {
+          if (toolCall.name === 'run_shell_command' && typeof toolCall.params?.command === 'string') {
+            return `Command: ${toolCall.params.command}`;
           }
-        });
+          if (toolCall.params && Object.keys(toolCall.params).length > 0) {
+            return `Args: ${JSON.stringify(toolCall.params, null, 2)}`;
+          }
+          return undefined;
+        })();
+
+        const logEntry: ActionLog = {
+          id: logId,
+          timestamp: timeStr,
+          createdAt: timestamp.getTime(),
+          tool: toolCall.name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+          description: getToolDescription(toolCall.name),
+          status,
+          error: toolCall.error,
+          details: toolDetails,
+        };
+
+        logMap.set(logId, logEntry);
       });
-
-      if (!hasChanges) return prev;
-
-      // Convert map to array, sort, and limit
-      return Array.from(logMap.values())
-        .sort((a, b) => b.createdAt - a.createdAt)
-        .slice(0, 100);
     });
-  }, [messages, getToolDescription]);
+
+    // Convert map to array, sort, and limit
+    return Array.from(logMap.values())
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .slice(0, 100);
+  }, [messages]);
 
   const insertTranscript = useCallback((transcript: string) => {
     const text = transcript.trim();
@@ -258,10 +237,14 @@ export function CommandPalette() {
   }, []);
 
   // Listen for action log events from tool executions
+  // Note: These logs come from IPC and add to the computed logs.
+  // Since actionLogs is now a useMemo, we need a separate state for IPC logs.
+  const [ipcActionLogs, setIpcActionLogs] = useState<ActionLog[]>([]);
+  
   useEffect(() => {
     const unsubscribe = window.electronAPI.onActionLog?.((log: ActionLog) => {
       console.log('Received action log:', log);
-      setActionLogs(prev => {
+      setIpcActionLogs(prev => {
         // Remove existing log with same ID if it exists
         const filtered = prev.filter(l => l.id !== log.id);
         // Add new log and sort by timestamp
@@ -274,6 +257,23 @@ export function CommandPalette() {
 
     return unsubscribe;
   }, []);
+
+  // Merge computed logs with IPC logs
+  const allActionLogs = useMemo(() => {
+    const merged = new Map<string, ActionLog>();
+    for (const log of actionLogs) merged.set(log.id, log);
+    for (const log of ipcActionLogs) merged.set(log.id, log);
+    return Array.from(merged.values())
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .slice(0, 100);
+  }, [actionLogs, ipcActionLogs]);
+
+  const visibleActionLogs = useMemo(
+    () => actionLogsClearedAt > 0
+      ? allActionLogs.filter(l => l.createdAt >= actionLogsClearedAt)
+      : allActionLogs,
+    [allActionLogs, actionLogsClearedAt]
+  );
 
   // Auto-focus on mount
   useEffect(() => {
@@ -729,10 +729,9 @@ export function CommandPalette() {
       transition={{ duration: 0.15 }}
       className="relative h-full flex flex-col bg-gradient-to-br from-stone-950 to-stone-900 dark:from-stone-950 dark:to-stone-900 rounded-3xl shadow-2xl shadow-purple-500/10 border border-stone-800 dark:border-stone-800 overflow-hidden"
     >
-      {/* Animated gradient border glow */}
-      <div className="absolute inset-0 rounded-3xl opacity-30 pointer-events-none
-        bg-gradient-to-r from-purple-500/20 via-cyan-500/20 to-rose-500/20
-        blur-xl animate-pulse-subtle" />
+      {/* Animated gradient border glow - animations removed for performance */}
+      <div className="absolute inset-0 rounded-3xl opacity-20 pointer-events-none
+        bg-gradient-to-r from-purple-500/20 via-cyan-500/20 to-rose-500/20" />
 
       {/* Content */}
       <div className="relative z-10 flex flex-col h-full">
@@ -894,7 +893,7 @@ export function CommandPalette() {
                 </div>
               </div>
             ) : (
-              <div className="flex-1 overflow-y-auto flex flex-col justify-end">
+              <div className="flex-1 overflow-y-auto">
                 <MessageStream messages={messages} isLoading={isLoading} actionLogs={visibleActionLogs} />
               </div>
             )}

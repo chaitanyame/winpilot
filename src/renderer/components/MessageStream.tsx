@@ -1,7 +1,23 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState, memo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { User, Bot, Loader2, CheckCircle, XCircle, ChevronDown, ChevronRight,
   MonitorUp, FolderOpen, AppWindow, Volume2, Clipboard, Cpu, FileText, AlertTriangle } from 'lucide-react';
+
+/**
+ * Helper: get date separator label for a message
+ */
+function getDateLabel(date: Date): string {
+  const now = new Date();
+  const msgDate = new Date(date);
+  const isToday = msgDate.toDateString() === now.toDateString();
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const isYesterday = msgDate.toDateString() === yesterday.toDateString();
+
+  if (isToday) return 'Today';
+  if (isYesterday) return 'Yesterday';
+  return msgDate.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
+}
 import type { ActionLog, Message } from '../../shared/types';
 
 interface Props {
@@ -52,8 +68,9 @@ function getToolInfo(toolName: string) {
 
 /**
  * Renders markdown-like content with formatting including tables
+ * This function is expensive, so results should be memoized per message
  */
-function renderContent(content: string): React.ReactNode {
+const renderContent = (content: string): React.ReactNode => {
   const elements: React.ReactNode[] = [];
   const lines = content.split('\n');
   let inCodeBlock = false;
@@ -296,10 +313,17 @@ function renderContent(content: string): React.ReactNode {
   }
 
   return elements;
-}
+};
 
-// Collapsible tool calls component
-function ToolCallsDisplay({ toolCalls }: { toolCalls: Message['toolCalls'] }) {
+// Memoize rendered content to avoid re-parsing on every render
+const MemoizedMessageContent = memo(({ content }: { content: string }) => {
+  const renderedContent = useMemo(() => renderContent(content), [content]);
+  return <>{renderedContent}</>;
+});
+MemoizedMessageContent.displayName = 'MemoizedMessageContent';
+
+// Collapsible tool calls component (memoized to prevent re-renders)
+const ToolCallsDisplay = memo(({ toolCalls }: { toolCalls: Message['toolCalls'] }) => {
   const [expanded, setExpanded] = useState(false);
   
   if (!toolCalls || toolCalls.length === 0) return null;
@@ -399,10 +423,107 @@ function ToolCallsDisplay({ toolCalls }: { toolCalls: Message['toolCalls'] }) {
       </AnimatePresence>
     </div>
   );
-}
+});
+ToolCallsDisplay.displayName = 'ToolCallsDisplay';
+
+// Memoized single message component to prevent re-renders
+const MessageItem = memo(({
+  message,
+  isLoading,
+  isLastMessage,
+  inlineLogs
+}: {
+  message: Message;
+  isLoading: boolean;
+  isLastMessage: boolean;
+  inlineLogs: ActionLog[];
+}) => {
+  return (
+    <motion.div
+      key={message.id}
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.2 }}
+      className="flex w-full gap-3 justify-start"
+    >
+      {message.role === 'assistant' ? (
+        <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary-100 dark:bg-primary-900/30 flex items-center justify-center">
+          <Bot className="w-4 h-4 text-primary-600 dark:text-primary-400" />
+        </div>
+      ) : (
+        <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary-500 flex items-center justify-center">
+          <User className="w-4 h-4 text-white" />
+        </div>
+      )}
+
+      <div className="flex flex-col flex-1">
+        <div
+          className={`rounded-2xl border backdrop-blur-sm shadow-lg/10 ${
+            message.role === 'user'
+              ? 'message-user px-5 py-3 border-purple-500/30 bg-purple-500/15'
+              : 'message-assistant p-5 border-stone-700/60 bg-stone-900/40'
+          }`}
+        >
+          {/* Tool calls display */}
+          <ToolCallsDisplay toolCalls={message.toolCalls} />
+
+          {/* Message content */}
+          {message.content && (
+            <div className="break-words leading-relaxed text-[13px] sm:text-sm">
+              <MemoizedMessageContent content={message.content} />
+              {isLoading && isLastMessage && message.role === 'assistant' && (
+                <span className="cursor-blink"></span>
+              )}
+            </div>
+          )}
+
+          {/* Error display */}
+          {message.error && (
+            <div className="mt-2 text-sm text-red-500 dark:text-red-400 flex items-center gap-1.5">
+              <XCircle className="w-4 h-4" />
+              <span>{message.error}</span>
+            </div>
+          )}
+        </div>
+
+        {message.role === 'user' && inlineLogs.length > 0 && (
+          <div className="w-full mt-2">
+            <InlineLogs logs={inlineLogs} />
+          </div>
+        )}
+      </div>
+    </motion.div>
+  );
+});
+MessageItem.displayName = 'MessageItem';
+
+/**
+ * Date separator component
+ */
+const DateSeparator = memo(({ label }: { label: string }) => (
+  <div className="flex items-center gap-3 py-2">
+    <div className="flex-1 h-px bg-stone-700/50" />
+    <span className="text-xs text-stone-500 font-medium">{label}</span>
+    <div className="flex-1 h-px bg-stone-700/50" />
+  </div>
+));
+DateSeparator.displayName = 'DateSeparator';
 
 export function MessageStream({ messages, isLoading, actionLogs = [] }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  
+  // === SCROLL STATE MANAGEMENT (R1-R4) ===
+  const [isAtBottom, setIsAtBottom] = useState(true);
+  const [showScrollButton, setShowScrollButton] = useState(false);
+  const [userScrolledAway, setUserScrolledAway] = useState(false); // R2: Manual override flag
+  const prevMessageCountRef = useRef(messages.length);
+  const prevIsLoadingRef = useRef(isLoading);
+  const scrollParentRef = useRef<HTMLElement | null>(null);
+  
+  // Threshold constants
+  const BOTTOM_THRESHOLD_PX = 20; // R1: Within 20px = "at bottom"
+  const SCROLL_AWAY_THRESHOLD_PX = 20; // R2: User must scroll 20px+ to detach
 
   const userMessageTimestamps = useMemo(() =>
     messages
@@ -410,22 +531,156 @@ export function MessageStream({ messages, isLoading, actionLogs = [] }: Props) {
       .map(message => ({ id: message.id, ts: message.timestamp?.getTime?.() ?? 0 })),
   [messages]);
 
-  // Auto-scroll to bottom to show latest message
+  // Add date separators between messages (chronological order)
+  const messagesWithDates = useMemo(() => {
+    const result: Array<{ type: 'date'; label: string } | { type: 'message'; message: Message; index: number }> = [];
+    let lastDateLabel = '';
+
+    messages.forEach((message, index) => {
+      const dateLabel = message.timestamp ? getDateLabel(message.timestamp) : '';
+      if (dateLabel && dateLabel !== lastDateLabel) {
+        result.push({ type: 'date', label: dateLabel });
+        lastDateLabel = dateLabel;
+      }
+      result.push({ type: 'message', message, index });
+    });
+
+    return result;
+  }, [messages]);
+
+  // Find scroll parent
+  const findScrollParent = useCallback((node: HTMLElement | null): HTMLElement | null => {
+    let current: HTMLElement | null = node;
+    while (current) {
+      const style = window.getComputedStyle(current);
+      const overflowY = style.overflowY;
+      if (overflowY === 'auto' || overflowY === 'scroll') {
+        return current;
+      }
+      current = current.parentElement;
+    }
+    return null;
+  }, []);
+
+  // Helper: Check if scroll position is at bottom
+  const checkIsAtBottom = useCallback((scrollParent: HTMLElement): boolean => {
+    const { scrollHeight, scrollTop, clientHeight } = scrollParent;
+    const distanceFromBottom = scrollHeight - (scrollTop + clientHeight);
+    return distanceFromBottom <= BOTTOM_THRESHOLD_PX;
+  }, [BOTTOM_THRESHOLD_PX]);
+
+  // R1 & R2: Track scroll position and detect user manual scroll
   useEffect(() => {
-    const timeoutId = setTimeout(() => {
-      bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
-    }, 100);
-    return () => clearTimeout(timeoutId);
-  }, [messages.length]);
+    const container = containerRef.current;
+    if (!container) return;
+
+    const scrollParent = findScrollParent(container);
+    if (!scrollParent) return;
+    scrollParentRef.current = scrollParent;
+
+    let lastScrollTop = scrollParent.scrollTop;
+    let lastScrollHeight = scrollParent.scrollHeight;
+
+    const handleScroll = () => {
+      const currentScrollTop = scrollParent.scrollTop;
+      const currentScrollHeight = scrollParent.scrollHeight;
+      const atBottom = checkIsAtBottom(scrollParent);
+      
+      // Detect if content grew (new tokens) vs user scrolled
+      const contentGrew = currentScrollHeight > lastScrollHeight;
+      const userScrolledUp = currentScrollTop < lastScrollTop - SCROLL_AWAY_THRESHOLD_PX;
+      
+      // R2: If user manually scrolls up during loading, detach auto-scroll
+      if (isLoading && userScrolledUp && !contentGrew) {
+        setUserScrolledAway(true);
+      }
+      
+      // If user scrolls back to bottom, re-attach
+      if (atBottom) {
+        setUserScrolledAway(false);
+      }
+      
+      setIsAtBottom(atBottom);
+      // R3: Show button when not at bottom
+      setShowScrollButton(!atBottom && messages.length > 0);
+      
+      lastScrollTop = currentScrollTop;
+      lastScrollHeight = currentScrollHeight;
+    };
+
+    scrollParent.addEventListener('scroll', handleScroll, { passive: true });
+    handleScroll();
+    return () => scrollParent.removeEventListener('scroll', handleScroll);
+  }, [findScrollParent, checkIsAtBottom, messages.length, isLoading, SCROLL_AWAY_THRESHOLD_PX]);
+
+  // R1: Auto-scroll when at bottom and content changes (streaming)
+  useEffect(() => {
+    const scrollParent = scrollParentRef.current;
+    if (!scrollParent) return;
+
+    const lastMsg = messages[messages.length - 1];
+    if (!lastMsg) return;
+
+    const isNewMessage = messages.length > prevMessageCountRef.current;
+    const isUserMessage = lastMsg.role === 'user';
+
+    // When user sends a new message, always scroll to bottom (confirms action - R1 table)
+    if (isNewMessage && isUserMessage) {
+      setUserScrolledAway(false); // Reset detach state
+      requestAnimationFrame(() => {
+        bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+      });
+    }
+    // For assistant messages or streaming updates
+    else if (!userScrolledAway) {
+      // Only auto-scroll if user hasn't manually scrolled away (R2)
+      if (isAtBottom || isNewMessage) {
+        requestAnimationFrame(() => {
+          bottomRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' });
+        });
+      }
+    }
+
+    prevMessageCountRef.current = messages.length;
+  }, [messages, messages.length, isAtBottom, userScrolledAway]);
+
+  // R4: When stream completes, don't force scroll - stay at current position
+  useEffect(() => {
+    if (prevIsLoadingRef.current && !isLoading) {
+      // Stream just finished - reset the detach flag for next interaction
+      // but don't scroll (R4)
+      setUserScrolledAway(false);
+    }
+    prevIsLoadingRef.current = isLoading;
+  }, [isLoading]);
+
+  // Initial scroll to bottom on mount (R10: land at bottom of history)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      bottomRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' });
+    }, 50);
+    return () => clearTimeout(timer);
+  }, []);
+
+  const scrollToBottom = useCallback(() => {
+    setUserScrolledAway(false);
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }, []);
 
   return (
-    <div className="p-6 space-y-5">
-      {messages.map((message, index) => {
+    <div ref={containerRef} className="p-6 space-y-5 relative">
+      {/* Regular message list - chronological order (ChatGPT style) */}
+      {messagesWithDates.map((item, idx) => {
+        if (item.type === 'date') {
+          return <DateSeparator key={`date-${item.label}-${idx}`} label={item.label} />;
+        }
+
+        const message = item.message;
         const messageTimestamp = message.timestamp?.getTime?.() ?? 0;
         let nextUserTimestamp = Number.POSITIVE_INFINITY;
 
         if (message.role === 'user') {
-          const currentIndex = userMessageTimestamps.findIndex(item => item.id === message.id);
+          const currentIndex = userMessageTimestamps.findIndex(m => m.id === message.id);
           if (currentIndex >= 0 && currentIndex < userMessageTimestamps.length - 1) {
             nextUserTimestamp = userMessageTimestamps[currentIndex + 1].ts;
           }
@@ -436,88 +691,67 @@ export function MessageStream({ messages, isLoading, actionLogs = [] }: Props) {
           : [];
 
         return (
-          <motion.div
-            key={message.id}
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.2 }}
-            className="flex w-full gap-3 justify-start"
-          >
-            {message.role === 'assistant' ? (
-              <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary-100 dark:bg-primary-900/30 flex items-center justify-center">
-                <Bot className="w-4 h-4 text-primary-600 dark:text-primary-400" />
-              </div>
-            ) : (
-              <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary-500 flex items-center justify-center">
-                <User className="w-4 h-4 text-white" />
-              </div>
-            )}
-
-            <div className="flex flex-col flex-1">
-              <div
-                className={`rounded-2xl border backdrop-blur-sm shadow-lg/10 ${
-                  message.role === 'user'
-                    ? 'message-user px-5 py-3 border-purple-500/30 bg-purple-500/15'
-                    : 'message-assistant p-5 border-stone-700/60 bg-stone-900/40'
-                }`}
-              >
-                {/* Tool calls display */}
-                <ToolCallsDisplay toolCalls={message.toolCalls} />
-
-                {/* Message content */}
-                {message.content && (
-                  <div className="break-words leading-relaxed text-[13px] sm:text-sm">
-                    {renderContent(message.content)}
-                    {isLoading && index === messages.length - 1 && message.role === 'assistant' && (
-                      <span className="cursor-blink"></span>
-                    )}
-                  </div>
-                )}
-
-                {/* Error display */}
-                {message.error && (
-                  <div className="mt-2 text-sm text-red-500 dark:text-red-400 flex items-center gap-1.5">
-                    <XCircle className="w-4 h-4" />
-                    <span>{message.error}</span>
-                  </div>
-                )}
-              </div>
-
-              {message.role === 'user' && inlineLogs.length > 0 && (
-                <div className="w-full mt-2">
-                  <InlineLogs logs={inlineLogs} />
-                </div>
-              )}
-            </div>
-          </motion.div>
+          <div key={message.id}>
+            <MessageItem
+              message={message}
+              isLoading={isLoading}
+              isLastMessage={item.index === messages.length - 1}
+              inlineLogs={inlineLogs}
+            />
+          </div>
         );
       })}
 
-      {/* Loading indicator at bottom */}
+      {/* R5: "Thinking" indicator before first token arrives */}
       {isLoading && messages[messages.length - 1]?.role === 'user' && (
         <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
           className="flex gap-3"
         >
-          <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary-100 dark:bg-primary-900/30 flex items-center justify-center">
-            <Bot className="w-4 h-4 text-primary-600 dark:text-primary-400" />
+          <div className="flex-shrink-0 w-8 h-8 rounded-full bg-purple-500/20 flex items-center justify-center">
+            <Bot className="w-4 h-4 text-purple-400" />
           </div>
-          <div className="message-assistant px-4 py-3">
-            <div className="flex items-center gap-2 text-dark-500 dark:text-dark-400">
-              <Loader2 className="w-4 h-4 animate-spin" />
-              <span>Thinking...</span>
+          <div className="message-assistant px-4 py-3 rounded-2xl border border-stone-700/60 bg-stone-900/40">
+            <div className="flex items-center gap-2">
+              {/* Pulsing dots indicator */}
+              <div className="flex gap-1">
+                <span className="w-2 h-2 bg-purple-400 rounded-full animate-pulse" style={{ animationDelay: '0ms' }} />
+                <span className="w-2 h-2 bg-purple-400 rounded-full animate-pulse" style={{ animationDelay: '150ms' }} />
+                <span className="w-2 h-2 bg-purple-400 rounded-full animate-pulse" style={{ animationDelay: '300ms' }} />
+              </div>
+              <span className="text-stone-400 text-sm">Thinking...</span>
             </div>
           </div>
         </motion.div>
       )}
 
       <div ref={bottomRef} />
+
+      {/* R3: "Jump to Latest" button when user scrolled away */}
+      <AnimatePresence>
+        {showScrollButton && (
+          <motion.button
+            initial={{ opacity: 0, y: 10, scale: 0.9 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 10, scale: 0.9 }}
+            onClick={scrollToBottom}
+            className="fixed bottom-24 right-8 z-50 flex items-center gap-2 px-4 py-2.5 
+                       bg-purple-600 hover:bg-purple-500 text-white rounded-full 
+                       shadow-lg shadow-purple-900/30 transition-all hover:scale-105"
+          >
+            <ChevronDown className="w-4 h-4" />
+            <span className="text-sm font-medium">
+              {isLoading ? 'Jump to latest' : 'Scroll to bottom'}
+            </span>
+          </motion.button>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
 
-function InlineLogs({ logs }: { logs: ActionLog[] }) {
+const InlineLogs = memo(({ logs }: { logs: ActionLog[] }) => {
   const [expanded, setExpanded] = useState(true);
 
   const hasRunning = logs.some(log => log.status === 'pending');
@@ -583,4 +817,5 @@ function InlineLogs({ logs }: { logs: ActionLog[] }) {
       )}
     </div>
   );
-}
+});
+InlineLogs.displayName = 'InlineLogs';

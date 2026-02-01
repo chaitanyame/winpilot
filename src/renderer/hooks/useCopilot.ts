@@ -32,14 +32,15 @@ export function useCopilot(): UseCopilotReturn {
           ];
         } else {
           // Create new assistant message
+          const assistantMessage: Message = {
+            id: generateId(),
+            role: 'assistant',
+            content: currentAssistantMessageRef.current,
+            timestamp: new Date(),
+          };
           const newMessages = [
             ...prev,
-            {
-              id: generateId(),
-              role: 'assistant',
-              content: currentAssistantMessageRef.current,
-              timestamp: new Date(),
-            },
+            assistantMessage,
           ];
           // Keep only last 50 messages
           return newMessages.length > 50 ? newMessages.slice(-50) : newMessages;
