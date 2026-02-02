@@ -248,6 +248,14 @@ export const IPC_CHANNELS = {
   CLIPBOARD_WRITE: 'clipboard:write',
   CLIPBOARD_CLEAR: 'clipboard:clear',
 
+  // Clipboard History
+  CLIPBOARD_HISTORY_GET: 'clipboard:history:get',
+  CLIPBOARD_HISTORY_DELETE: 'clipboard:history:delete',
+  CLIPBOARD_HISTORY_CLEAR: 'clipboard:history:clear',
+  CLIPBOARD_HISTORY_PIN: 'clipboard:history:pin',
+  CLIPBOARD_HISTORY_RESTORE: 'clipboard:history:restore',
+  CLIPBOARD_HISTORY_SEARCH: 'clipboard:history:search',
+
   // App control
   APP_TOGGLE_WINDOW: 'app:toggleWindow',
   APP_GET_SETTINGS: 'app:getSettings',
@@ -404,4 +412,63 @@ export interface ActionLog {
   duration?: number; // milliseconds
   details?: string;
   error?: string;
+}
+
+// Clipboard History types
+export interface ClipboardEntry {
+  id: string;
+  content: string;
+  timestamp: number;
+  pinned: boolean;
+  size: number;
+}
+
+// Recording Status
+export enum RecordingStatus {
+  IDLE = 'idle',
+  RECORDING = 'recording',
+  PAUSED = 'paused',
+  STOPPING = 'stopping',
+  COMPLETED = 'completed',
+  ERROR = 'error'
+}
+
+// Recording Type
+export enum RecordingType {
+  SCREEN = 'screen',
+  AUDIO = 'audio',
+  WEBCAM = 'webcam'
+}
+
+// Audio Source
+export enum AudioSource {
+  NONE = 'none',
+  SYSTEM = 'system',
+  MICROPHONE = 'microphone',
+  BOTH = 'both'
+}
+
+// Recording interface
+export interface Recording {
+  id: string;
+  type: RecordingType;
+  status: RecordingStatus;
+  audioSource: AudioSource;
+  filename: string;
+  outputPath: string;
+  startTime: number;
+  endTime?: number;
+  duration: number;
+  fileSize: number;
+  fps?: number;
+  region?: { x: number; y: number; width: number; height: number };
+  error?: string;
+}
+
+// Recording Region
+export interface RecordingRegion {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 }

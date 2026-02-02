@@ -21,6 +21,14 @@ import {
 import {
   reminderManager
 } from '../main/reminders';
+import {
+  recordingManager,
+  type RecordingOptions
+} from '../main/recording-manager';
+import {
+  RecordingType,
+  AudioSource
+} from '../shared/types';
 
 const adapter = getUnifiedAdapter();
 
@@ -787,6 +795,68 @@ export const clipboardClearTool = defineTool('clipboard_clear', {
     return result.success
       ? 'Clipboard cleared'
       : `Failed to clear clipboard: ${result.error}`;
+  }
+});
+
+// ============================================================================
+// Clipboard History Tools
+// ============================================================================
+
+export const clipboardHistoryTool = defineTool('clipboard_history', {
+  description: 'Get clipboard history with optional search query. Shows previously copied text items.',
+  parameters: p({
+    query: z.string().optional().describe('Search query to filter clipboard history'),
+    limit: z.number().optional().describe('Maximum number of results to return (default 10)'),
+  }),
+  handler: async ({ query, limit = 10 }) => {
+    const { clipboardMonitor } = await import('../main/clipboard-monitor');
+    const results = query
+      ? clipboardMonitor.searchHistory(query)
+      : clipboardMonitor.getHistory();
+
+    const limited = results.slice(0, limit);
+
+    if (limited.length === 0) {
+      return query
+        ? `No clipboard entries found matching "${query}"`
+        : 'Clipboard history is empty';
+    }
+
+    const formatted = limited.map((entry, i) => {
+      const time = new Date(entry.timestamp).toLocaleString();
+      const preview = entry.content.length > 100
+        ? entry.content.slice(0, 100) + '...'
+        : entry.content;
+      const pinned = entry.pinned ? ' 📌' : '';
+      return `${i + 1}. [${time}]${pinned}\n${preview}\n`;
+    }).join('\n');
+
+    return `Clipboard History (${limited.length} items):\n\n${formatted}`;
+  }
+});
+
+export const clipboardRestoreTool = defineTool('clipboard_restore', {
+  description: 'Restore a clipboard entry by searching for content. Finds the most recent match and puts it back in the clipboard.',
+  parameters: p({
+    query: z.string().describe('Search for clipboard entry containing this text'),
+  }),
+  handler: async ({ query }) => {
+    const { clipboardMonitor } = await import('../main/clipboard-monitor');
+    const results = clipboardMonitor.searchHistory(query);
+
+    if (results.length === 0) {
+      return `No clipboard entry found containing "${query}"`;
+    }
+
+    // Restore the most recent match
+    const entry = results[0];
+    clipboardMonitor.restoreToClipboard(entry.id);
+
+    const preview = entry.content.length > 100
+      ? entry.content.slice(0, 100) + '...'
+      : entry.content;
+
+    return `Restored to clipboard:\n${preview}`;
   }
 });
 
@@ -1901,6 +1971,493 @@ export const shellTool = defineTool('run_shell_command', {
 });
 
 // ============================================================================
+// Media Control Tools
+// ============================================================================
+
+export const mediaPlayTool = defineTool('media_play', {
+  description: 'Play or resume media playback (works with Spotify, VLC, YouTube, etc.)',
+  parameters: p({}),
+  handler: async () => {
+    const result = await adapter.mediaPlay();
+    return result.success
+      ? 'Media playback started'
+      : `Failed to play media: ${result.error}`;
+  }
+});
+
+export const mediaPauseTool = defineTool('media_pause', {
+  description: 'Pause media playback',
+  parameters: p({}),
+  handler: async () => {
+    const result = await adapter.mediaPause();
+    return result.success
+      ? 'Media paused'
+      : `Failed to pause media: ${result.error}`;
+  }
+});
+
+export const mediaPlayPauseTool = defineTool('media_play_pause', {
+  description: 'Toggle play/pause for media playback',
+  parameters: p({}),
+  handler: async () => {
+    const result = await adapter.mediaPlayPause();
+    return result.success
+      ? 'Media play/pause toggled'
+      : `Failed to toggle play/pause: ${result.error}`;
+  }
+});
+
+export const mediaNextTool = defineTool('media_next', {
+  description: 'Skip to the next track',
+  parameters: p({}),
+  handler: async () => {
+    const result = await adapter.mediaNext();
+    return result.success
+      ? 'Skipped to next track'
+      : `Failed to skip track: ${result.error}`;
+  }
+});
+
+export const mediaPreviousTool = defineTool('media_previous', {
+  description: 'Go back to the previous track',
+  parameters: p({}),
+  handler: async () => {
+    const result = await adapter.mediaPrevious();
+    return result.success
+      ? 'Went to previous track'
+      : `Failed to go to previous track: ${result.error}`;
+  }
+});
+
+export const mediaStopTool = defineTool('media_stop', {
+  description: 'Stop media playback completely',
+  parameters: p({}),
+  handler: async () => {
+    const result = await adapter.mediaStop();
+    return result.success
+      ? 'Media stopped'
+      : `Failed to stop media: ${result.error}`;
+  }
+});
+
+// ============================================================================
+// Browser Automation Tools
+// ============================================================================
+
+export const browserOpenTool = defineTool('browser_open', {
+  description: 'Open a URL in the default web browser',
+  parameters: p({
+    url: z.string().describe('The URL to open (e.g., "google.com", "https://github.com")'),
+    browser: z.string().optional().describe('Specific browser to use (chrome, firefox, edge, brave)')
+  }),
+  handler: async ({ url, browser }) => {
+    const result = await adapter.browserOpenUrl({ url, browser });
+    return result.success
+      ? `Opened ${url} in ${browser || 'default'} browser`
+      : `Failed to open URL: ${result.error}`;
+  }
+});
+
+export const browserSearchTool = defineTool('browser_search', {
+  description: 'Search the web using a search engine',
+  parameters: p({
+    query: z.string().describe('The search query'),
+    engine: z.enum(['google', 'bing', 'duckduckgo', 'youtube', 'github']).optional().describe('Search engine to use (default: google)')
+  }),
+  handler: async ({ query, engine }) => {
+    const result = await adapter.browserSearch({ query, engine });
+    return result.success
+      ? `Searching for "${query}" on ${engine || 'google'}`
+      : `Failed to search: ${result.error}`;
+  }
+});
+
+export const browserNewTabTool = defineTool('browser_new_tab', {
+  description: 'Open a new browser tab, optionally with a URL',
+  parameters: p({
+    url: z.string().optional().describe('URL to open in the new tab')
+  }),
+  handler: async ({ url }) => {
+    const result = await adapter.browserNewTab({ url });
+    return result.success
+      ? url ? `Opened new tab with ${url}` : 'Opened new tab'
+      : `Failed to open new tab: ${result.error}`;
+  }
+});
+
+export const browserCloseTabTool = defineTool('browser_close_tab', {
+  description: 'Close the current browser tab',
+  parameters: p({}),
+  handler: async () => {
+    const result = await adapter.browserCloseTab();
+    return result.success
+      ? 'Closed current tab'
+      : `Failed to close tab: ${result.error}`;
+  }
+});
+
+export const browserNextTabTool = defineTool('browser_next_tab', {
+  description: 'Switch to the next browser tab',
+  parameters: p({}),
+  handler: async () => {
+    const result = await adapter.browserNextTab();
+    return result.success
+      ? 'Switched to next tab'
+      : `Failed to switch tab: ${result.error}`;
+  }
+});
+
+export const browserPrevTabTool = defineTool('browser_prev_tab', {
+  description: 'Switch to the previous browser tab',
+  parameters: p({}),
+  handler: async () => {
+    const result = await adapter.browserPreviousTab();
+    return result.success
+      ? 'Switched to previous tab'
+      : `Failed to switch tab: ${result.error}`;
+  }
+});
+
+export const browserRefreshTool = defineTool('browser_refresh', {
+  description: 'Refresh the current browser page',
+  parameters: p({}),
+  handler: async () => {
+    const result = await adapter.browserRefresh();
+    return result.success
+      ? 'Refreshed page'
+      : `Failed to refresh: ${result.error}`;
+  }
+});
+
+export const browserBookmarkTool = defineTool('browser_bookmark', {
+  description: 'Bookmark the current page in the browser',
+  parameters: p({}),
+  handler: async () => {
+    const result = await adapter.browserBookmark();
+    return result.success
+      ? 'Bookmarked current page'
+      : `Failed to bookmark: ${result.error}`;
+  }
+});
+
+// ============================================================================
+// Email Tools
+// ============================================================================
+
+export const emailComposeTool = defineTool('email_compose', {
+  description: 'Compose a new email using the default mail client',
+  parameters: p({
+    to: z.string().optional().describe('Recipient email address'),
+    cc: z.string().optional().describe('CC recipients'),
+    bcc: z.string().optional().describe('BCC recipients'),
+    subject: z.string().optional().describe('Email subject'),
+    body: z.string().optional().describe('Email body text')
+  }),
+  handler: async ({ to, cc, bcc, subject, body }) => {
+    const result = await adapter.emailCompose({ to, cc, bcc, subject, body });
+    if (!result.success) {
+      return `Failed to compose email: ${result.error}`;
+    }
+    let msg = 'Opened email composer';
+    if (to) msg += ` to ${to}`;
+    if (subject) msg += ` with subject "${subject}"`;
+    return msg;
+  }
+});
+
+export const emailOpenTool = defineTool('email_open', {
+  description: 'Open the default email client/inbox',
+  parameters: p({}),
+  handler: async () => {
+    const result = await adapter.emailOpen();
+    return result.success
+      ? 'Opened email client'
+      : `Failed to open email: ${result.error}`;
+  }
+});
+
+// ============================================================================
+// OCR & Annotation Tools
+// ============================================================================
+
+export const ocrExtractTool = defineTool('ocr_extract', {
+  description: 'Extract text from an image file using OCR (Windows 10/11 built-in)',
+  parameters: p({
+    imagePath: z.string().describe('Path to the image file (PNG, JPG, BMP)')
+  }),
+  handler: async ({ imagePath }) => {
+    const result = await adapter.ocrExtractText({ imagePath });
+    if (!result.success) {
+      return `Failed to extract text: ${result.error}`;
+    }
+    const text = result.data?.text || '';
+    if (!text) {
+      return 'No text found in image';
+    }
+    return `Extracted text:\n\n${text}`;
+  }
+});
+
+export const ocrClipboardTool = defineTool('ocr_clipboard', {
+  description: 'Extract text from an image currently in the clipboard',
+  parameters: p({}),
+  handler: async () => {
+    const result = await adapter.ocrExtractFromClipboard();
+    if (!result.success) {
+      return `Failed to extract text from clipboard: ${result.error}`;
+    }
+    const text = result.data?.text || '';
+    if (!text) {
+      return 'No text found in clipboard image';
+    }
+    return `Extracted text from clipboard:\n\n${text}`;
+  }
+});
+
+export const ocrRegionTool = defineTool('ocr_region', {
+  description: 'Capture a screen region and extract text from it',
+  parameters: p({}),
+  handler: async () => {
+    const result = await adapter.ocrExtractFromRegion();
+    if (!result.success) {
+      return `Failed to extract text from region: ${result.error}`;
+    }
+    const text = result.data?.text || '';
+    if (!text) {
+      return 'No text found in selected region';
+    }
+    return `Extracted text from region:\n\n${text}`;
+  }
+});
+
+export const screenshotAnnotateTool = defineTool('screenshot_annotate', {
+  description: 'Add annotations (rectangles, arrows, text, highlights) to a screenshot',
+  parameters: p({
+    imagePath: z.string().describe('Path to the screenshot file'),
+    annotations: z.array(z.object({
+      type: z.enum(['rectangle', 'arrow', 'text', 'highlight']).describe('Annotation type'),
+      x: z.number().describe('X coordinate'),
+      y: z.number().describe('Y coordinate'),
+      width: z.number().optional().describe('Width (for rectangle/highlight)'),
+      height: z.number().optional().describe('Height (for rectangle/highlight)'),
+      endX: z.number().optional().describe('End X (for arrow)'),
+      endY: z.number().optional().describe('End Y (for arrow)'),
+      color: z.string().optional().describe('Color name (Red, Blue, Green, Yellow, etc.)'),
+      text: z.string().optional().describe('Text content (for text annotation)'),
+      thickness: z.number().optional().describe('Line thickness')
+    })).describe('Array of annotations to add')
+  }),
+  handler: async ({ imagePath, annotations }) => {
+    const result = await adapter.screenshotAnnotate({ imagePath, annotations });
+    if (!result.success) {
+      return `Failed to annotate screenshot: ${result.error}`;
+    }
+    return `Annotated screenshot saved to: ${result.data?.path}`;
+  }
+});
+
+// ============================================================================
+// Recording Tools (FFmpeg-based)
+// ============================================================================
+
+export const screenRecordStartTool = defineTool('screen_record_start', {
+  description: 'Start recording the screen. Optionally capture audio from system, microphone, or both. Can record full screen or a specific region.',
+  parameters: p({
+    audioSource: z.enum(['none', 'system', 'microphone', 'both']).optional()
+      .describe('Audio source: none, system (desktop audio), microphone, or both'),
+    fps: z.number().optional().describe('Frames per second (default: 30, options: 15, 30, 60)'),
+    region: z.object({
+      x: z.number().describe('X offset of the capture region'),
+      y: z.number().describe('Y offset of the capture region'),
+      width: z.number().describe('Width of the capture region'),
+      height: z.number().describe('Height of the capture region')
+    }).optional().describe('Capture a specific screen region instead of full screen'),
+    filename: z.string().optional().describe('Custom filename for the recording (default: screen_timestamp.mp4)')
+  }),
+  handler: async ({ audioSource, fps, region, filename }) => {
+    // Check FFmpeg availability
+    const ffmpegStatus = recordingManager.getFFmpegStatus();
+    if (!ffmpegStatus.available) {
+      return `Recording is not available: ${ffmpegStatus.error}`;
+    }
+
+    // Request permission
+    const permissionGranted = await requestPermissionForTool('screen_record_start', {
+      audioSource: audioSource || 'system',
+      fps: fps || 30,
+      region: region ? `${region.width}x${region.height} at (${region.x}, ${region.y})` : 'full screen'
+    });
+
+    if (!permissionGranted) {
+      return 'Permission denied for screen recording';
+    }
+
+    try {
+      const options: RecordingOptions = {
+        audioSource: audioSource ? (audioSource as AudioSource) : AudioSource.SYSTEM,
+        fps: fps || 30,
+        region,
+        filename
+      };
+
+      const recording = await recordingManager.startScreenRecording(options);
+      return JSON.stringify({
+        success: true,
+        message: 'Screen recording started',
+        id: recording.id,
+        outputPath: recording.outputPath,
+        fps: recording.fps,
+        audioSource: recording.audioSource,
+        region: recording.region || 'full screen'
+      });
+    } catch (error) {
+      return `Failed to start screen recording: ${error instanceof Error ? error.message : String(error)}`;
+    }
+  }
+});
+
+export const screenRecordStopTool = defineTool('screen_record_stop', {
+  description: 'Stop the current screen recording and save the video file',
+  parameters: p({}),
+  handler: async () => {
+    try {
+      const recording = await recordingManager.stopRecording(RecordingType.SCREEN);
+      if (!recording) {
+        return 'No active screen recording to stop';
+      }
+
+      return JSON.stringify({
+        success: true,
+        message: 'Screen recording stopped',
+        id: recording.id,
+        outputPath: recording.outputPath,
+        duration: `${recording.duration.toFixed(1)} seconds`,
+        fileSize: formatFileSize(recording.fileSize)
+      });
+    } catch (error) {
+      return `Failed to stop screen recording: ${error instanceof Error ? error.message : String(error)}`;
+    }
+  }
+});
+
+export const screenRecordStatusTool = defineTool('screen_record_status', {
+  description: 'Get the current status of screen recording (is recording active, duration, file size)',
+  parameters: p({}),
+  handler: async () => {
+    const ffmpegStatus = recordingManager.getFFmpegStatus();
+    if (!ffmpegStatus.available) {
+      return JSON.stringify({
+        ffmpegAvailable: false,
+        error: ffmpegStatus.error,
+        recording: null
+      });
+    }
+
+    const recording = recordingManager.getStatus(RecordingType.SCREEN);
+    if (!recording) {
+      return JSON.stringify({
+        ffmpegAvailable: true,
+        recording: null,
+        message: 'No active screen recording'
+      });
+    }
+
+    return JSON.stringify({
+      ffmpegAvailable: true,
+      recording: {
+        id: recording.id,
+        status: recording.status,
+        duration: `${recording.duration.toFixed(1)} seconds`,
+        fileSize: formatFileSize(recording.fileSize),
+        outputPath: recording.outputPath,
+        audioSource: recording.audioSource,
+        fps: recording.fps
+      }
+    });
+  }
+});
+
+export const audioRecordStartTool = defineTool('audio_record_start', {
+  description: 'Start audio-only recording from microphone or system audio',
+  parameters: p({
+    source: z.enum(['system', 'microphone']).optional()
+      .describe('Audio source: system (desktop audio) or microphone (default: microphone)'),
+    format: z.enum(['mp3', 'wav', 'aac']).optional()
+      .describe('Audio format: mp3, wav, or aac (default: mp3)'),
+    filename: z.string().optional().describe('Custom filename for the recording')
+  }),
+  handler: async ({ source, format, filename }) => {
+    // Check FFmpeg availability
+    const ffmpegStatus = recordingManager.getFFmpegStatus();
+    if (!ffmpegStatus.available) {
+      return `Recording is not available: ${ffmpegStatus.error}`;
+    }
+
+    // Request permission
+    const permissionGranted = await requestPermissionForTool('audio_record_start', {
+      source: source || 'microphone',
+      format: format || 'mp3'
+    });
+
+    if (!permissionGranted) {
+      return 'Permission denied for audio recording';
+    }
+
+    try {
+      const options: RecordingOptions = {
+        audioSource: source === 'system' ? AudioSource.SYSTEM : AudioSource.MICROPHONE,
+        format: format || 'mp3',
+        filename
+      };
+
+      const recording = await recordingManager.startAudioRecording(options);
+      return JSON.stringify({
+        success: true,
+        message: 'Audio recording started',
+        id: recording.id,
+        outputPath: recording.outputPath,
+        audioSource: recording.audioSource
+      });
+    } catch (error) {
+      return `Failed to start audio recording: ${error instanceof Error ? error.message : String(error)}`;
+    }
+  }
+});
+
+export const audioRecordStopTool = defineTool('audio_record_stop', {
+  description: 'Stop the current audio recording and save the audio file',
+  parameters: p({}),
+  handler: async () => {
+    try {
+      const recording = await recordingManager.stopRecording(RecordingType.AUDIO);
+      if (!recording) {
+        return 'No active audio recording to stop';
+      }
+
+      return JSON.stringify({
+        success: true,
+        message: 'Audio recording stopped',
+        id: recording.id,
+        outputPath: recording.outputPath,
+        duration: `${recording.duration.toFixed(1)} seconds`,
+        fileSize: formatFileSize(recording.fileSize)
+      });
+    } catch (error) {
+      return `Failed to stop audio recording: ${error instanceof Error ? error.message : String(error)}`;
+    }
+  }
+});
+
+// Helper function to format file size
+function formatFileSize(bytes: number): string {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`;
+}
+
+// ============================================================================
 // Export all tools
 // ============================================================================
 
@@ -1959,6 +2516,8 @@ export const desktopCommanderTools = [
   clipboardReadTool,
   clipboardWriteTool,
   clipboardClearTool,
+  clipboardHistoryTool,
+  clipboardRestoreTool,
   // Office
   officeCreateTool,
   powerpointCreateTool,
@@ -1974,5 +2533,35 @@ export const desktopCommanderTools = [
   webSearchTool,
   // Troubleshooting
   troubleshootStartTool,
-  troubleshootProposeFix
+  troubleshootProposeFix,
+  // Media Control
+  mediaPlayTool,
+  mediaPauseTool,
+  mediaPlayPauseTool,
+  mediaNextTool,
+  mediaPreviousTool,
+  mediaStopTool,
+  // Browser Automation
+  browserOpenTool,
+  browserSearchTool,
+  browserNewTabTool,
+  browserCloseTabTool,
+  browserNextTabTool,
+  browserPrevTabTool,
+  browserRefreshTool,
+  browserBookmarkTool,
+  // Email
+  emailComposeTool,
+  emailOpenTool,
+  // OCR & Annotation
+  ocrExtractTool,
+  ocrClipboardTool,
+  ocrRegionTool,
+  screenshotAnnotateTool,
+  // Recording (FFmpeg-based)
+  screenRecordStartTool,
+  screenRecordStopTool,
+  screenRecordStatusTool,
+  audioRecordStartTool,
+  audioRecordStopTool,
 ];
