@@ -17,3 +17,6 @@ training/test_data.txt
 
 # Local / optional voice assets (large)
 resources/whisper/
+
+# Local agent metadata
+.claude/
