@@ -14,3 +14,6 @@ models/intent_model.ftz
 models/intent_model.bin
 training/training_data.txt
 training/test_data.txt
+
+# Local / optional voice assets (large)
+resources/whisper/
