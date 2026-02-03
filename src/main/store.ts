@@ -112,6 +112,11 @@ export function getSettings(): Settings {
     needsUpdate = true;
   }
 
+  if (!settings.screenSharePrivacy) {
+    settings.screenSharePrivacy = DEFAULT_SETTINGS.screenSharePrivacy;
+    needsUpdate = true;
+  }
+
   // Migrate legacy providers to browser (faster-whisper removed)
   if (settings.voiceInput?.provider && !['browser', 'openai_whisper'].includes(settings.voiceInput.provider)) {
     settings.voiceInput.provider = 'browser';
@@ -150,6 +155,27 @@ export function getSettings(): Settings {
   if (!settings.hotkeys) {
     settings.hotkeys = DEFAULT_SETTINGS.hotkeys;
     needsUpdate = true;
+  }
+
+  // Migrate voiceCommand from C to G and add chat hotkey if missing
+  if (settings.hotkeys) {
+    let hotkeysUpdated = false;
+
+    // Add chat hotkey if missing
+    if (!settings.hotkeys.chat) {
+      settings.hotkeys.chat = DEFAULT_SETTINGS.hotkeys.chat;
+      hotkeysUpdated = true;
+    }
+
+    // Migrate voiceCommand from C to G
+    if (settings.hotkeys.voiceCommand === 'CommandOrControl+Shift+C') {
+      settings.hotkeys.voiceCommand = DEFAULT_SETTINGS.hotkeys.voiceCommand;
+      hotkeysUpdated = true;
+    }
+
+    if (hotkeysUpdated) {
+      needsUpdate = true;
+    }
   }
 
   if (needsUpdate) {

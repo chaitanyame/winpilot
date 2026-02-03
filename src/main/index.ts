@@ -16,6 +16,10 @@ import { copilotController } from '../copilot/client';
 import { clipboardMonitor } from './clipboard-monitor';
 import { clipboardWatcher } from './clipboard-watcher';
 import { ensureInstalledAppsCache } from './app-indexer';
+import { screenSharePrivacyService } from './screen-share-privacy';
+import { screenShareDetector } from './screen-share-detector';
+import { getSettings } from './store';
+import { hideCommandWindow } from './windows';
 
 // In development, use a separate userData directory to avoid conflicts
 if (!app.isPackaged) {
@@ -83,12 +87,22 @@ async function initApp() {
 
   // Initialize SQLite database
   initDatabase();
+  screenSharePrivacyService.init();
 
   // Refresh installed apps cache (skip if last run < 6 hours)
   await ensureInstalledAppsCache();
 
   // Create the command window (hidden initially)
   await createCommandWindow();
+
+  screenShareDetector.start();
+  screenShareDetector.onChange((active) => {
+    if (!active) return;
+    const settings = getSettings();
+    if (settings.screenSharePrivacy?.autoHideOnShare) {
+      hideCommandWindow(true);
+    }
+  });
 
   // Create system tray
   createTray();
@@ -141,18 +155,20 @@ app.on('activate', () => {
   }
 });
 
-// Cleanup before quit
-app.on('before-quit', async () => {
-  await copilotController.destroy();
-  taskScheduler.destroy();
-  timerManager.destroy();
-  reminderManager.destroy();
-  clipboardWatcher.stop();
-  clipboardMonitor.destroy();
-  closeDatabase();
-  unregisterHotkeys();
-  destroyTray();
-});
+  // Cleanup before quit
+  app.on('before-quit', async () => {
+    await copilotController.destroy();
+    taskScheduler.destroy();
+    timerManager.destroy();
+    reminderManager.destroy();
+    clipboardWatcher.stop();
+    clipboardMonitor.destroy();
+    screenSharePrivacyService.clear();
+    screenShareDetector.stop();
+    closeDatabase();
+    unregisterHotkeys();
+    destroyTray();
+  });
 
 // Handle certificate errors (for development)
 app.on('certificate-error', (event, _webContents, _url, _error, _certificate, callback) => {

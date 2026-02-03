@@ -1,7 +1,7 @@
 // Global Hotkey Registration
 
 import { globalShortcut } from 'electron';
-import { toggleCommandWindow, toggleClipboardHistoryWindow, toggleVoiceRecordingWindow, toggleAudioRecordingWindow, toggleVideoRecordingWindow } from './windows';
+import { toggleCommandWindow, toggleClipboardHistoryWindow, toggleVoiceRecordingWindow, toggleAudioRecordingWindow, toggleVideoRecordingWindow, toggleChatPanelWindow } from './windows';
 import { getSettings } from './store';
 import { voiceInputManager } from './voice-input';
 
@@ -12,6 +12,7 @@ let registeredVoiceTranscribeHotkey: string | null = null;
 let registeredVoiceCommandHotkey: string | null = null;
 let registeredAudioRecordingHotkey: string | null = null;
 let registeredVideoRecordingHotkey: string | null = null;
+let registeredChatHotkey: string | null = null;
 
 /**
  * Register global hotkeys
@@ -255,20 +256,41 @@ export function registerFeatureHotkeys(): void {
     if (registeredVideoRecordingHotkey) {
       globalShortcut.unregister(registeredVideoRecordingHotkey);
     }
-    
+
     globalShortcut.register(hotkeys.videoRecording, () => {
       console.log('Video recording hotkey triggered');
       toggleVideoRecordingWindow().catch(err => {
         console.error('Failed to toggle video recording window:', err);
       });
     });
-    
+
     if (globalShortcut.isRegistered(hotkeys.videoRecording)) {
       registeredVideoRecordingHotkey = hotkeys.videoRecording;
       console.log('Video recording hotkey registered:', hotkeys.videoRecording);
     }
   } catch (error) {
     console.error('Error registering video recording hotkey:', error);
+  }
+
+  // Chat Panel Hotkey
+  try {
+    if (registeredChatHotkey) {
+      globalShortcut.unregister(registeredChatHotkey);
+    }
+
+    globalShortcut.register(hotkeys.chat, () => {
+      console.log('Chat panel hotkey triggered');
+      toggleChatPanelWindow().catch(err => {
+        console.error('Failed to toggle chat panel window:', err);
+      });
+    });
+
+    if (globalShortcut.isRegistered(hotkeys.chat)) {
+      registeredChatHotkey = hotkeys.chat;
+      console.log('Chat panel hotkey registered:', hotkeys.chat);
+    }
+  } catch (error) {
+    console.error('Error registering chat panel hotkey:', error);
   }
 }
 
@@ -295,5 +317,9 @@ export function unregisterFeatureHotkeys(): void {
   if (registeredVideoRecordingHotkey) {
     globalShortcut.unregister(registeredVideoRecordingHotkey);
     registeredVideoRecordingHotkey = null;
+  }
+  if (registeredChatHotkey) {
+    globalShortcut.unregister(registeredChatHotkey);
+    registeredChatHotkey = null;
   }
 }

@@ -10,6 +10,8 @@ import { MCP_IPC_CHANNELS, MCPServerConfig } from '../shared/mcp-types';
 import { getSettings, setSettings, getHistory, addToHistory, clearHistory, getMcpServers, addMcpServer, updateMcpServer, deleteMcpServer, toggleMcpServer, getScheduledTasks, addScheduledTask, updateScheduledTask, deleteScheduledTask, getTaskLogs } from './store';
 import { getAppSetting, setAppSetting, deleteAppSetting } from './database';
 import { hideCommandWindow, showCommandWindow, resizeCommandWindow, minimizeCommandWindow, maximizeCommandWindow, fitWindowToScreen, getCommandWindow, setAutoHideSuppressed } from './windows';
+import { screenSharePrivacyService } from './screen-share-privacy';
+import { InvisiwindWrapper } from '../platform/windows/invisiwind';
 import { updateHotkey, registerVoiceHotkey, unregisterVoiceHotkey } from './hotkeys';
 import { updateTrayMenu } from './tray';
 import { getPlatformAdapter } from '../platform';
@@ -90,6 +92,7 @@ async function transcribeWithOpenAI(audioBuffer: Buffer, language: string, setti
  */
 export function setupIpcHandlers(): void {
   const platform = getPlatformAdapter();
+  const invisiwind = new InvisiwindWrapper();
 
   // App control handlers
   ipcMain.handle('app:getSettings', () => getSettings());
@@ -172,6 +175,87 @@ export function setupIpcHandlers(): void {
 
   ipcMain.handle(IPC_CHANNELS.WINDOW_ARRANGE, async (_, params) => {
     return platform.windowManager.arrangeWindows(params);
+  });
+
+  // Screen share privacy handlers
+  ipcMain.handle(IPC_CHANNELS.SCREEN_SHARE_PRIVACY_LIST_WINDOWS, async () => {
+    return platform.windowManager.listWindows();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.SCREEN_SHARE_PRIVACY_LIST_HIDDEN, () => {
+    return screenSharePrivacyService.listHiddenWindows();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.SCREEN_SHARE_PRIVACY_HIDE, async (_event, params: { windowId?: string }) => {
+    const windows = await platform.windowManager.listWindows();
+    const target = windows.find(w => w.id === params.windowId);
+    if (!target) {
+      return { success: false, error: 'Window not found' };
+    }
+    if (target.app.toLowerCase() === 'winpilot' || target.app.toLowerCase() === 'electron') {
+      return { success: false, error: 'Refusing to hide Desktop Commander window.' };
+    }
+    const result = await invisiwind.hideWindowsByPid(target.processId);
+    if (!result.success) {
+      return { success: false, error: result.error };
+    }
+    screenSharePrivacyService.addHiddenWindow({
+      hwnd: target.id,
+      pid: target.processId,
+      title: target.title,
+      appName: target.app,
+      hiddenAt: Date.now(),
+    });
+    return { success: true };
+  });
+
+  ipcMain.handle(IPC_CHANNELS.SCREEN_SHARE_PRIVACY_SHOW, async (_event, params: { windowId?: string; all?: boolean }) => {
+    if (params.all) {
+      const hidden = screenSharePrivacyService.listHiddenWindows();
+      for (const entry of hidden) {
+        await invisiwind.unhideWindowsByPid(entry.pid);
+      }
+      screenSharePrivacyService.clear();
+      return { success: true };
+    }
+
+    const windows = await platform.windowManager.listWindows();
+    const target = windows.find(w => w.id === params.windowId);
+    if (!target) {
+      const hiddenEntries = screenSharePrivacyService.listHiddenWindows();
+      const fallback = hiddenEntries.find(entry => entry.hwnd === params.windowId);
+      if (fallback) {
+        const result = await invisiwind.unhideWindowsByPid(fallback.pid);
+        if (!result.success) {
+          return { success: false, error: result.error };
+        }
+        screenSharePrivacyService.removeHiddenWindowsByPid(fallback.pid);
+        return { success: true };
+      }
+      return { success: false, error: 'Window not found' };
+    }
+    const result = await invisiwind.unhideWindowsByPid(target.processId);
+    if (!result.success) {
+      return { success: false, error: result.error };
+    }
+    screenSharePrivacyService.removeHiddenWindowsByPid(target.processId);
+    return { success: true };
+  });
+
+  ipcMain.handle(IPC_CHANNELS.SCREEN_SHARE_PRIVACY_GET_AUTO_HIDE, () => {
+    return getSettings().screenSharePrivacy?.autoHideOnShare ?? true;
+  });
+
+  ipcMain.handle(IPC_CHANNELS.SCREEN_SHARE_PRIVACY_SET_AUTO_HIDE, (_event, value: boolean) => {
+    const settings = getSettings();
+    const updated = setSettings({
+      ...settings,
+      screenSharePrivacy: {
+        ...(settings.screenSharePrivacy || {}),
+        autoHideOnShare: Boolean(value),
+      },
+    });
+    return updated.screenSharePrivacy?.autoHideOnShare ?? true;
   });
 
   // File system handlers

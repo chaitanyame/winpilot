@@ -33,6 +33,9 @@ export const DEFAULT_SETTINGS = {
   hotkey: DEFAULT_HOTKEY,
   appearanceMode: 'system' as const,
   themeId: 'claude' as const,
+  screenSharePrivacy: {
+    autoHideOnShare: true,
+  },
   permissions: {
     defaultLevel: PermissionLevel.STANDARD,
     rememberChoices: true,
@@ -89,7 +92,8 @@ export const DEFAULT_SETTINGS = {
   hotkeys: {
     clipboardHistory: 'CommandOrControl+Shift+H',
     voiceTranscribe: 'CommandOrControl+Shift+T',
-    voiceCommand: 'CommandOrControl+Shift+C',
+    voiceCommand: 'CommandOrControl+Shift+G',
+    chat: 'CommandOrControl+Shift+C',
     audioRecording: 'CommandOrControl+Shift+A',
     videoRecording: 'CommandOrControl+Shift+R',
   },

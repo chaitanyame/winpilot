@@ -107,6 +107,36 @@ function generateExamples(tool: ToolInfo): string[] {
     examples.push('show calculator');
   }
 
+  if (baseName === 'window_hide_from_sharing') {
+    examples.push('hide this window from screen sharing');
+    examples.push('hide slack from screen share');
+    examples.push('exclude chrome from sharing');
+    examples.push('make this window invisible on zoom');
+    examples.push('hide browser from screen capture');
+  }
+
+  if (baseName === 'window_show_in_sharing') {
+    examples.push('show this window in screen sharing');
+    examples.push('unhide slack from screen share');
+    examples.push('make chrome visible in sharing');
+    examples.push('show browser in screen capture');
+    examples.push('stop hiding this window');
+  }
+
+  if (baseName === 'window_list_hidden') {
+    examples.push('list hidden windows');
+    examples.push('what windows are hidden');
+    examples.push('show hidden windows');
+    examples.push('which windows are excluded from sharing');
+  }
+
+  if (baseName === 'window_hide_all_sensitive') {
+    examples.push('hide all sensitive windows');
+    examples.push('hide slack and chrome from sharing');
+    examples.push('hide messaging apps from screen share');
+    examples.push('hide email and browser windows');
+  }
+
   if (baseName === 'productivity_countdown') {
     examples.push('set timer for 5 minutes');
     examples.push('countdown 10 minutes');

@@ -18,6 +18,7 @@ export interface WindowInfo {
   isMinimized: boolean;
   isMaximized: boolean;
   isFocused: boolean;
+  isHiddenFromCapture: boolean;
 }
 
 export interface Bounds {
@@ -159,6 +160,9 @@ export interface Settings {
   hotkey: string;
   appearanceMode: AppearanceMode;
   themeId: ThemeId;
+  screenSharePrivacy: {
+    autoHideOnShare: boolean;
+  };
   permissions: {
     defaultLevel: PermissionLevel;
     rememberChoices: boolean;
@@ -214,8 +218,10 @@ export interface Settings {
     clipboardHistory: string;
     /** Hotkey for speech-to-text transcription only (default: Ctrl+Shift+T) */
     voiceTranscribe: string;
-    /** Hotkey for speech-to-command execution (default: Ctrl+Shift+C) */
+    /** Hotkey for speech-to-command execution (default: Ctrl+Shift+G) */
     voiceCommand: string;
+    /** Hotkey to open the chat panel (default: Ctrl+Shift+C) */
+    chat: string;
     /** Hotkey to start/stop audio recording (default: Ctrl+Shift+A) */
     audioRecording: string;
     /** Hotkey to start/stop video recording (default: Ctrl+Shift+R) */
@@ -310,7 +316,23 @@ export const IPC_CHANNELS = {
   RECORDING_SUBSCRIBE: 'recording:subscribe',
   RECORDING_UPDATED: 'recording:updated',
   RECORDING_PROGRESS: 'recording:progress',
+
+  // Screen share privacy
+  SCREEN_SHARE_PRIVACY_LIST_WINDOWS: 'screen-share-privacy:list-windows',
+  SCREEN_SHARE_PRIVACY_HIDE: 'screen-share-privacy:hide',
+  SCREEN_SHARE_PRIVACY_SHOW: 'screen-share-privacy:show',
+  SCREEN_SHARE_PRIVACY_LIST_HIDDEN: 'screen-share-privacy:list-hidden',
+  SCREEN_SHARE_PRIVACY_GET_AUTO_HIDE: 'screen-share-privacy:get-auto-hide',
+  SCREEN_SHARE_PRIVACY_SET_AUTO_HIDE: 'screen-share-privacy:set-auto-hide',
 } as const;
+
+export interface HiddenWindow {
+  hwnd: string;
+  pid: number;
+  title: string;
+  appName: string;
+  hiddenAt: number;
+}
 
 // Tool definitions for Copilot
 export interface ToolDefinition {

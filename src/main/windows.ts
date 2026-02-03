@@ -717,6 +717,85 @@ export function getVideoRecordingWindow(): BrowserWindow | null {
   return videoRecordingWindow;
 }
 
+// ============================================================================
+// Chat Panel Window
+// ============================================================================
+
+let chatPanelWindow: BrowserWindow | null = null;
+
+export async function createChatPanelWindow(): Promise<BrowserWindow> {
+  const primaryDisplay = screen.getPrimaryDisplay();
+  const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
+
+  // Center on screen
+  const windowWidth = 600;
+  const windowHeight = 700;
+  const x = Math.round((screenWidth - windowWidth) / 2);
+  const y = Math.round((screenHeight - windowHeight) / 2);
+
+  chatPanelWindow = new BrowserWindow({
+    width: windowWidth,
+    height: windowHeight,
+    x,
+    y,
+    show: false,
+    frame: false,
+    transparent: true,
+    resizable: true,
+    movable: true,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    title: 'Quick Chat',
+    webPreferences: {
+      preload: path.join(__dirname, '../preload/index.js'),
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: false,
+    },
+  });
+
+  const VITE_DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL;
+  if (VITE_DEV_SERVER_URL) {
+    await chatPanelWindow.loadURL(`${VITE_DEV_SERVER_URL}#chat-panel`);
+  } else {
+    await chatPanelWindow.loadFile(path.join(__dirname, '../renderer/index.html'), {
+      hash: 'chat-panel'
+    });
+  }
+
+  chatPanelWindow.on('closed', () => {
+    chatPanelWindow = null;
+  });
+
+  chatPanelWindow.on('blur', () => {
+    if (!app.isQuitting && chatPanelWindow) {
+      chatPanelWindow.hide();
+    }
+  });
+
+  return chatPanelWindow;
+}
+
+export async function toggleChatPanelWindow(): Promise<void> {
+  if (!chatPanelWindow || chatPanelWindow.isDestroyed()) {
+    await createChatPanelWindow();
+    chatPanelWindow?.show();
+    chatPanelWindow?.focus();
+  } else if (chatPanelWindow.isVisible()) {
+    chatPanelWindow.hide();
+  } else {
+    chatPanelWindow.show();
+    chatPanelWindow.focus();
+  }
+}
+
+export function getChatPanelWindow(): BrowserWindow | null {
+  return chatPanelWindow;
+}
+
 // Add isQuitting flag to app
 declare global {
   namespace Electron {

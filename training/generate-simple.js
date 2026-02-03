@@ -23,6 +23,24 @@ const TOOLS = [
     'close window', 'close chrome', 'close notepad',
     'quit window', 'exit window'
   ]},
+  { name: 'window_hide_from_sharing', examples: [
+    'hide this window from screen sharing', 'hide slack from screen share',
+    'exclude chrome from sharing', 'make this window invisible on zoom',
+    'hide browser from screen capture', 'hide this window on teams'
+  ]},
+  { name: 'window_show_in_sharing', examples: [
+    'show this window in screen sharing', 'unhide slack from screen share',
+    'make chrome visible in sharing', 'show browser in screen capture',
+    'stop hiding this window', 'unhide this window on zoom'
+  ]},
+  { name: 'window_list_hidden', examples: [
+    'list hidden windows', 'what windows are hidden',
+    'show hidden windows', 'which windows are excluded from sharing'
+  ]},
+  { name: 'window_hide_all_sensitive', examples: [
+    'hide all sensitive windows', 'hide slack and chrome from sharing',
+    'hide messaging apps from screen share', 'hide email and browser windows'
+  ]},
 
   // System Information
   { name: 'system_info', examples: [

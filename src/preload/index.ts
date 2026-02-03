@@ -3,7 +3,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import { IPC_CHANNELS } from '../shared/types';
 import { MCP_IPC_CHANNELS } from '../shared/mcp-types';
-import type { PermissionRequest, PermissionResponse, ActionLog, ClipboardEntry, Recording } from '../shared/types';
+import type { PermissionRequest, PermissionResponse, ActionLog, ClipboardEntry, Recording, WindowInfo, HiddenWindow } from '../shared/types';
 
 // Expose protected methods to the renderer process
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -33,6 +33,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   windowMinimize: (windowId: string) => ipcRenderer.invoke(IPC_CHANNELS.WINDOW_MINIMIZE, windowId),
   windowMaximize: (windowId: string) => ipcRenderer.invoke(IPC_CHANNELS.WINDOW_MAXIMIZE, windowId),
   windowArrange: (params: unknown) => ipcRenderer.invoke(IPC_CHANNELS.WINDOW_ARRANGE, params),
+
+  // Screen share privacy
+  screenSharePrivacyListWindows: () => ipcRenderer.invoke(IPC_CHANNELS.SCREEN_SHARE_PRIVACY_LIST_WINDOWS),
+  screenSharePrivacyHide: (windowId: string) => ipcRenderer.invoke(IPC_CHANNELS.SCREEN_SHARE_PRIVACY_HIDE, { windowId }),
+  screenSharePrivacyShow: (windowId: string) => ipcRenderer.invoke(IPC_CHANNELS.SCREEN_SHARE_PRIVACY_SHOW, { windowId }),
+  screenSharePrivacyShowAll: () => ipcRenderer.invoke(IPC_CHANNELS.SCREEN_SHARE_PRIVACY_SHOW, { all: true }),
+  screenSharePrivacyListHidden: () => ipcRenderer.invoke(IPC_CHANNELS.SCREEN_SHARE_PRIVACY_LIST_HIDDEN),
+  screenSharePrivacyGetAutoHide: () => ipcRenderer.invoke(IPC_CHANNELS.SCREEN_SHARE_PRIVACY_GET_AUTO_HIDE),
+  screenSharePrivacySetAutoHide: (value: boolean) => ipcRenderer.invoke(IPC_CHANNELS.SCREEN_SHARE_PRIVACY_SET_AUTO_HIDE, value),
 
   // Files
   filesList: (params: unknown) => ipcRenderer.invoke(IPC_CHANNELS.FILES_LIST, params),
@@ -350,6 +359,13 @@ export interface ElectronAPI {
   windowMinimize: (windowId: string) => Promise<unknown>;
   windowMaximize: (windowId: string) => Promise<unknown>;
   windowArrange: (params: unknown) => Promise<unknown>;
+  screenSharePrivacyListWindows: () => Promise<WindowInfo[]>;
+  screenSharePrivacyHide: (windowId: string) => Promise<{ success: boolean; error?: string }>;
+  screenSharePrivacyShow: (windowId: string) => Promise<{ success: boolean; error?: string }>;
+  screenSharePrivacyShowAll: () => Promise<{ success: boolean; error?: string }>;
+  screenSharePrivacyListHidden: () => Promise<HiddenWindow[]>;
+  screenSharePrivacyGetAutoHide: () => Promise<boolean>;
+  screenSharePrivacySetAutoHide: (value: boolean) => Promise<boolean>;
   
   filesList: (params: unknown) => Promise<unknown>;
   filesSearch: (params: unknown) => Promise<unknown>;

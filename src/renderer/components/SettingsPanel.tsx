@@ -10,7 +10,7 @@ interface Props {
 
 export function SettingsPanel({ isOpen, onClose }: Props) {
   const [settings, setSettings] = useState<Settings | null>(null);
-  const [activeTab, setActiveTab] = useState<'general' | 'ai' | 'voice' | 'recording' | 'hotkeys' | 'permissions' | 'safety'>('general');
+  const [activeTab, setActiveTab] = useState<'general' | 'ai' | 'voice' | 'recording' | 'hotkeys' | 'permissions' | 'safety' | 'privacy'>('general');
   const [appPath, setAppPath] = useState<string>('');
 
 
@@ -106,6 +106,7 @@ export function SettingsPanel({ isOpen, onClose }: Props) {
     { id: 'hotkeys', label: 'Hotkeys', icon: Command },
     { id: 'permissions', label: 'Permissions', icon: Shield },
     { id: 'safety', label: 'Safety', icon: FolderClosed },
+    { id: 'privacy', label: 'Privacy', icon: Shield },
   ] as const;
 
   return (
@@ -798,6 +799,37 @@ export function SettingsPanel({ isOpen, onClose }: Props) {
                 </div>
                 <p className="text-xs text-dark-500 mt-1">
                   Files in these paths cannot be modified
+                </p>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'privacy' && (
+            <div className="space-y-6">
+              <div>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={settings.screenSharePrivacy?.autoHideOnShare ?? true}
+                    onChange={(e) => updateSettings({
+                      screenSharePrivacy: {
+                        ...settings.screenSharePrivacy,
+                        autoHideOnShare: e.target.checked,
+                      },
+                    })}
+                    className="w-4 h-4 rounded border-dark-300 text-primary-500"
+                  />
+                  <span className="text-sm text-dark-600 dark:text-dark-400">
+                    Auto-hide Desktop Commander when screen sharing starts
+                  </span>
+                </label>
+              </div>
+
+              <div className="p-3 bg-primary-50 dark:bg-primary-900/20 rounded-lg">
+                <p className="text-xs text-primary-700 dark:text-primary-300">
+                  <Shield className="w-3 h-3 inline mr-1" />
+                  When enabled, Desktop Commander will hide itself if a screen sharing app
+                  (Zoom, Teams, OBS, etc.) is detected.
                 </p>
               </div>
             </div>

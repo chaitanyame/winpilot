@@ -10,13 +10,18 @@
     "resources/**/*",
     "node_modules/better-sqlite3/**/*"
   ],
-    "extraResources": [
-      {
-        "from": "resources/ffmpeg",
-        "to": "ffmpeg",
-        "filter": ["**/*"]
-      }
-    ],
+  "extraResources": [
+    {
+      "from": "resources/ffmpeg",
+      "to": "ffmpeg",
+      "filter": ["**/*"]
+    },
+    {
+      "from": "resources/invisiwind",
+      "to": "invisiwind",
+      "filter": ["**/*"]
+    }
+  ],
   "win": {
     "target": [
       {

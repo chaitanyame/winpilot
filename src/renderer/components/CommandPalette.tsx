@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { motion } from 'framer-motion';
-import { Send, X, History, Square, Monitor, Plug, Trash2, Settings as SettingsIcon, Clock, Mic, MicOff, Volume2, Brain, Minus, Maximize2, ScrollText, Copy, Video, Loader2, Sparkles, ChevronRight, ChevronLeft } from 'lucide-react';
+import { Send, X, History, Square, Monitor, Plug, Trash2, Settings as SettingsIcon, Clock, Mic, MicOff, Volume2, Brain, Minus, Maximize2, ScrollText, Copy, Video, Loader2, Sparkles, ChevronRight, ChevronLeft, Shield } from 'lucide-react';
 import { MessageStream } from './MessageStream';
 import { MCPServersPanel } from './MCPServersPanel';
 import { SettingsPanel } from './SettingsPanel';
@@ -8,6 +8,7 @@ import { ScheduledTasksPanel } from './ScheduledTasksPanel';
 import { ActionLogsPanel } from './ActionLogsPanel';
 import { ClipboardHistoryPanel } from './ClipboardHistoryPanel';
 import { RecordingsPanel } from './RecordingsPanel';
+import { ScreenSharePrivacyPanel } from './ScreenSharePrivacyPanel';
 import { useCopilot } from '../hooks/useCopilot';
 import { ConfirmationDialog } from './ConfirmationDialog';
 import type { PermissionRequest, PermissionResponse, ActionLog, Settings } from '../../shared/types';
@@ -46,6 +47,10 @@ const TOOL_DESCRIPTIONS: Record<string, string> = {
   window_close: 'Closed window',
   window_move: 'Moved window',
   window_arrange: 'Arranged windows',
+  window_hide_from_sharing: 'Hid window from sharing',
+  window_show_in_sharing: 'Showed window in sharing',
+  window_list_hidden: 'Listed hidden windows',
+  window_hide_all_sensitive: 'Hid sensitive windows',
   files_list: 'Listed files',
   files_read: 'Read file',
   files_write: 'Wrote file',
@@ -140,6 +145,7 @@ export function CommandPalette() {
   const [showLogsPanel, setShowLogsPanel] = useState(false);
   const [showClipboardPanel, setShowClipboardPanel] = useState(false);
   const [showRecordingsPanel, setShowRecordingsPanel] = useState(false);
+  const [showScreenSharePrivacyPanel, setShowScreenSharePrivacyPanel] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [sidebarExpanded, setSidebarExpanded] = useState(false);
   const [permissionRequest, setPermissionRequest] = useState<PermissionRequest | null>(null);
@@ -275,6 +281,7 @@ export function CommandPalette() {
       setShowLogsPanel(false);
       setShowClipboardPanel(false);
       setShowRecordingsPanel(false);
+      setShowScreenSharePrivacyPanel(false);
       void loadHistory();
       inputRef.current?.focus();
     });
@@ -977,7 +984,7 @@ export function CommandPalette() {
       {/* Split View: Questions (Left) + Output (Right) */}
       <div className="flex-1 flex overflow-hidden">
         {/* Expandable Sidebar */}
-        <div className={`no-drag flex flex-col py-4 border-r transition-all duration-200
+        <div className={`no-drag flex flex-col py-4 border-r transition-all duration-200 overflow-y-auto
                         border-[color:var(--app-border)] bg-[color:var(--app-surface-2)]
                         ${sidebarExpanded ? 'w-44 px-3' : 'w-12 px-2 items-center'}`}>
           
@@ -1080,6 +1087,16 @@ export function CommandPalette() {
           >
             <Video className="w-4 h-4 flex-shrink-0" />
             {sidebarExpanded && <span className="text-sm">Recordings</span>}
+          </button>
+          <button
+            onClick={() => setShowScreenSharePrivacyPanel(true)}
+            className={`p-2 rounded-lg transition-colors flex items-center gap-3
+                       text-[color:var(--app-text-muted)] hover:text-[color:var(--app-text)]
+                       hover:bg-[color:var(--app-surface)] ${sidebarExpanded ? 'w-full' : ''}`}
+            title="Screen Share Privacy"
+          >
+            <Shield className="w-4 h-4 flex-shrink-0" />
+            {sidebarExpanded && <span className="text-sm">Privacy</span>}
           </button>
           <button
             onClick={() => setShowLogsPanel(true)}
@@ -1368,6 +1385,11 @@ export function CommandPalette() {
       <RecordingsPanel
         isOpen={showRecordingsPanel}
         onClose={() => setShowRecordingsPanel(false)}
+      />
+
+      <ScreenSharePrivacyPanel
+        isOpen={showScreenSharePrivacyPanel}
+        onClose={() => setShowScreenSharePrivacyPanel(false)}
       />
     </>
   );

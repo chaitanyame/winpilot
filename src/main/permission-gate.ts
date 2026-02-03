@@ -109,6 +109,12 @@ function buildDescription(normalizedToolName: string, params: Record<string, unk
       return 'Quit application';
     case 'window.close':
       return 'Close window';
+    case 'window.hide.from.sharing':
+      return 'Hide window from screen sharing';
+    case 'window.show.in.sharing':
+      return 'Show window in screen sharing';
+    case 'window.hide.all.sensitive':
+      return 'Hide multiple windows from screen sharing';
     default:
       return `Allow ${normalizedToolName}?`;
   }

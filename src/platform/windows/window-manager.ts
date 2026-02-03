@@ -62,8 +62,11 @@ public class WindowInfo {
     [DllImport("user32.dll")]
     public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
     
-    [DllImport("user32.dll")]
-    public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+            [DllImport("user32.dll")]
+            public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+            
+            [DllImport("user32.dll")]
+            public static extern bool GetWindowDisplayAffinity(IntPtr hWnd, out uint affinity);
     
     [DllImport("user32.dll")]
     public static extern bool IsIconic(IntPtr hWnd);
@@ -114,6 +117,10 @@ public class WindowInfo {
                 processName = proc.ProcessName;
             } catch { }
             
+            uint affinity = 0;
+            GetWindowDisplayAffinity(hWnd, out affinity);
+            bool isHiddenFromCapture = affinity != 0;
+            
             windows.Add(new {
                 id = hWnd.ToString(),
                 title = title,
@@ -125,7 +132,8 @@ public class WindowInfo {
                 height = isMinimized ? 0 : rect.Bottom - rect.Top,
                 isMinimized = isMinimized,
                 isMaximized = IsZoomed(hWnd),
-                isFocused = hWnd == foreground
+                isFocused = hWnd == foreground,
+                isHiddenFromCapture = isHiddenFromCapture
             });
             return true;
         }, IntPtr.Zero);
@@ -181,6 +189,7 @@ public class WindowInfo {
           isMaximized: w.isMaximized,
           // Mark as focused if it's the last known focused external window
           isFocused: w.id === lastFocusedExternalWindowId,
+          isHiddenFromCapture: Boolean(w.isHiddenFromCapture),
         }));
       } finally {
         // Clean up temp file

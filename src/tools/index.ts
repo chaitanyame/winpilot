@@ -23,6 +23,8 @@ import {
 import {
   reminderManager
 } from '../main/reminders';
+import { InvisiwindWrapper } from '../platform/windows/invisiwind';
+import { screenSharePrivacyService } from '../main/screen-share-privacy';
 import {
   recordingManager,
   type RecordingOptions
@@ -33,6 +35,7 @@ import {
 } from '../shared/types';
 
 const adapter = getUnifiedAdapter();
+const invisiwind = new InvisiwindWrapper();
 
 // Helper function to parse time strings like "3pm", "15:30", "2:30pm"
 function parseTimeString(timeStr: string, dateStr?: string): Date {
@@ -126,7 +129,8 @@ export const windowListTool = defineTool('window_list', {
         bounds: w.bounds,
         isMinimized: w.isMinimized,
         isMaximized: w.isMaximized,
-        isFocused: w.isFocused
+        isFocused: w.isFocused,
+        isHiddenFromCapture: w.isHiddenFromCapture
       }))
     });
   }
@@ -264,6 +268,191 @@ export const windowArrangeTool = defineTool('window_arrange', {
   }
 });
 
+// ============================================================================
+// Screen Share Privacy Tools
+// ============================================================================
+
+export const windowHideFromSharingTool = defineTool('window_hide_from_sharing', {
+  description: 'Hide a window from screen sharing/capture while keeping it visible to you',
+  parameters: p({
+    windowId: z.string().optional().describe('The window ID to hide'),
+    appName: z.string().optional().describe('The application name to hide'),
+    titleContains: z.string().optional().describe('Part of the window title to match')
+  }),
+  handler: async ({ windowId, appName, titleContains }) => {
+    const decision = await requestPermissionForTool('window_hide_from_sharing', { windowId, appName, titleContains }, [
+      windowId ? `windowId: ${windowId}` : undefined,
+      appName ? `appName: ${appName}` : undefined,
+      titleContains ? `titleContains: ${titleContains}` : undefined,
+    ].filter(Boolean) as string[]);
+    if (!decision.allowed) {
+      return 'Cancelled: permission denied.';
+    }
+
+    const listResult = await adapter.listWindows();
+    if (!listResult.success || !listResult.data) {
+      return `Failed to list windows: ${listResult.error}`;
+    }
+
+    const target = listResult.data.find(w => {
+      if (windowId && w.id === windowId) return true;
+      if (appName && w.app.toLowerCase().includes(appName.toLowerCase())) return true;
+      if (titleContains && w.title.toLowerCase().includes(titleContains.toLowerCase())) return true;
+      return false;
+    });
+
+    if (!target) {
+      return 'Could not find a matching window. Please provide windowId, appName, or titleContains.';
+    }
+
+    const availability = invisiwind.isAvailable();
+    if (!availability.available) {
+      return `Invisiwind binaries are missing: ${availability.missing.join(', ')}`;
+    }
+
+    const result = await invisiwind.hideWindowsByPid(target.processId);
+    if (!result.success) {
+      return `Failed to hide window: ${result.error}`;
+    }
+
+    screenSharePrivacyService.addHiddenWindow({
+      hwnd: target.id,
+      pid: target.processId,
+      title: target.title,
+      appName: target.app,
+      hiddenAt: Date.now(),
+    });
+
+    return `Hidden "${target.title}" from screen sharing.`;
+  }
+});
+
+export const windowShowInSharingTool = defineTool('window_show_in_sharing', {
+  description: 'Show a previously hidden window in screen sharing/capture again',
+  parameters: p({
+    windowId: z.string().optional().describe('The window ID to show'),
+    appName: z.string().optional().describe('The application name to show'),
+    all: z.boolean().optional().describe('Show all hidden windows')
+  }),
+  handler: async ({ windowId, appName, all }) => {
+    const decision = await requestPermissionForTool('window_show_in_sharing', { windowId, appName, all }, [
+      windowId ? `windowId: ${windowId}` : undefined,
+      appName ? `appName: ${appName}` : undefined,
+      all ? 'all: true' : undefined,
+    ].filter(Boolean) as string[]);
+    if (!decision.allowed) {
+      return 'Cancelled: permission denied.';
+    }
+
+    const availability = invisiwind.isAvailable();
+    if (!availability.available) {
+      return `Invisiwind binaries are missing: ${availability.missing.join(', ')}`;
+    }
+
+    if (all) {
+      const hidden = screenSharePrivacyService.listHiddenWindows();
+      for (const entry of hidden) {
+        await invisiwind.unhideWindowsByPid(entry.pid);
+      }
+      screenSharePrivacyService.clear();
+      return 'All hidden windows are now visible in screen sharing.';
+    }
+
+    const listResult = await adapter.listWindows();
+    if (!listResult.success || !listResult.data) {
+      return `Failed to list windows: ${listResult.error}`;
+    }
+
+    const target = listResult.data.find(w => {
+      if (windowId && w.id === windowId) return true;
+      if (appName && w.app.toLowerCase().includes(appName.toLowerCase())) return true;
+      return false;
+    });
+
+    if (!target) {
+      return 'Could not find a matching window. Please provide windowId or appName.';
+    }
+
+    const result = await invisiwind.unhideWindowsByPid(target.processId);
+    if (!result.success) {
+      return `Failed to show window: ${result.error}`;
+    }
+
+    screenSharePrivacyService.removeHiddenWindowsByPid(target.processId);
+    return `Window "${target.title}" is now visible in screen sharing.`;
+  }
+});
+
+export const windowListHiddenTool = defineTool('window_list_hidden', {
+  description: 'List windows currently hidden from screen sharing/capture',
+  parameters: p({}),
+  handler: async () => {
+    const hidden = screenSharePrivacyService.listHiddenWindows();
+    if (hidden.length === 0) {
+      return 'No windows are hidden from screen sharing.';
+    }
+    return JSON.stringify({
+      count: hidden.length,
+      windows: hidden.map(entry => ({
+        hwnd: entry.hwnd,
+        pid: entry.pid,
+        title: entry.title,
+        appName: entry.appName,
+        hiddenAt: entry.hiddenAt,
+      })),
+    });
+  }
+});
+
+export const windowHideAllSensitiveTool = defineTool('window_hide_all_sensitive', {
+  description: 'Hide multiple windows from screen sharing at once by app name',
+  parameters: p({
+    apps: z.array(z.string()).describe('Application names to hide (e.g., "slack", "chrome")')
+  }),
+  handler: async ({ apps }) => {
+    const decision = await requestPermissionForTool('window_hide_all_sensitive', { apps }, [
+      `apps: ${apps.join(', ')}`
+    ]);
+    if (!decision.allowed) {
+      return 'Cancelled: permission denied.';
+    }
+
+    const availability = invisiwind.isAvailable();
+    if (!availability.available) {
+      return `Invisiwind binaries are missing: ${availability.missing.join(', ')}`;
+    }
+
+    const listResult = await adapter.listWindows();
+    if (!listResult.success || !listResult.data) {
+      return `Failed to list windows: ${listResult.error}`;
+    }
+
+    const lowerApps = apps.map(app => app.toLowerCase());
+    const targets = listResult.data.filter(w => lowerApps.some(app => w.app.toLowerCase().includes(app)));
+
+    if (targets.length === 0) {
+      return 'No matching windows found to hide.';
+    }
+
+    const handledPids = new Set<number>();
+    for (const target of targets) {
+      if (handledPids.has(target.processId)) continue;
+      const result = await invisiwind.hideWindowsByPid(target.processId);
+      if (result.success) {
+        handledPids.add(target.processId);
+        screenSharePrivacyService.addHiddenWindow({
+          hwnd: target.id,
+          pid: target.processId,
+          title: target.title,
+          appName: target.app,
+          hiddenAt: Date.now(),
+        });
+      }
+    }
+
+    return `Hidden ${handledPids.size} app(s) from screen sharing.`;
+  }
+});
 // ============================================================================
 // File System Tools
 // ============================================================================
@@ -2510,6 +2699,10 @@ export const desktopCommanderTools = [
   windowMinimizeTool,
   windowMaximizeTool,
   windowArrangeTool,
+  windowHideFromSharingTool,
+  windowShowInSharingTool,
+  windowListHiddenTool,
+  windowHideAllSensitiveTool,
   // File System
   filesListTool,
   filesSearchTool,
