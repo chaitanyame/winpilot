@@ -17,11 +17,15 @@ export const TRAY_ICON_ACTIVE = 'icon-active';
 export const TRAY_ICON_ERROR = 'icon-error';
 
 import { PermissionLevel } from './types';
+import { getBundledWhisperPaths } from '../utils/whisper-path';
 
 // Default settings
+const bundledWhisper = getBundledWhisperPaths();
+
 export const DEFAULT_SETTINGS = {
   hotkey: DEFAULT_HOTKEY,
-  theme: 'system' as const,
+  appearanceMode: 'system' as const,
+  themeId: 'claude' as const,
   permissions: {
     defaultLevel: PermissionLevel.STANDARD,
     rememberChoices: true,
@@ -36,6 +40,7 @@ export const DEFAULT_SETTINGS = {
     floatingWindow: true,
     toastNotifications: true,
     menuBarMode: false,
+    onboardingSeen: false,
   },
   safety: {
     maxFilesPerOperation: 100,
@@ -61,15 +66,18 @@ export const DEFAULT_SETTINGS = {
     maxConcurrent: 3,
   },
   voiceInput: {
-    enabled: false,
+    enabled: bundledWhisper.available,
     hotkey: 'CommandOrControl+Shift+V',
-    provider: 'browser' as const,
+    provider: bundledWhisper.available ? 'whisper_cpp' as const : 'browser' as const,
     whisperCpp: {
-      binaryPath: '',
-      modelPath: '',
+      binaryPath: bundledWhisper.binaryPath || '',
+      modelPath: bundledWhisper.modelPath || '',
     },
     language: 'en-US',
     showVisualFeedback: true,
+  },
+  recording: {
+    outputPath: '', // Empty means app directory (resources/recordings)
   },
 };
 

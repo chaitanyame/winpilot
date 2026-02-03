@@ -1,11 +1,13 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { motion } from 'framer-motion';
-import { Send, X, History, Square, Monitor, Plug, Trash2, Settings as SettingsIcon, Clock, Mic, Volume2, Brain, Minus, Maximize2, Expand, ScrollText } from 'lucide-react';
+import { Send, X, History, Square, Monitor, Plug, Trash2, Settings as SettingsIcon, Clock, Mic, MicOff, Volume2, Brain, Minus, Maximize2, Expand, ScrollText, Copy, Video, Loader2, Sparkles, ChevronRight, ChevronLeft } from 'lucide-react';
 import { MessageStream } from './MessageStream';
 import { MCPServersPanel } from './MCPServersPanel';
 import { SettingsPanel } from './SettingsPanel';
 import { ScheduledTasksPanel } from './ScheduledTasksPanel';
 import { ActionLogsPanel } from './ActionLogsPanel';
+import { ClipboardHistoryPanel } from './ClipboardHistoryPanel';
+import { RecordingsPanel } from './RecordingsPanel';
 import { useCopilot } from '../hooks/useCopilot';
 import { ConfirmationDialog } from './ConfirmationDialog';
 import type { PermissionRequest, PermissionResponse, ActionLog, Settings } from '../../shared/types';
@@ -27,6 +29,12 @@ interface HistoryItem {
   id: string;
   input: string;
   timestamp: number;
+}
+
+interface PromptTemplate {
+  id: string;
+  title: string;
+  prompt: string;
 }
 
 // Tool descriptions mapping - moved outside component for performance
@@ -85,6 +93,41 @@ const TOOL_DESCRIPTIONS: Record<string, string> = {
   troubleshoot_propose_fix: 'Proposed fix',
 };
 
+const PROMPT_TEMPLATES: PromptTemplate[] = [
+  {
+    id: 'clean-desktop',
+    title: 'Clean up my desktop',
+    prompt: 'Clean up my desktop: move files into a folder named "Desktop Cleanup" and close unused windows.',
+  },
+  {
+    id: 'focus-mode',
+    title: 'Start focus mode',
+    prompt: 'Start focus mode: enable Do Not Disturb, set volume to 20%, and open my task list app.',
+  },
+  {
+    id: 'meeting-ready',
+    title: 'Prepare for a meeting',
+    prompt: 'Prepare for a meeting: open calendar, launch Zoom, and mute system notifications.',
+  },
+  {
+    id: 'find-downloads',
+    title: 'Find large downloads',
+    prompt: 'Find large files in Downloads from the last 7 days and list them.',
+  },
+  {
+    id: 'battery-saver',
+    title: 'Battery saver setup',
+    prompt: 'Enable battery saver: reduce brightness to 40% and close background apps.',
+  },
+  {
+    id: 'organize-windows',
+    title: 'Arrange my windows',
+    prompt: 'Arrange my windows: browser on the left half and editor on the right half.',
+  },
+];
+
+const ONBOARDING_PROMPTS = PROMPT_TEMPLATES.slice(0, 5);
+
 const getToolDescription = (toolName: string): string => TOOL_DESCRIPTIONS[toolName] || toolName;
 
 export function CommandPalette() {
@@ -95,6 +138,10 @@ export function CommandPalette() {
   const [showSettings, setShowSettings] = useState(false);
   const [showTasksPanel, setShowTasksPanel] = useState(false);
   const [showLogsPanel, setShowLogsPanel] = useState(false);
+  const [showClipboardPanel, setShowClipboardPanel] = useState(false);
+  const [showRecordingsPanel, setShowRecordingsPanel] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [sidebarExpanded, setSidebarExpanded] = useState(false);
   const [permissionRequest, setPermissionRequest] = useState<PermissionRequest | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
@@ -218,14 +265,16 @@ export function CommandPalette() {
     const unsubSettings = window.electronAPI.onOpenSettings(() => {
       setShowSettings(true);
       setShowHistory(false);
-      setShowLogsPanel(false);
-      setShowMcpPanel(false);
-      setShowTasksPanel(false);
     });
 
     const unsubHistory = window.electronAPI.onOpenHistory(() => {
       setShowHistory(true);
+      setShowSettings(false);
+      setShowTasksPanel(false);
+      setShowMcpPanel(false);
       setShowLogsPanel(false);
+      setShowClipboardPanel(false);
+      setShowRecordingsPanel(false);
       void loadHistory();
       inputRef.current?.focus();
     });
@@ -287,6 +336,9 @@ export function CommandPalette() {
         const loadedSettings = await window.electronAPI.getSettings() as Settings | null;
         if (loadedSettings) {
           setSettings(loadedSettings);
+          if (!loadedSettings.ui?.onboardingSeen) {
+            setShowOnboarding(true);
+          }
           if (loadedSettings.voiceInput?.language) {
             setVoiceLanguage(loadedSettings.voiceInput.language);
           }
@@ -296,6 +348,35 @@ export function CommandPalette() {
       }
     };
     loadSettings();
+  }, []);
+
+  const markOnboardingSeen = useCallback(async () => {
+    if (!settings) {
+      setShowOnboarding(false);
+      return;
+    }
+    const updatedSettings = {
+      ...settings,
+      ui: {
+        ...settings.ui,
+        onboardingSeen: true,
+      },
+    };
+    try {
+      await window.electronAPI.setSettings(updatedSettings);
+      setSettings(updatedSettings);
+    } catch (err) {
+      console.error('Failed to update onboarding state:', err);
+    } finally {
+      setShowOnboarding(false);
+    }
+  }, [settings]);
+
+  const applyTemplate = useCallback((template: PromptTemplate) => {
+    setInput(template.prompt);
+
+    setShowHistory(false);
+    inputRef.current?.focus();
   }, []);
 
   // Helper to clear voice error after a delay
@@ -360,6 +441,8 @@ export function CommandPalette() {
       setIsRecording(false);
       setIsSpeechDetected(false);
       setIsTranscribing(false);
+      voiceInputManagerActiveRef.current = false;
+      window.electronAPI.setAutoHideSuppressed(false);
     };
 
     // Speech recognition ended
@@ -368,6 +451,14 @@ export function CommandPalette() {
       setIsRecording(false);
       setIsSpeechDetected(false);
       setIsTranscribing(false);
+      // Reset voice input state when recognition ends automatically
+      if (voiceInputManagerActiveRef.current) {
+        voiceInputManagerActiveRef.current = false;
+        // Give a short delay before allowing auto-hide to let UI update
+        setTimeout(() => {
+          window.electronAPI.setAutoHideSuppressed(false);
+        }, 500);
+      }
     };
 
     recognitionRef.current = recognition;
@@ -398,6 +489,7 @@ export function CommandPalette() {
   const audioProcessorRef = useRef<ScriptProcessorNode | null>(null);
   const audioSamplesRef = useRef<Float32Array[]>([]);
   const audioSampleRateRef = useRef<number>(16000);
+  const voiceInputManagerActiveRef = useRef(false);
 
   // Ensure timers/streams are cleaned up when the component unmounts.
   useEffect(() => {
@@ -455,6 +547,8 @@ export function CommandPalette() {
       setIsRecording(false);
       setIsSpeechDetected(false);
       setIsTranscribing(false);
+      voiceInputManagerActiveRef.current = false;
+      window.electronAPI.setAutoHideSuppressed(false);
       cleanupMediaStream();
     }
   }, [clearVoiceError, cleanupMediaStream]);
@@ -535,34 +629,47 @@ export function CommandPalette() {
         language,
       });
 
-      if (!res.success) {
-        setVoiceError(res.error || 'Whisper transcription failed.');
+        if (!res.success) {
+          setVoiceError(res.error || 'Whisper transcription failed.');
+          clearVoiceError();
+        } else if (res.transcript) {
+          insertTranscript(res.transcript);
+        }
+        if (voiceInputManagerActiveRef.current) {
+          window.electronAPI.voiceTest().catch(() => undefined);
+          voiceInputManagerActiveRef.current = false;
+        }
+        window.electronAPI.setAutoHideSuppressed(false);
+      } catch (err) {
+        console.error('Whisper transcription failed:', err);
+        setVoiceError('Whisper transcription failed.');
         clearVoiceError();
-      } else if (res.transcript) {
-        insertTranscript(res.transcript);
+        if (voiceInputManagerActiveRef.current) {
+          window.electronAPI.voiceTest().catch(() => undefined);
+          voiceInputManagerActiveRef.current = false;
+        }
+        window.electronAPI.setAutoHideSuppressed(false);
+      } finally {
+        setIsRecording(false);
+        setIsSpeechDetected(false);
+        setIsTranscribing(false);
+        audioSamplesRef.current = [];
+        cleanupMediaStream();
       }
-    } catch (err) {
-      console.error('Whisper transcription failed:', err);
-      setVoiceError('Whisper transcription failed.');
-      clearVoiceError();
-    } finally {
-      setIsRecording(false);
-      setIsSpeechDetected(false);
-      setIsTranscribing(false);
-      audioSamplesRef.current = [];
-      cleanupMediaStream();
-    }
   }, [clearVoiceError, cleanupMediaStream, insertTranscript, voiceLanguage]);
 
   // Listen for voice events from main process
   useEffect(() => {
     const unsubscribeStart = window.electronAPI.onVoiceRecordingStarted(() => {
+      window.electronAPI.setAutoHideSuppressed(true);
+      voiceInputManagerActiveRef.current = true;
       void (async () => {
         console.log('Voice recording started from hotkey');
         setVoiceError(null); // Clear any previous errors
         setIsRecording(true);
         setIsTranscribing(false);
         setIsSpeechDetected(false);
+        window.electronAPI.setAutoHideSuppressed(true);
 
         // Pull latest settings so provider switches apply without restarting.
         try {
@@ -594,6 +701,12 @@ export function CommandPalette() {
             // Update language before starting
             recognitionRef.current.lang = voiceLanguage;
             recognitionRef.current.start();
+            
+            // Restore window after speech recognition starts (OS may steal focus)
+            setTimeout(() => {
+              window.electronAPI.setAutoHideSuppressed(true);
+              window.electronAPI.show();
+            }, 150);
           } catch (err) {
             console.error('Failed to start speech recognition:', err);
             setIsRecording(false);
@@ -614,8 +727,11 @@ export function CommandPalette() {
     });
 
     const unsubscribeStop = window.electronAPI.onVoiceRecordingStopped(() => {
+      window.electronAPI.setAutoHideSuppressed(true);
+      voiceInputManagerActiveRef.current = true;
       void (async () => {
         console.log('Voice recording stopped from hotkey');
+        window.electronAPI.setAutoHideSuppressed(true);
 
         if (voiceProviderRef.current === 'whisper_cpp') {
           await stopWhisperRecordingAndTranscribe();
@@ -632,7 +748,12 @@ export function CommandPalette() {
             setIsRecording(false);
             setIsSpeechDetected(false);
             setIsTranscribing(false);
+            voiceInputManagerActiveRef.current = false;
+            window.electronAPI.setAutoHideSuppressed(false);
           }
+        } else {
+          voiceInputManagerActiveRef.current = false;
+          window.electronAPI.setAutoHideSuppressed(false);
         }
       })();
     });
@@ -642,8 +763,11 @@ export function CommandPalette() {
       setIsRecording(false);
       setIsSpeechDetected(false);
       setIsTranscribing(false);
+      window.electronAPI.setAutoHideSuppressed(false);
       setVoiceError(error);
       clearVoiceError();
+      voiceInputManagerActiveRef.current = false;
+      window.electronAPI.setAutoHideSuppressed(false);
     });
 
     return () => {
@@ -694,6 +818,51 @@ export function CommandPalette() {
     inputRef.current?.focus();
   };
 
+  // Suppress auto-hide on mouse down (before blur fires)
+  const handleMicMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // Suppress auto-hide BEFORE blur can fire
+    window.electronAPI.setAutoHideSuppressed(true);
+  }, []);
+
+  // Handle mic button click to toggle voice recording
+  const handleMicClick = useCallback(async () => {
+    // Check if voice input is enabled in settings
+    if (!settings?.voiceInput?.enabled) {
+      setVoiceError('Voice input is disabled. Enable it in Settings → Voice.');
+      clearVoiceError();
+      voiceInputManagerActiveRef.current = false;
+      window.electronAPI.setAutoHideSuppressed(false);
+      return;
+    }
+
+    // Check if browser supports speech recognition (for browser provider)
+    // @ts-ignore - webkit prefix
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const isBrowserProvider = voiceProviderRef.current === 'browser';
+    
+    if (isBrowserProvider && !SpeechRecognition) {
+      setVoiceError('Speech recognition not supported in this browser.');
+      clearVoiceError();
+      voiceInputManagerActiveRef.current = false;
+      window.electronAPI.setAutoHideSuppressed(false);
+      return;
+    }
+
+    // Toggle recording using IPC (same as hotkey)
+    try {
+      voiceInputManagerActiveRef.current = true;
+      await window.electronAPI.voiceTest();
+    } catch (err) {
+      console.error('Failed to toggle voice recording:', err);
+      voiceInputManagerActiveRef.current = false;
+      window.electronAPI.setAutoHideSuppressed(false);
+      setVoiceError('Failed to toggle voice recording');
+      clearVoiceError();
+    }
+  }, [settings, clearVoiceError]);
+
   const handleClose = () => {
     window.electronAPI.hide();
   };
@@ -727,11 +896,13 @@ export function CommandPalette() {
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.95 }}
       transition={{ duration: 0.15 }}
-      className="relative h-full flex flex-col bg-gradient-to-br from-stone-950 to-stone-900 dark:from-stone-950 dark:to-stone-900 rounded-3xl shadow-2xl shadow-purple-500/10 border border-stone-800 dark:border-stone-800 overflow-hidden"
+      className="relative h-full flex flex-col rounded-3xl shadow-2xl border overflow-hidden
+                 bg-[color:var(--app-surface)] text-[color:var(--app-text)]
+                 border-[color:var(--app-border)]"
     >
       {/* Animated gradient border glow - animations removed for performance */}
       <div className="absolute inset-0 rounded-3xl opacity-20 pointer-events-none
-        bg-gradient-to-r from-purple-500/20 via-cyan-500/20 to-rose-500/20" />
+        bg-[radial-gradient(circle_at_top_left,var(--app-accent-soft),transparent_55%)]" />
 
       {/* Content */}
       <div className="relative z-10 flex flex-col h-full">
@@ -754,10 +925,11 @@ export function CommandPalette() {
         </motion.div>
       )}
       {/* Header */}
-      <div className="drag-region flex items-center justify-between px-5 py-4 border-b border-stone-800 dark:border-stone-800 bg-stone-900/50 dark:bg-stone-900/50">
+      <div className="drag-region flex items-center justify-between px-5 py-4 border-b
+                      border-[color:var(--app-border)] bg-[color:var(--app-surface-2)]">
         <div className="flex items-center gap-3">
-          <Monitor className="w-5 h-5 text-purple-400" />
-          <span className="font-semibold text-stone-100 dark:text-stone-100">
+          <Monitor className="w-5 h-5 text-[color:var(--app-accent)]" />
+          <span className="font-semibold text-[color:var(--app-text)]">
             WinPilot
           </span>
         </div>
@@ -765,84 +937,36 @@ export function CommandPalette() {
           {/* AI Model Badge */}
           {settings?.agenticLoop?.model && (
             <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full
-              bg-purple-500/10 border border-purple-500/20 dark:bg-purple-500/10 dark:border-purple-500/20">
-              <Brain className="w-3.5 h-3.5 text-purple-400" />
-              <span className="text-xs font-medium text-purple-300 dark:text-purple-300">
+              bg-[color:var(--app-accent-soft)] border border-[color:var(--app-border)]">
+              <Brain className="w-3.5 h-3.5 text-[color:var(--app-accent)]" />
+              <span className="text-xs font-medium text-[color:var(--app-text)]">
                 {getModelDisplayName(settings.agenticLoop.model)}
               </span>
             </div>
           )}
-          {/* Window Controls */}
           <button
             onClick={() => window.electronAPI.minimize()}
-            className="p-1.5 rounded-lg hover:bg-stone-100 dark:hover:bg-stone-800 text-stone-500 hover:text-stone-700 dark:hover:text-stone-300 transition-colors"
+            className="p-2 rounded-lg transition-colors
+                       text-[color:var(--app-text-muted)] hover:text-[color:var(--app-text)]
+                       hover:bg-[color:var(--app-surface)]"
             title="Minimize"
           >
             <Minus className="w-4 h-4" />
           </button>
           <button
             onClick={() => window.electronAPI.maximize()}
-            className="p-1.5 rounded-lg hover:bg-stone-100 dark:hover:bg-stone-800 text-stone-500 hover:text-stone-700 dark:hover:text-stone-300 transition-colors"
+            className="p-2 rounded-lg transition-colors
+                       text-[color:var(--app-text-muted)] hover:text-[color:var(--app-text)]
+                       hover:bg-[color:var(--app-surface)]"
             title="Maximize"
           >
             <Maximize2 className="w-4 h-4" />
           </button>
           <button
-            onClick={() => window.electronAPI.fitToScreen()}
-            className="p-1.5 rounded-lg hover:bg-stone-100 dark:hover:bg-stone-800 text-stone-500 hover:text-stone-700 dark:hover:text-stone-300 transition-colors"
-            title="Fit to Screen"
-          >
-            <Expand className="w-4 h-4" />
-          </button>
-          <button
-            onClick={() => setShowSettings(true)}
-            className="p-1.5 rounded-lg hover:bg-stone-100 dark:hover:bg-stone-800 text-stone-500 hover:text-stone-700 dark:hover:text-stone-300 transition-colors"
-            title="Settings"
-          >
-            <SettingsIcon className="w-4 h-4" />
-          </button>
-          <button
-            onClick={() => setShowTasksPanel(true)}
-            className="p-1.5 rounded-lg hover:bg-stone-100 dark:hover:bg-stone-800 text-stone-500 hover:text-stone-700 dark:hover:text-stone-300 transition-colors"
-            title="Scheduled Tasks"
-          >
-            <Clock className="w-4 h-4" />
-          </button>
-          <button
-            onClick={() => setShowMcpPanel(true)}
-            className="p-1.5 rounded-lg hover:bg-stone-100 dark:hover:bg-stone-800 text-stone-500 hover:text-stone-700 dark:hover:text-stone-300 transition-colors"
-            title="MCP Servers"
-          >
-            <Plug className="w-4 h-4" />
-          </button>
-          <button
-            onClick={() => {
-              clearMessages();
-              setShowHistory(false);
-            }}
-            className="p-1.5 rounded-lg hover:bg-stone-100 dark:hover:bg-stone-800 text-stone-500 hover:text-stone-700 dark:hover:text-stone-300 transition-colors"
-            title="Clear Chat"
-            disabled={isLoading || messages.length === 0}
-          >
-            <Trash2 className="w-4 h-4" />
-          </button>
-          <button
-            onClick={() => setShowLogsPanel(true)}
-            className="p-1.5 rounded-lg hover:bg-stone-100 dark:hover:bg-stone-800 text-stone-500 hover:text-stone-700 dark:hover:text-stone-300 transition-colors"
-            title="Logs & Actions"
-          >
-            <ScrollText className="w-4 h-4" />
-          </button>
-          <button
-            onClick={() => setShowHistory(!showHistory)}
-            className="p-1.5 rounded-lg hover:bg-stone-100 dark:hover:bg-stone-800 text-stone-500 hover:text-stone-700 dark:hover:text-stone-300 transition-colors"
-            title="History"
-          >
-            <History className="w-4 h-4" />
-          </button>
-          <button
             onClick={handleClose}
-            className="p-1.5 rounded-lg hover:bg-rose-100 dark:hover:bg-rose-900/30 text-stone-500 hover:text-rose-600 dark:hover:text-rose-400 transition-colors"
+            className="p-2 rounded-lg transition-colors
+                       text-[color:var(--app-text-muted)] hover:text-rose-600
+                       hover:bg-rose-100"
             title="Close (Esc)"
           >
             <X className="w-4 h-4" />
@@ -852,22 +976,211 @@ export function CommandPalette() {
 
       {/* Split View: Questions (Left) + Output (Right) */}
       <div className="flex-1 flex overflow-hidden">
+        {/* Expandable Sidebar */}
+        <div className={`no-drag flex flex-col py-4 border-r transition-all duration-200
+                        border-[color:var(--app-border)] bg-[color:var(--app-surface-2)]
+                        ${sidebarExpanded ? 'w-44 px-3' : 'w-12 px-2 items-center'}`}>
+          
+          {/* Toggle Button */}
+          <button
+            onClick={() => setSidebarExpanded(!sidebarExpanded)}
+            className={`p-2 rounded-lg transition-colors mb-3
+                       text-[color:var(--app-text-muted)] hover:text-[color:var(--app-text)]
+                       hover:bg-[color:var(--app-surface)] ${sidebarExpanded ? 'self-end' : ''}`}
+            title={sidebarExpanded ? 'Collapse sidebar' : 'Expand sidebar'}
+          >
+            {sidebarExpanded ? <ChevronLeft className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+          </button>
+
+          {/* Chat Section */}
+          {sidebarExpanded && (
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-[color:var(--app-text-muted)] mb-2 px-2">
+              Chat
+            </div>
+          )}
+          <button
+            onClick={() => setShowHistory(!showHistory)}
+            className={`p-2 rounded-lg transition-colors flex items-center gap-3
+                       text-[color:var(--app-text-muted)] hover:text-[color:var(--app-text)]
+                       hover:bg-[color:var(--app-surface)] ${sidebarExpanded ? 'w-full' : ''}`}
+            title="History"
+          >
+            <History className="w-4 h-4 flex-shrink-0" />
+            {sidebarExpanded && <span className="text-sm">History</span>}
+          </button>
+          <button
+            onClick={() => {
+              clearMessages();
+              setShowHistory(false);
+            }}
+            className={`p-2 rounded-lg transition-colors flex items-center gap-3
+                       text-[color:var(--app-text-muted)] hover:text-[color:var(--app-text)]
+                       hover:bg-[color:var(--app-surface)] ${sidebarExpanded ? 'w-full' : ''}
+                       disabled:opacity-50 disabled:cursor-not-allowed`}
+            title="Clear Chat"
+            disabled={isLoading || messages.length === 0}
+          >
+            <Trash2 className="w-4 h-4 flex-shrink-0" />
+            {sidebarExpanded && <span className="text-sm">Clear Chat</span>}
+          </button>
+
+          <div className={`h-px bg-[color:var(--app-border)] my-3 ${sidebarExpanded ? 'w-full' : 'w-6'}`} />
+
+          {/* Tools Section */}
+          {sidebarExpanded && (
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-[color:var(--app-text-muted)] mb-2 px-2">
+              Tools
+            </div>
+          )}
+          <button
+            onClick={() => setShowTasksPanel(true)}
+            className={`p-2 rounded-lg transition-colors flex items-center gap-3
+                       text-[color:var(--app-text-muted)] hover:text-[color:var(--app-text)]
+                       hover:bg-[color:var(--app-surface)] ${sidebarExpanded ? 'w-full' : ''}`}
+            title="Scheduled Tasks"
+          >
+            <Clock className="w-4 h-4 flex-shrink-0" />
+            {sidebarExpanded && <span className="text-sm">Scheduled Tasks</span>}
+          </button>
+          <button
+            onClick={() => setShowMcpPanel(true)}
+            className={`p-2 rounded-lg transition-colors flex items-center gap-3
+                       text-[color:var(--app-text-muted)] hover:text-[color:var(--app-text)]
+                       hover:bg-[color:var(--app-surface)] ${sidebarExpanded ? 'w-full' : ''}`}
+            title="MCP Servers"
+          >
+            <Plug className="w-4 h-4 flex-shrink-0" />
+            {sidebarExpanded && <span className="text-sm">MCP Servers</span>}
+          </button>
+
+          <div className={`h-px bg-[color:var(--app-border)] my-3 ${sidebarExpanded ? 'w-full' : 'w-6'}`} />
+
+          {/* Data Section */}
+          {sidebarExpanded && (
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-[color:var(--app-text-muted)] mb-2 px-2">
+              Data
+            </div>
+          )}
+          <button
+            onClick={() => setShowClipboardPanel(true)}
+            className={`p-2 rounded-lg transition-colors flex items-center gap-3
+                       text-[color:var(--app-text-muted)] hover:text-[color:var(--app-text)]
+                       hover:bg-[color:var(--app-surface)] ${sidebarExpanded ? 'w-full' : ''}`}
+            title="Clipboard History"
+          >
+            <Copy className="w-4 h-4 flex-shrink-0" />
+            {sidebarExpanded && <span className="text-sm">Clipboard</span>}
+          </button>
+          <button
+            onClick={() => setShowRecordingsPanel(true)}
+            className={`p-2 rounded-lg transition-colors flex items-center gap-3
+                       text-[color:var(--app-text-muted)] hover:text-[color:var(--app-text)]
+                       hover:bg-[color:var(--app-surface)] ${sidebarExpanded ? 'w-full' : ''}`}
+            title="Recordings"
+          >
+            <Video className="w-4 h-4 flex-shrink-0" />
+            {sidebarExpanded && <span className="text-sm">Recordings</span>}
+          </button>
+          <button
+            onClick={() => setShowLogsPanel(true)}
+            className={`p-2 rounded-lg transition-colors flex items-center gap-3
+                       text-[color:var(--app-text-muted)] hover:text-[color:var(--app-text)]
+                       hover:bg-[color:var(--app-surface)] ${sidebarExpanded ? 'w-full' : ''}`}
+            title="Action Logs"
+          >
+            <ScrollText className="w-4 h-4 flex-shrink-0" />
+            {sidebarExpanded && <span className="text-sm">Action Logs</span>}
+          </button>
+
+          {/* Spacer to push settings to bottom */}
+          <div className="flex-1" />
+
+          <div className={`h-px bg-[color:var(--app-border)] my-3 ${sidebarExpanded ? 'w-full' : 'w-6'}`} />
+
+          {/* App Section */}
+          <button
+            onClick={() => setShowSettings(true)}
+            className={`p-2 rounded-lg transition-colors flex items-center gap-3
+                       text-[color:var(--app-text-muted)] hover:text-[color:var(--app-text)]
+                       hover:bg-[color:var(--app-surface)] ${sidebarExpanded ? 'w-full' : ''}`}
+            title="Settings"
+          >
+            <SettingsIcon className="w-4 h-4 flex-shrink-0" />
+            {sidebarExpanded && <span className="text-sm">Settings</span>}
+          </button>
+        </div>
         {/* Conversation Panel - Unified Q&A */}
         <div className="flex-1 flex flex-col min-w-0">
           <div className="flex-1 min-h-0 flex flex-col">
-            {messages.length === 0 && !showHistory ? (
+            {showOnboarding ? (
               <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
-                <Monitor className="w-12 h-12 text-purple-500/50 mb-4" />
-                <h2 className="text-lg font-medium text-stone-300 dark:text-stone-300 mb-2">
-                  What would you like to do?
-                </h2>
-                <p className="text-sm text-stone-500 dark:text-stone-500 max-w-sm">
-                  Control your desktop with natural language. Try "arrange my windows side by side" or "find large files in Downloads"
-                </p>
+                <div className="w-full max-w-lg rounded-2xl bg-[color:var(--app-surface)] p-6 shadow-lg border border-[color:var(--app-border)]">
+                  <div className="flex items-center justify-center gap-2 mb-3">
+                    <Sparkles className="w-5 h-5 text-[color:var(--app-accent)]" />
+                    <h3 className="text-lg font-semibold text-[color:var(--app-text)]">Welcome to WinPilot</h3>
+                  </div>
+                  <p className="text-sm text-[color:var(--app-text-muted)] mb-4">
+                    Try one of these quick prompts to get started:
+                  </p>
+                  <div className="space-y-2 text-left">
+                    {ONBOARDING_PROMPTS.map((template) => (
+                      <button
+                        key={template.id}
+                        onClick={() => applyTemplate(template)}
+                        className="w-full text-left p-3 rounded-lg transition-colors
+                                   bg-[color:var(--app-surface-2)] hover:bg-[color:var(--app-surface)]"
+                      >
+                        <p className="text-sm font-medium text-[color:var(--app-text)]">
+                          {template.title}
+                        </p>
+                        <p className="text-xs text-[color:var(--app-text-muted)] mt-1 line-clamp-2">
+                          {template.prompt}
+                        </p>
+                      </button>
+                    ))}
+                  </div>
+                  <div className="mt-4 flex justify-end">
+                    <button
+                      onClick={markOnboardingSeen}
+                      className="px-4 py-2 rounded-lg text-sm font-medium text-[color:var(--app-accent-contrast)]
+                                 bg-[color:var(--app-accent)] hover:opacity-90"
+                    >
+                      Got it
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : messages.length === 0 && !showHistory ? (
+              <div className="flex-1 overflow-y-auto p-6">
+                <div className="flex items-center gap-2 mb-4">
+                  <Sparkles className="w-4 h-4 text-[color:var(--app-accent)]" />
+                  <h3 className="text-sm font-medium text-[color:var(--app-text-muted)]">
+                    Quick Templates
+                  </h3>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  {PROMPT_TEMPLATES.map((template) => (
+                    <button
+                      key={template.id}
+                      onClick={() => applyTemplate(template)}
+                      className="text-left p-4 rounded-xl transition-all transform hover:scale-[1.02]
+                                 bg-[color:var(--app-surface-2)] hover:bg-[color:var(--app-surface)]
+                                 border border-[color:var(--app-border)] hover:border-[color:var(--app-accent)]/30
+                                 shadow-sm hover:shadow-md"
+                    >
+                      <p className="text-sm font-semibold text-[color:var(--app-text)] mb-1">
+                        {template.title}
+                      </p>
+                      <p className="text-xs text-[color:var(--app-text-muted)] line-clamp-2">
+                        {template.prompt}
+                      </p>
+                    </button>
+                  ))}
+                </div>
               </div>
             ) : showHistory ? (
               <div className="flex-1 overflow-y-auto p-4">
-                <h3 className="text-sm font-medium text-stone-500 dark:text-stone-500 mb-3">
+                <h3 className="text-sm font-medium text-[color:var(--app-text-muted)] mb-3">
                   Recent Commands
                 </h3>
                 <div className="space-y-2">
@@ -875,18 +1188,19 @@ export function CommandPalette() {
                     <button
                       key={item.id}
                       onClick={() => handleHistorySelect(item)}
-                      className="w-full text-left p-3 rounded-lg bg-stone-100 dark:bg-stone-800 hover:bg-stone-200 dark:hover:bg-stone-700 transition-colors"
+                      className="w-full text-left p-3 rounded-lg transition-colors
+                                 bg-[color:var(--app-surface-2)] hover:bg-[color:var(--app-surface)]"
                     >
-                      <p className="text-sm text-stone-700 dark:text-stone-300 truncate">
+                      <p className="text-sm text-[color:var(--app-text)] truncate">
                         {item.input}
                       </p>
-                      <p className="text-xs text-stone-400 mt-1">
+                      <p className="text-xs text-[color:var(--app-text-muted)] mt-1">
                         {new Date(item.timestamp).toLocaleString()}
                       </p>
                     </button>
                   ))}
                   {history.length === 0 && (
-                    <p className="text-sm text-stone-400 dark:text-stone-500 text-center py-4">
+                    <p className="text-sm text-[color:var(--app-text-muted)] text-center py-4">
                       No history yet
                     </p>
                   )}
@@ -899,10 +1213,12 @@ export function CommandPalette() {
             )}
           </div>
         </div>
+
+        {/* Modals rendered here */}
       </div>
 
       {/* Input */}
-      <div className="p-5 border-t border-stone-800 dark:border-stone-800">
+      <div className="p-5 border-t border-[color:var(--app-border)]">
         <form onSubmit={handleSubmit} className="relative">
           <textarea
             ref={inputRef}
@@ -911,15 +1227,51 @@ export function CommandPalette() {
             onKeyDown={handleKeyDown}
             placeholder="Type a message, use / for commands..."
             rows={1}
-            className="w-full px-4 py-3 pr-12 rounded-xl bg-stone-900 dark:bg-stone-900
-                     text-stone-100 dark:text-stone-100 placeholder-stone-500
-                     border border-stone-700 dark:border-stone-700
-                     focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20
-                     resize-none transition-all"
+            className="w-full px-4 py-3 pr-12 rounded-xl resize-none transition-all
+                     bg-[color:var(--app-surface-2)] text-[color:var(--app-text)]
+                     placeholder-[color:var(--app-text-muted)]
+                     border border-[color:var(--app-border)]
+                     focus:border-[color:var(--app-accent)] focus:ring-2 focus:ring-[color:var(--app-accent)]/20"
             style={{ minHeight: '48px', maxHeight: '120px' }}
             disabled={isLoading}
           />
           <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+            {/* Mic button for voice input */}
+            {!isLoading && (
+              <button
+                type="button"
+                onMouseDown={handleMicMouseDown}
+                onClick={handleMicClick}
+                disabled={!settings?.voiceInput?.enabled}
+                className={`p-2 rounded-lg transition-colors ${
+                  !settings?.voiceInput?.enabled
+                    ? 'text-[color:var(--app-text-muted)]/50 cursor-not-allowed'
+                    : isTranscribing
+                    ? 'text-green-500 hover:text-green-600'
+                    : isRecording
+                    ? 'text-red-500 animate-pulse'
+                    : 'text-[color:var(--app-text-muted)] hover:text-[color:var(--app-text)]'
+                }`}
+                title={
+                  !settings?.voiceInput?.enabled
+                    ? 'Voice input disabled (enable in Settings)'
+                    : isTranscribing
+                    ? 'Transcribing...'
+                    : isRecording
+                    ? 'Click to stop recording (or use hotkey)'
+                    : `Click to start recording (or use ${settings?.voiceInput?.hotkey || 'Ctrl+Shift+V'})`
+                }
+              >
+                {!settings?.voiceInput?.enabled ? (
+                  <MicOff className="w-4 h-4" />
+                ) : isTranscribing ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Mic className="w-4 h-4" />
+                )}
+              </button>
+            )}
+            
             {isLoading ? (
               <button
                 type="button"
@@ -933,8 +1285,10 @@ export function CommandPalette() {
               <button
                 type="submit"
                 disabled={!input.trim()}
-                className="p-2 rounded-lg bg-purple-500 hover:bg-purple-600 disabled:bg-stone-700
-                         disabled:cursor-not-allowed text-white transition-colors"
+                className="p-2 rounded-lg text-[color:var(--app-accent-contrast)]
+                         bg-[color:var(--app-accent)] hover:opacity-90
+                         disabled:bg-[color:var(--app-border)] disabled:text-[color:var(--app-text-muted)]
+                         disabled:cursor-not-allowed transition-colors"
                 title="Send (Enter)"
               >
                 <Send className="w-4 h-4" />
@@ -970,23 +1324,6 @@ export function CommandPalette() {
       </div>
       </motion.div>
 
-      {/* MCP Servers Panel */}
-      <MCPServersPanel isOpen={showMcpPanel} onClose={() => setShowMcpPanel(false)} />
-
-      {/* Settings Panel */}
-      <SettingsPanel isOpen={showSettings} onClose={() => setShowSettings(false)} />
-
-      {/* Scheduled Tasks Panel */}
-      <ScheduledTasksPanel isOpen={showTasksPanel} onClose={() => setShowTasksPanel(false)} />
-
-      {/* Logs & Actions Panel */}
-      <ActionLogsPanel
-        isOpen={showLogsPanel}
-        onClose={() => setShowLogsPanel(false)}
-        logs={visibleActionLogs}
-        onClearAll={() => setActionLogsClearedAt(Date.now())}
-      />
-
       {/* Permission Dialog */}
       <ConfirmationDialog
         request={permissionRequest}
@@ -998,6 +1335,39 @@ export function CommandPalette() {
           if (!permissionRequest) return;
           respondPermission({ id: permissionRequest.id, allowed: false });
         }}
+      />
+
+      {/* Modal Panels */}
+      <SettingsPanel
+        isOpen={showSettings}
+        onClose={() => setShowSettings(false)}
+      />
+
+      <MCPServersPanel
+        isOpen={showMcpPanel}
+        onClose={() => setShowMcpPanel(false)}
+      />
+
+      <ScheduledTasksPanel
+        isOpen={showTasksPanel}
+        onClose={() => setShowTasksPanel(false)}
+      />
+
+      <ActionLogsPanel
+        isOpen={showLogsPanel}
+        onClose={() => setShowLogsPanel(false)}
+        logs={visibleActionLogs}
+        onClearAll={() => setActionLogsClearedAt(Date.now())}
+      />
+
+      <ClipboardHistoryPanel
+        isOpen={showClipboardPanel}
+        onClose={() => setShowClipboardPanel(false)}
+      />
+
+      <RecordingsPanel
+        isOpen={showRecordingsPanel}
+        onClose={() => setShowRecordingsPanel(false)}
       />
     </>
   );

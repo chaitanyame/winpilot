@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { X, Moon, Sun, Monitor, Keyboard, Shield, FolderClosed, Brain, Mic } from 'lucide-react';
-import type { Settings, AIModel } from '../../shared/types';
+import { X, Moon, Sun, Monitor, Keyboard, Shield, FolderClosed, Brain, Mic, Video, FolderOpen, Check } from 'lucide-react';
+import type { Settings, AIModel, ThemeId, AppearanceMode } from '../../shared/types';
 
 interface Props {
   isOpen: boolean;
@@ -10,11 +10,58 @@ interface Props {
 
 export function SettingsPanel({ isOpen, onClose }: Props) {
   const [settings, setSettings] = useState<Settings | null>(null);
-  const [activeTab, setActiveTab] = useState<'general' | 'ai' | 'voice' | 'permissions' | 'safety'>('general');
+  const [activeTab, setActiveTab] = useState<'general' | 'ai' | 'voice' | 'recording' | 'permissions' | 'safety'>('general');
+  const [appPath, setAppPath] = useState<string>('');
+
+  const themeOptions: Array<{ id: ThemeId; name: string; description: string; swatches: string[] }> = [
+    {
+      id: 'twitter',
+      name: 'Twitter',
+      description: 'Clean and modern blue design',
+      swatches: ['#EAF5FF', '#1DA1F2', '#0F172A'],
+    },
+    {
+      id: 'claude',
+      name: 'Claude',
+      description: 'Warm beige tones with orange accents',
+      swatches: ['#F7E7D2', '#C96B2C', '#2B2118'],
+    },
+    {
+      id: 'neo-brutalism',
+      name: 'Neo Brutalism',
+      description: 'Bold colors with hard shadows',
+      swatches: ['#FFF3E6', '#FF3B30', '#1A1A1A'],
+    },
+    {
+      id: 'retro-arcade',
+      name: 'Retro Arcade',
+      description: 'Vibrant pink and teal pixel vibes',
+      swatches: ['#FFF0F7', '#FF4DB8', '#32D5C5'],
+    },
+    {
+      id: 'aurora',
+      name: 'Aurora',
+      description: 'Deep violet and teal, like northern lights',
+      swatches: ['#F4F3FF', '#7C3AED', '#22D3EE'],
+    },
+    {
+      id: 'business',
+      name: 'Business',
+      description: 'Deep navy (#000e4e) and gray monochrome',
+      swatches: ['#F7F8FA', '#000E4E', '#64748B'],
+    },
+  ];
+
+  const appearanceModes: Array<{ id: AppearanceMode; label: string; icon: typeof Sun }> = [
+    { id: 'light', label: 'Light', icon: Sun },
+    { id: 'dark', label: 'Dark', icon: Moon },
+    { id: 'system', label: 'System', icon: Monitor },
+  ];
 
   useEffect(() => {
     if (isOpen) {
       loadSettings();
+      loadAppPath();
     }
   }, [isOpen]);
 
@@ -24,6 +71,15 @@ export function SettingsPanel({ isOpen, onClose }: Props) {
       setSettings(data);
     } catch (err) {
       console.error('Failed to load settings:', err);
+    }
+  };
+
+  const loadAppPath = async () => {
+    try {
+      const path = await window.electronAPI.getAppPath();
+      setAppPath(path);
+    } catch (err) {
+      console.error('Failed to get app path:', err);
     }
   };
 
@@ -43,8 +99,9 @@ export function SettingsPanel({ isOpen, onClose }: Props) {
 
   const tabs = [
     { id: 'general', label: 'General', icon: Monitor },
-    { id: 'ai', label: 'AI Model', icon: Brain },
+    { id: 'ai', label: 'AI', icon: Brain },
     { id: 'voice', label: 'Voice', icon: Mic },
+    { id: 'recording', label: 'Recording', icon: Video },
     { id: 'permissions', label: 'Permissions', icon: Shield },
     { id: 'safety', label: 'Safety', icon: FolderClosed },
   ] as const;
@@ -72,60 +129,107 @@ export function SettingsPanel({ isOpen, onClose }: Props) {
           <button
             onClick={onClose}
             className="p-1.5 rounded-lg hover:bg-dark-100 dark:hover:bg-dark-700 
-                     text-dark-500 hover:text-dark-700 dark:hover:text-dark-300 transition-colors"
+                       text-dark-500 hover:text-dark-700 dark:hover:text-dark-300 transition-colors"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Tabs */}
-        <div className="flex border-b border-dark-200 dark:border-dark-700">
-          {tabs.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`flex-1 px-4 py-3 flex items-center justify-center gap-2 text-sm font-medium transition-colors ${
-                activeTab === tab.id
-                  ? 'text-primary-600 dark:text-primary-400 border-b-2 border-primary-500'
-                  : 'text-dark-500 hover:text-dark-700 dark:hover:text-dark-300'
-              }`}
-            >
-              <tab.icon className="w-4 h-4" />
-              {tab.label}
-            </button>
-          ))}
+        <div className="border-b border-dark-200 dark:border-dark-700">
+          <div className="flex gap-1 p-2">
+            {tabs.map((tab) => {
+              const Icon = tab.icon;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
+                    activeTab === tab.id
+                      ? 'bg-primary-500 text-white'
+                      : 'text-dark-600 dark:text-dark-400 hover:bg-dark-100 dark:hover:bg-dark-700'
+                  }`}
+                >
+                  <Icon className="w-4 h-4" />
+                  <span className="text-sm font-medium">{tab.label}</span>
+                </button>
+              );
+            })}
+          </div>
         </div>
 
         {/* Content */}
         <div className="p-6 max-h-[400px] overflow-y-auto">
           {activeTab === 'general' && (
             <div className="space-y-6">
-              {/* Theme */}
+              {/* Theme Selection */}
               <div>
-                <label className="block text-sm font-medium text-dark-700 dark:text-dark-300 mb-2">
+                <label className="block text-sm font-medium text-dark-700 dark:text-dark-300 mb-3">
                   Theme
                 </label>
-                <div className="flex gap-2">
-                  {['light', 'dark', 'system'].map((theme) => (
+                <div className="grid grid-cols-2 gap-3">
+                  {themeOptions.map((theme) => (
                     <button
-                      key={theme}
-                      onClick={() => updateSettings({ theme: theme as any })}
-                      className={`flex-1 px-4 py-2 rounded-lg border transition-colors flex items-center justify-center gap-2 ${
-                        settings.theme === theme
-                          ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20 text-primary-600 dark:text-primary-400'
-                          : 'border-dark-200 dark:border-dark-600 hover:bg-dark-50 dark:hover:bg-dark-700'
+                      key={theme.id}
+                      onClick={() => updateSettings({ themeId: theme.id })}
+                      className={`relative p-4 rounded-lg border-2 transition-all text-left ${
+                        settings.themeId === theme.id
+                          ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20'
+                          : 'border-dark-200 dark:border-dark-700 hover:border-dark-300 dark:hover:border-dark-600'
                       }`}
                     >
-                      {theme === 'light' && <Sun className="w-4 h-4" />}
-                      {theme === 'dark' && <Moon className="w-4 h-4" />}
-                      {theme === 'system' && <Monitor className="w-4 h-4" />}
-                      <span className="capitalize">{theme}</span>
+                      {settings.themeId === theme.id && (
+                        <div className="absolute top-2 right-2 w-5 h-5 rounded-full bg-primary-500 flex items-center justify-center">
+                          <Check className="w-3 h-3 text-white" />
+                        </div>
+                      )}
+                      <div className="font-medium text-sm text-dark-800 dark:text-dark-200 mb-1">
+                        {theme.name}
+                      </div>
+                      <div className="text-xs text-dark-500 dark:text-dark-400 mb-3">
+                        {theme.description}
+                      </div>
+                      <div className="flex gap-2">
+                        {theme.swatches.map((color, i) => (
+                          <div
+                            key={i}
+                            className="w-6 h-6 rounded-md border border-dark-200 dark:border-dark-600"
+                            style={{ backgroundColor: color }}
+                          />
+                        ))}
+                      </div>
                     </button>
                   ))}
                 </div>
               </div>
 
-              {/* Hotkey */}
+              {/* Appearance Mode */}
+              <div>
+                <label className="block text-sm font-medium text-dark-700 dark:text-dark-300 mb-3">
+                  Appearance
+                </label>
+                <div className="flex gap-2">
+                  {appearanceModes.map((mode) => {
+                    const Icon = mode.icon;
+                    return (
+                      <button
+                        key={mode.id}
+                        onClick={() => updateSettings({ appearanceMode: mode.id })}
+                        className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg border-2 transition-all ${
+                          settings.appearanceMode === mode.id
+                            ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20 text-primary-600 dark:text-primary-400'
+                            : 'border-dark-200 dark:border-dark-700 text-dark-600 dark:text-dark-400 hover:border-dark-300 dark:hover:border-dark-600'
+                        }`}
+                      >
+                        <Icon className="w-4 h-4" />
+                        <span className="text-sm font-medium">{mode.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Global Hotkey */}
               <div>
                 <label className="block text-sm font-medium text-dark-700 dark:text-dark-300 mb-2">
                   <Keyboard className="w-4 h-4 inline mr-2" />
@@ -136,46 +240,11 @@ export function SettingsPanel({ isOpen, onClose }: Props) {
                   value={settings.hotkey}
                   readOnly
                   className="w-full px-4 py-2 rounded-lg border border-dark-200 dark:border-dark-600 
-                           bg-dark-50 dark:bg-dark-700 text-dark-700 dark:text-dark-300"
+                           bg-dark-50 dark:bg-dark-700 text-dark-600 dark:text-dark-400"
                 />
                 <p className="text-xs text-dark-500 mt-1">
-                  Press the hotkey to open WinPilot
+                  Press this key combination to show the command palette
                 </p>
-              </div>
-
-              {/* UI Options */}
-              <div>
-                <label className="block text-sm font-medium text-dark-700 dark:text-dark-300 mb-2">
-                  UI Options
-                </label>
-                <div className="space-y-2">
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={settings.ui.showInTray}
-                      onChange={(e) => updateSettings({ 
-                        ui: { ...settings.ui, showInTray: e.target.checked } 
-                      })}
-                      className="w-4 h-4 rounded border-dark-300 text-primary-500"
-                    />
-                    <span className="text-sm text-dark-600 dark:text-dark-400">
-                      Show in system tray
-                    </span>
-                  </label>
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={settings.ui.toastNotifications}
-                      onChange={(e) => updateSettings({ 
-                        ui: { ...settings.ui, toastNotifications: e.target.checked } 
-                      })}
-                      className="w-4 h-4 rounded border-dark-300 text-primary-500"
-                    />
-                    <span className="text-sm text-dark-600 dark:text-dark-400">
-                      Show notifications
-                    </span>
-                  </label>
-                </div>
               </div>
             </div>
           )}
@@ -322,198 +391,183 @@ export function SettingsPanel({ isOpen, onClose }: Props) {
                     onChange={(e) => updateSettings({
                       voiceInput: {
                         ...settings.voiceInput,
-                        enabled: e.target.checked,
-                        hotkey: settings.voiceInput?.hotkey || 'CommandOrControl+Shift+V',
-                        provider: settings.voiceInput?.provider || 'browser',
-                        language: settings.voiceInput?.language || 'en-US',
-                        showVisualFeedback: settings.voiceInput?.showVisualFeedback ?? true,
+                        enabled: e.target.checked
                       }
                     })}
                     className="w-4 h-4 rounded border-dark-300 text-primary-500"
                   />
-                  <span className="text-sm font-medium text-dark-700 dark:text-dark-300">
+                  <span className="text-sm text-dark-600 dark:text-dark-400">
+                    <Mic className="w-4 h-4 inline mr-2" />
                     Enable voice input
                   </span>
                 </label>
-
-                {settings.voiceInput?.enabled && (
-                  <div className="space-y-4 pl-6 border-l-2 border-primary-200 dark:border-primary-800">
-                    {/* Voice Hotkey */}
-                    <div>
-                      <label className="block text-sm font-medium text-dark-700 dark:text-dark-300 mb-2">
-                        Voice Input Hotkey
-                      </label>
-                      <input
-                        type="text"
-                        value={settings.voiceInput?.hotkey || 'CommandOrControl+Shift+V'}
-                        onChange={(e) => updateSettings({
-                          voiceInput: {
-                            ...settings.voiceInput,
-                            hotkey: e.target.value
-                          }
-                        })}
-                        className="w-full px-4 py-2 rounded-lg border border-dark-200 dark:border-dark-600
-                                 bg-white dark:bg-dark-700 text-dark-700 dark:text-dark-300"
-                        placeholder="CommandOrControl+Shift+V"
-                      />
-                      <p className="text-xs text-dark-500 mt-1">
-                        Press once to start recording, press again to stop and transcribe
-                      </p>
-                    </div>
-
-                    {/* Provider Selection */}
-                    <div>
-                      <label className="block text-sm font-medium text-dark-700 dark:text-dark-300 mb-2">
-                        Speech Recognition Provider
-                      </label>
-                      <select
-                        value={settings.voiceInput?.provider || 'browser'}
-                        onChange={(e) => updateSettings({
-                          voiceInput: {
-                            ...settings.voiceInput,
-                            provider: e.target.value as 'browser' | 'whisper_cpp'
-                          }
-                        })}
-                        className="w-full px-4 py-2 rounded-lg border border-dark-200 dark:border-dark-600
-                                 bg-white dark:bg-dark-700 text-dark-700 dark:text-dark-300"
-                      >
-                        <option value="browser">Browser (Free, Offline, Built-in)</option>
-                        <option value="whisper_cpp">Whisper.cpp (Local, More Accurate, Requires Model)</option>
-                      </select>
-                      <p className="text-xs text-dark-500 mt-1">
-                        {settings.voiceInput?.provider === 'browser'
-                          ? 'Uses browser\'s built-in speech recognition (works offline)'
-                          : 'Runs whisper.cpp locally (offline). You must configure the whisper.cpp binary and a model file.'
-                        }
-                      </p>
-                    </div>
-
-                    {/* Whisper.cpp config (if selected) */}
-                    {settings.voiceInput?.provider === 'whisper_cpp' && (
-                      <div>
-                        <label className="block text-sm font-medium text-dark-700 dark:text-dark-300 mb-2">Whisper.cpp Binary Path</label>
-                        <input
-                          type="text"
-                          value={settings.voiceInput?.whisperCpp?.binaryPath || ''}
-                          onChange={(e) => updateSettings({
-                            voiceInput: {
-                              ...settings.voiceInput,
-                              whisperCpp: {
-                                ...settings.voiceInput.whisperCpp,
-                                binaryPath: e.target.value,
-                              }
-                            }
-                          })}
-                          className="w-full px-4 py-2 rounded-lg border border-dark-200 dark:border-dark-600
-                                   bg-white dark:bg-dark-700 text-dark-700 dark:text-dark-300"
-                          placeholder="C:\\path\\to\\whisper.cpp\\main.exe"
-                        />
-                        <p className="text-xs text-dark-500 mt-1">
-                          Point this at your locally built whisper.cpp CLI executable.
-                        </p>
-
-                        <label className="block text-sm font-medium text-dark-700 dark:text-dark-300 mb-2 mt-4">Model Path</label>
-                        <input
-                          type="text"
-                          value={settings.voiceInput?.whisperCpp?.modelPath || ''}
-                          onChange={(e) => updateSettings({
-                            voiceInput: {
-                              ...settings.voiceInput,
-                              whisperCpp: {
-                                ...settings.voiceInput.whisperCpp,
-                                modelPath: e.target.value,
-                              }
-                            }
-                          })}
-                          className="w-full px-4 py-2 rounded-lg border border-dark-200 dark:border-dark-600
-                                   bg-white dark:bg-dark-700 text-dark-700 dark:text-dark-300"
-                          placeholder="C:\\path\\to\\ggml-base.en.bin"
-                        />
-                        <p className="text-xs text-dark-500 mt-1">
-                          Example models: `ggml-base.en.bin`, `ggml-small.en.bin` (download from the whisper.cpp project releases).
-                        </p>
-                      </div>
-                    )}
-
-                    {/* Language Selection */}
-                    <div>
-                      <label className="block text-sm font-medium text-dark-700 dark:text-dark-300 mb-2">
-                        Language
-                      </label>
-                      <select
-                        value={settings.voiceInput?.language || 'en-US'}
-                        onChange={(e) => updateSettings({
-                          voiceInput: {
-                            ...settings.voiceInput,
-                            language: e.target.value
-                          }
-                        })}
-                        className="w-full px-4 py-2 rounded-lg border border-dark-200 dark:border-dark-600
-                                 bg-white dark:bg-dark-700 text-dark-700 dark:text-dark-300"
-                      >
-                        <option value="en-US">English (US)</option>
-                        <option value="en-GB">English (UK)</option>
-                        <option value="en-IN">English (India)</option>
-                        <option value="en-AU">English (Australia)</option>
-                        <option value="es-ES">Spanish (Spain)</option>
-                        <option value="es-MX">Spanish (Mexico)</option>
-                        <option value="fr-FR">French</option>
-                        <option value="de-DE">German</option>
-                        <option value="it-IT">Italian</option>
-                        <option value="pt-BR">Portuguese (Brazil)</option>
-                        <option value="pt-PT">Portuguese (Portugal)</option>
-                        <option value="ja-JP">Japanese</option>
-                        <option value="ko-KR">Korean</option>
-                        <option value="zh-CN">Chinese (Simplified)</option>
-                        <option value="zh-TW">Chinese (Traditional)</option>
-                        <option value="hi-IN">Hindi</option>
-                        <option value="ar-SA">Arabic</option>
-                        <option value="ru-RU">Russian</option>
-                      </select>
-                    </div>
-
-                    {/* Visual Feedback */}
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={settings.voiceInput?.showVisualFeedback ?? true}
-                        onChange={(e) => updateSettings({
-                          voiceInput: {
-                            ...settings.voiceInput,
-                            showVisualFeedback: e.target.checked
-                          }
-                        })}
-                        className="w-4 h-4 rounded border-dark-300 text-primary-500"
-                      />
-                      <span className="text-sm text-dark-600 dark:text-dark-400">
-                        Show recording indicator
-                      </span>
-                    </label>
-
-                    {/* Test Button */}
-                    <button
-                      onClick={async () => {
-                        try {
-                          await window.electronAPI.voiceTest();
-                        } catch (err) {
-                          console.error('Voice test failed:', err);
-                        }
-                      }}
-                      className="w-full px-4 py-2 bg-primary-500 hover:bg-primary-600 text-white rounded-lg
-                               transition-colors font-medium flex items-center justify-center gap-2"
-                    >
-                      <Mic className="w-4 h-4" />
-                      Test Voice Input
-                    </button>
-                  </div>
-                )}
               </div>
 
-              {/* Info Box */}
+              {/* Provider Selection */}
+              <div>
+                <label className="block text-sm font-medium text-dark-700 dark:text-dark-300 mb-2">
+                  Speech-to-Text Provider
+                </label>
+                <select
+                  value={settings.voiceInput?.provider || 'browser'}
+                  onChange={(e) => updateSettings({
+                    voiceInput: {
+                      ...settings.voiceInput,
+                      provider: e.target.value as 'browser' | 'whisper_cpp'
+                    }
+                  })}
+                  className="w-full px-4 py-2 rounded-lg border border-dark-200 dark:border-dark-600
+                           bg-white dark:bg-dark-700 text-dark-700 dark:text-dark-300"
+                  disabled={!settings.voiceInput?.enabled}
+                >
+                  <option value="browser">Web Speech API (Browser-based)</option>
+                  <option value="whisper_cpp">Whisper.cpp (Offline, requires setup)</option>
+                </select>
+                <p className="text-xs text-dark-500 mt-1">
+                  {settings.voiceInput?.provider === 'whisper_cpp'
+                    ? 'Offline model, requires Whisper binary and model files' 
+                    : 'Online service, uses browser\'s built-in speech recognition'}
+                </p>
+              </div>
+
+              {/* Language */}
+              <div>
+                <label className="block text-sm font-medium text-dark-700 dark:text-dark-300 mb-2">
+                  Language
+                </label>
+                <select
+                  value={settings.voiceInput?.language || 'en'}
+                  onChange={(e) => updateSettings({
+                    voiceInput: {
+                      ...settings.voiceInput,
+                      language: e.target.value
+                    }
+                  })}
+                  className="w-full px-4 py-2 rounded-lg border border-dark-200 dark:border-dark-600
+                           bg-white dark:bg-dark-700 text-dark-700 dark:text-dark-300"
+                  disabled={!settings.voiceInput?.enabled}
+                >
+                  <option value="en">English</option>
+                  <option value="es">Spanish</option>
+                  <option value="fr">French</option>
+                  <option value="de">German</option>
+                  <option value="auto">Auto-detect</option>
+                </select>
+              </div>
+
+              {/* Voice Hotkey */}
+              <div>
+                <label className="block text-sm font-medium text-dark-700 dark:text-dark-300 mb-2">
+                  Voice Input Hotkey
+                </label>
+                <input
+                  type="text"
+                  value={settings.voiceInput?.hotkey || 'Ctrl+Shift+V'}
+                  readOnly
+                  className="w-full px-4 py-2 rounded-lg border border-dark-200 dark:border-dark-600 
+                           bg-dark-50 dark:bg-dark-700 text-dark-600 dark:text-dark-400"
+                  disabled={!settings.voiceInput?.enabled}
+                />
+                <p className="text-xs text-dark-500 mt-1">
+                  Press this key combination to start voice recording
+                </p>
+              </div>
+
+              {/* Visual Feedback */}
+              <div>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={settings.voiceInput?.showVisualFeedback ?? true}
+                    onChange={(e) => updateSettings({
+                      voiceInput: {
+                        ...settings.voiceInput,
+                        showVisualFeedback: e.target.checked
+                      }
+                    })}
+                    className="w-4 h-4 rounded border-dark-300 text-primary-500"
+                    disabled={!settings.voiceInput?.enabled}
+                  />
+                  <span className="text-sm text-dark-600 dark:text-dark-400">
+                    Show visual feedback while recording
+                  </span>
+                </label>
+              </div>
+
               <div className="p-3 bg-primary-50 dark:bg-primary-900/20 rounded-lg">
                 <p className="text-xs text-primary-700 dark:text-primary-300">
-                  💡 <strong>Tip:</strong> Press {settings.voiceInput?.hotkey || 'Ctrl+Shift+V'} once to start
-                  recording, then press it again to stop and transcribe. The text will appear in the input field.
+                  <Mic className="w-3 h-3 inline mr-1" />
+                  Voice input allows you to speak commands instead of typing. Press the global hotkey or
+                  click the mic icon to start recording.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'recording' && (
+            <div className="space-y-6">
+              <div>
+                <label className="block text-sm font-medium text-dark-700 dark:text-dark-300 mb-2">
+                  <FolderOpen className="w-4 h-4 inline mr-2" />
+                  Recording Output Folder
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={settings.recording?.outputPath || ''}
+                    placeholder={`${appPath}\\recordings`}
+                    readOnly
+                    className="flex-1 px-4 py-2 rounded-lg border border-dark-200 dark:border-dark-600 
+                             bg-dark-50 dark:bg-dark-700 text-dark-600 dark:text-dark-400"
+                  />
+                  <button
+                    onClick={async () => {
+                      const result = await window.electronAPI.selectFolder({
+                        title: 'Select Recording Output Folder',
+                        defaultPath: settings.recording?.outputPath || appPath
+                      });
+                      if (!result.cancelled && result.path) {
+                        updateSettings({
+                          recording: {
+                            ...settings.recording,
+                            outputPath: result.path
+                          }
+                        });
+                      }
+                    }}
+                    className="px-4 py-2 bg-primary-500 hover:bg-primary-600 text-white rounded-lg
+                             transition-colors font-medium"
+                  >
+                    Browse
+                  </button>
+                </div>
+                <p className="text-xs text-dark-500 mt-1">
+                  Leave empty to use app directory: {appPath}\recordings
+                </p>
+              </div>
+
+              <div>
+                <button
+                  onClick={() => updateSettings({
+                    recording: {
+                      ...settings.recording,
+                      outputPath: ''
+                    }
+                  })}
+                  disabled={!settings.recording?.outputPath}
+                  className="px-4 py-2 bg-dark-200 hover:bg-dark-300 dark:bg-dark-700 dark:hover:bg-dark-600
+                           text-dark-700 dark:text-dark-300 rounded-lg transition-colors
+                           disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Reset to Default Location
+                </button>
+              </div>
+
+              <div className="p-3 bg-primary-50 dark:bg-primary-900/20 rounded-lg">
+                <p className="text-xs text-primary-700 dark:text-primary-300">
+                  <Video className="w-3 h-3 inline mr-1" />
+                  Recordings are saved as MP4 (screen/webcam) or MP3 (audio). Use "start screen recording" or
+                  "start audio recording" commands to begin.
                 </p>
               </div>
             </div>

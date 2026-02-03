@@ -2,16 +2,17 @@
 
 import { ipcMain, clipboard, shell, dialog, app } from 'electron';
 import fs from 'fs/promises';
+import fsSync from 'fs';
 import path from 'path';
 import { execFile as execFileCallback } from 'child_process';
 import { promisify } from 'util';
 
 // Cache voice transcription utilities at module level for performance
 const execFileAsync = promisify(execFileCallback);
-import { IPC_CHANNELS, ScheduledTask, Timer, ActionLog } from '../shared/types';
+import { IPC_CHANNELS, ScheduledTask, Timer, ActionLog, Recording, RecordingType } from '../shared/types';
 import { MCP_IPC_CHANNELS, MCPServerConfig } from '../shared/mcp-types';
 import { getSettings, setSettings, getHistory, addToHistory, clearHistory, getMcpServers, addMcpServer, updateMcpServer, deleteMcpServer, toggleMcpServer, getScheduledTasks, addScheduledTask, updateScheduledTask, deleteScheduledTask, getTaskLogs } from './store';
-import { hideCommandWindow, resizeCommandWindow, minimizeCommandWindow, maximizeCommandWindow, fitWindowToScreen, getCommandWindow } from './windows';
+import { hideCommandWindow, showCommandWindow, resizeCommandWindow, minimizeCommandWindow, maximizeCommandWindow, fitWindowToScreen, getCommandWindow, setAutoHideSuppressed } from './windows';
 import { updateHotkey, registerVoiceHotkey, unregisterVoiceHotkey } from './hotkeys';
 import { updateTrayMenu } from './tray';
 import { getPlatformAdapter } from '../platform';
@@ -22,6 +23,8 @@ import { voiceInputManager } from './voice-input';
 import { timerManager } from './timers';
 import { reminderManager } from './reminders';
 import { IntentRouter } from '../intent/router';
+import { clipboardMonitor } from './clipboard-monitor';
+import { recordingManager } from './recording-manager';
 
 // Initialize intent router
 const intentRouter = new IntentRouter();
@@ -64,6 +67,10 @@ export function setupIpcHandlers(): void {
     // Update tray menu
     updateTrayMenu();
 
+    // Broadcast settings update to renderer
+    const window = getCommandWindow();
+    window?.webContents.send(IPC_CHANNELS.APP_SETTINGS_UPDATED, updated);
+
     return updated;
   });
 
@@ -71,6 +78,11 @@ export function setupIpcHandlers(): void {
   ipcMain.handle('app:clearHistory', () => clearHistory());
 
   ipcMain.on('app:hide', () => hideCommandWindow());
+  ipcMain.on('app:show', () => showCommandWindow());
+  ipcMain.on('app:autoHideSuppressed', (event: Electron.IpcMainEvent, value: boolean) => {
+    setAutoHideSuppressed(Boolean(value));
+    event.returnValue = true; // Required for sendSync
+  });
   ipcMain.on('app:resize', (_event: Electron.IpcMainEvent, height: number) => resizeCommandWindow(height));
 
   // Window control handlers
@@ -229,6 +241,32 @@ export function setupIpcHandlers(): void {
     return true;
   });
 
+  // Clipboard history handlers
+  ipcMain.handle(IPC_CHANNELS.CLIPBOARD_HISTORY_GET, () => {
+    return clipboardMonitor.getHistory();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.CLIPBOARD_HISTORY_DELETE, (_, id: string) => {
+    return clipboardMonitor.deleteEntry(id);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.CLIPBOARD_HISTORY_CLEAR, () => {
+    clipboardMonitor.clearHistory();
+    return true;
+  });
+
+  ipcMain.handle(IPC_CHANNELS.CLIPBOARD_HISTORY_PIN, (_, id: string) => {
+    return clipboardMonitor.togglePin(id);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.CLIPBOARD_HISTORY_RESTORE, (_, id: string) => {
+    return clipboardMonitor.restoreToClipboard(id);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.CLIPBOARD_HISTORY_SEARCH, (_, query: string) => {
+    return clipboardMonitor.searchHistory(query);
+  });
+
   // Copilot handlers
   ipcMain.handle(IPC_CHANNELS.COPILOT_SEND_MESSAGE, async (event, message: string) => {
     const sender = event.sender;
@@ -239,12 +277,25 @@ export function setupIpcHandlers(): void {
     addToHistory(message);
 
     try {
-      // Ensure intent router is initialized
-      await ensureIntentRouterInitialized();
+      let routeResult = { handled: false, reason: 'Intent router initializing' } as {
+        handled: boolean;
+        reason?: string;
+        response?: string;
+        toolName?: string;
+        confidence?: number;
+        tier?: number | string;
+      };
 
-      // Try intent-based routing first (Tier 1 & 2)
-      console.log('[IPC] Attempting intent-based routing...');
-      const routeResult = await intentRouter.route(message);
+      if (intentRouterInitialized) {
+        // Try intent-based routing first (Tier 1 & 2)
+        console.log('[IPC] Attempting intent-based routing...');
+        routeResult = await intentRouter.route(message);
+      } else {
+        console.log('[IPC] Intent router not ready, warming in background...');
+        ensureIntentRouterInitialized().catch((error) => {
+          console.error('[IPC] Intent router init failed:', error);
+        });
+      }
 
       if (routeResult.handled) {
         // Local execution successful - stream result and end
@@ -819,5 +870,116 @@ export function setupIpcHandlers(): void {
     } else {
       return true; // Compact window is always "active" if initialized
     }
+  });
+
+  // Folder selection dialog
+  ipcMain.handle('dialog:selectFolder', async (_, options?: { title?: string; defaultPath?: string }) => {
+    const result: { canceled: boolean; filePaths: string[] } = await dialog.showOpenDialog({
+      title: options?.title || 'Select Folder',
+      defaultPath: options?.defaultPath,
+      properties: ['openDirectory', 'createDirectory'],
+    }) as any;
+
+    if (result.canceled || result.filePaths.length === 0) {
+      return { cancelled: true };
+    }
+
+    return { cancelled: false, path: result.filePaths[0] };
+  });
+
+  // Get app path (for default recording location)
+  ipcMain.handle('app:getAppPath', () => {
+    return app.isPackaged
+      ? path.dirname(app.getPath('exe'))
+      : app.getAppPath();
+  });
+
+  // Recording handlers
+  ipcMain.handle(IPC_CHANNELS.RECORDING_LIST, () => {
+    return recordingManager.getAllRecordings();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.RECORDING_GET, (_, idOrType?: string) => {
+    return recordingManager.getStatus(idOrType);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.RECORDING_DELETE, async (_, id: string) => {
+    const recording = recordingManager.getStatus(id);
+    if (!recording) {
+      return { success: false, error: 'Recording not found' };
+    }
+
+    // Delete the file
+    try {
+      if (fsSync.existsSync(recording.outputPath)) {
+        await fs.unlink(recording.outputPath);
+      }
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to delete recording' };
+    }
+  });
+
+  ipcMain.handle(IPC_CHANNELS.RECORDING_OPEN, async (_, filePath: string) => {
+    try {
+      await shell.openPath(filePath);
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to open recording' };
+    }
+  });
+
+  ipcMain.handle(IPC_CHANNELS.RECORDING_OPEN_FOLDER, (_, filePath: string) => {
+    shell.showItemInFolder(filePath);
+    return { success: true };
+  });
+
+  ipcMain.handle(IPC_CHANNELS.RECORDING_STOP, async (_, idOrType?: string | RecordingType) => {
+    try {
+      const recording = await recordingManager.stopRecording(idOrType);
+      return { success: true, recording };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to stop recording' };
+    }
+  });
+
+  // Subscribe to recording events
+  ipcMain.on(IPC_CHANNELS.RECORDING_SUBSCRIBE, (event: Electron.IpcMainEvent) => {
+    const progressHandler = (recording: Recording) => {
+      if (!event.sender.isDestroyed()) {
+        event.sender.send(IPC_CHANNELS.RECORDING_PROGRESS, recording);
+      }
+    };
+
+    const startedHandler = (recording: Recording) => {
+      if (!event.sender.isDestroyed()) {
+        event.sender.send(IPC_CHANNELS.RECORDING_UPDATED, recording);
+      }
+    };
+
+    const stoppedHandler = (recording: Recording) => {
+      if (!event.sender.isDestroyed()) {
+        event.sender.send(IPC_CHANNELS.RECORDING_UPDATED, recording);
+      }
+    };
+
+    const errorHandler = (recording: Recording) => {
+      if (!event.sender.isDestroyed()) {
+        event.sender.send(IPC_CHANNELS.RECORDING_UPDATED, recording);
+      }
+    };
+
+    recordingManager.on('recording-progress', progressHandler);
+    recordingManager.on('recording-started', startedHandler);
+    recordingManager.on('recording-stopped', stoppedHandler);
+    recordingManager.on('recording-error', errorHandler);
+
+    // Clean up on window close
+    event.sender.on('destroyed', () => {
+      recordingManager.off('recording-progress', progressHandler);
+      recordingManager.off('recording-started', startedHandler);
+      recordingManager.off('recording-stopped', stoppedHandler);
+      recordingManager.off('recording-error', errorHandler);
+    });
   });
 }

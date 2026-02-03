@@ -56,6 +56,9 @@ function showNativeNotification(options: NotificationOptions): void {
       // Focus the app when notification is clicked
       const windows = BrowserWindow.getAllWindows();
       if (windows.length > 0) {
+        if (windows[0].isMinimized()) {
+          windows[0].restore();
+        }
         windows[0].show();
         windows[0].focus();
       }

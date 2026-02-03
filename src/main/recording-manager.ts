@@ -19,6 +19,7 @@ import {
   RecordingRegion
 } from '../shared/types';
 import { getFFmpegPath, isFFmpegAvailable, validateFFmpeg } from '../utils/ffmpeg-path';
+import { getSettings } from './store';
 
 // Constants
 const MAX_FILE_SIZE_BYTES = 1024 * 1024 * 1024; // 1GB warning threshold
@@ -49,21 +50,40 @@ class RecordingManager extends EventEmitter {
   private recordings: Map<string, Recording> = new Map();
   private processes: Map<string, ChildProcess> = new Map();
   private progressIntervals: Map<string, NodeJS.Timeout> = new Map();
-  private defaultOutputPath: string;
 
   constructor() {
     super();
-    this.defaultOutputPath = path.join(app.getPath('videos'), 'DesktopCommander');
-    this.ensureOutputDirectory();
   }
 
   /**
-   * Ensure the default output directory exists
+   * Get the output path for recordings
+   * Uses settings if configured, otherwise defaults to app directory
    */
-  private ensureOutputDirectory(): void {
+  getOutputPath(): string {
     try {
-      if (!fs.existsSync(this.defaultOutputPath)) {
-        fs.mkdirSync(this.defaultOutputPath, { recursive: true });
+      const settings = getSettings();
+      if (settings.recording?.outputPath?.trim()) {
+        return settings.recording.outputPath;
+      }
+    } catch {
+      // Settings may not be available during initialization
+    }
+
+    // Default: app resources/recordings directory
+    const appPath = app.isPackaged
+      ? path.dirname(app.getPath('exe'))
+      : app.getAppPath();
+    return path.join(appPath, 'recordings');
+  }
+
+  /**
+   * Ensure the output directory exists
+   */
+  private ensureOutputDirectory(outputPath?: string): void {
+    const targetPath = outputPath || this.getOutputPath();
+    try {
+      if (!fs.existsSync(targetPath)) {
+        fs.mkdirSync(targetPath, { recursive: true });
       }
     } catch (error) {
       console.error('Failed to create recording output directory:', error);
@@ -106,9 +126,12 @@ class RecordingManager extends EventEmitter {
     const id = uuidv4();
     const audioSource = options.audioSource ?? AudioSource.SYSTEM;
     const fps = options.fps ?? 30;
-    const outputPath = options.outputPath ?? this.defaultOutputPath;
+    const outputPath = options.outputPath ?? this.getOutputPath();
     const filename = options.filename ?? `screen_${Date.now()}.mp4`;
     const fullPath = path.join(outputPath, filename);
+
+    // Ensure output directory exists
+    this.ensureOutputDirectory(outputPath);
 
     // Build FFmpeg command
     const args = this.buildScreenRecordingArgs(audioSource, fps, options.region, fullPath);
@@ -163,9 +186,12 @@ class RecordingManager extends EventEmitter {
     const id = uuidv4();
     const audioSource = options.audioSource ?? AudioSource.MICROPHONE;
     const format = options.format ?? 'mp3';
-    const outputPath = options.outputPath ?? this.defaultOutputPath;
+    const outputPath = options.outputPath ?? this.getOutputPath();
     const filename = options.filename ?? `audio_${Date.now()}.${format}`;
     const fullPath = path.join(outputPath, filename);
+
+    // Ensure output directory exists
+    this.ensureOutputDirectory(outputPath);
 
     // Build FFmpeg command for audio
     const args = this.buildAudioRecordingArgs(audioSource, format, fullPath);
@@ -217,9 +243,12 @@ class RecordingManager extends EventEmitter {
 
     const id = uuidv4();
     const audioSource = options.audioSource ?? AudioSource.MICROPHONE;
-    const outputPath = options.outputPath ?? this.defaultOutputPath;
+    const outputPath = options.outputPath ?? this.getOutputPath();
     const filename = options.filename ?? `webcam_${Date.now()}.mp4`;
     const fullPath = path.join(outputPath, filename);
+
+    // Ensure output directory exists
+    this.ensureOutputDirectory(outputPath);
 
     // Build FFmpeg command for webcam
     const args = this.buildWebcamRecordingArgs(audioSource, fullPath);

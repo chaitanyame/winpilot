@@ -9,6 +9,10 @@ import { WindowsProcess } from './process';
 import { WindowsNetwork } from './network';
 import { WindowsServices } from './services';
 import { windowsWiFi } from './wifi';
+import { windowsMedia } from './media';
+import { windowsBrowser } from './browser';
+import { windowsEmail } from './email';
+import { windowsOcr } from './ocr';
 
 const windowsAdapter: IPlatformAdapter = {
   platform: 'windows',
@@ -20,6 +24,10 @@ const windowsAdapter: IPlatformAdapter = {
   network: new WindowsNetwork(),
   services: new WindowsServices(),
   wifi: windowsWiFi,
+  media: windowsMedia,
+  browser: windowsBrowser,
+  email: windowsEmail,
+  ocr: windowsOcr,
 };
 
 export default windowsAdapter;

@@ -799,6 +799,250 @@ class UnifiedPlatformAdapter {
   }
 
   // ==========================================================================
+  // Media Control
+  // ==========================================================================
+
+  async mediaPlay(): Promise<OperationResult<void>> {
+    try {
+      const result = await this.adapter.media.play();
+      if (!result) {
+        return { success: false, error: 'Failed to play media' };
+      }
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: this.formatError(error) };
+    }
+  }
+
+  async mediaPause(): Promise<OperationResult<void>> {
+    try {
+      const result = await this.adapter.media.pause();
+      if (!result) {
+        return { success: false, error: 'Failed to pause media' };
+      }
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: this.formatError(error) };
+    }
+  }
+
+  async mediaPlayPause(): Promise<OperationResult<void>> {
+    try {
+      const result = await this.adapter.media.playPause();
+      if (!result) {
+        return { success: false, error: 'Failed to toggle play/pause' };
+      }
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: this.formatError(error) };
+    }
+  }
+
+  async mediaNext(): Promise<OperationResult<void>> {
+    try {
+      const result = await this.adapter.media.next();
+      if (!result) {
+        return { success: false, error: 'Failed to skip to next track' };
+      }
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: this.formatError(error) };
+    }
+  }
+
+  async mediaPrevious(): Promise<OperationResult<void>> {
+    try {
+      const result = await this.adapter.media.previous();
+      if (!result) {
+        return { success: false, error: 'Failed to go to previous track' };
+      }
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: this.formatError(error) };
+    }
+  }
+
+  async mediaStop(): Promise<OperationResult<void>> {
+    try {
+      const result = await this.adapter.media.stop();
+      if (!result) {
+        return { success: false, error: 'Failed to stop media' };
+      }
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: this.formatError(error) };
+    }
+  }
+
+  // ==========================================================================
+  // Browser Automation
+  // ==========================================================================
+
+  async browserOpenUrl(params: { url: string; browser?: string }): Promise<OperationResult<void>> {
+    try {
+      const result = await this.adapter.browser.openUrl(params.url, params.browser);
+      if (!result) {
+        return { success: false, error: 'Failed to open URL' };
+      }
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: this.formatError(error) };
+    }
+  }
+
+  async browserSearch(params: { query: string; engine?: string }): Promise<OperationResult<void>> {
+    try {
+      const result = await this.adapter.browser.search(params.query, params.engine);
+      if (!result) {
+        return { success: false, error: 'Failed to search' };
+      }
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: this.formatError(error) };
+    }
+  }
+
+  async browserNewTab(params: { url?: string } = {}): Promise<OperationResult<void>> {
+    try {
+      const result = await this.adapter.browser.newTab(params.url);
+      if (!result) {
+        return { success: false, error: 'Failed to open new tab' };
+      }
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: this.formatError(error) };
+    }
+  }
+
+  async browserCloseTab(): Promise<OperationResult<void>> {
+    try {
+      const result = await this.adapter.browser.closeTab();
+      if (!result) {
+        return { success: false, error: 'Failed to close tab' };
+      }
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: this.formatError(error) };
+    }
+  }
+
+  async browserNextTab(): Promise<OperationResult<void>> {
+    try {
+      const result = await this.adapter.browser.nextTab();
+      if (!result) {
+        return { success: false, error: 'Failed to switch to next tab' };
+      }
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: this.formatError(error) };
+    }
+  }
+
+  async browserPreviousTab(): Promise<OperationResult<void>> {
+    try {
+      const result = await this.adapter.browser.previousTab();
+      if (!result) {
+        return { success: false, error: 'Failed to switch to previous tab' };
+      }
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: this.formatError(error) };
+    }
+  }
+
+  async browserRefresh(): Promise<OperationResult<void>> {
+    try {
+      const result = await this.adapter.browser.refreshTab();
+      if (!result) {
+        return { success: false, error: 'Failed to refresh page' };
+      }
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: this.formatError(error) };
+    }
+  }
+
+  async browserBookmark(): Promise<OperationResult<void>> {
+    try {
+      const result = await this.adapter.browser.bookmark();
+      if (!result) {
+        return { success: false, error: 'Failed to bookmark page' };
+      }
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: this.formatError(error) };
+    }
+  }
+
+  // ==========================================================================
+  // Email Actions
+  // ==========================================================================
+
+  async emailCompose(params: { to?: string; cc?: string; bcc?: string; subject?: string; body?: string }): Promise<OperationResult<void>> {
+    try {
+      const result = await this.adapter.email.compose(params);
+      if (!result) {
+        return { success: false, error: 'Failed to compose email' };
+      }
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: this.formatError(error) };
+    }
+  }
+
+  async emailOpen(): Promise<OperationResult<void>> {
+    try {
+      const result = await this.adapter.email.openMailClient();
+      if (!result) {
+        return { success: false, error: 'Failed to open mail client' };
+      }
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: this.formatError(error) };
+    }
+  }
+
+  // ==========================================================================
+  // OCR & Annotation
+  // ==========================================================================
+
+  async ocrExtractText(params: { imagePath: string }): Promise<OperationResult<{ text: string }>> {
+    try {
+      const text = await this.adapter.ocr.extractText(params.imagePath);
+      return { success: true, data: { text } };
+    } catch (error) {
+      return { success: false, error: this.formatError(error) };
+    }
+  }
+
+  async ocrExtractFromClipboard(): Promise<OperationResult<{ text: string }>> {
+    try {
+      const text = await this.adapter.ocr.extractTextFromClipboard();
+      return { success: true, data: { text } };
+    } catch (error) {
+      return { success: false, error: this.formatError(error) };
+    }
+  }
+
+  async ocrExtractFromRegion(): Promise<OperationResult<{ text: string }>> {
+    try {
+      const text = await this.adapter.ocr.extractTextFromRegion();
+      return { success: true, data: { text } };
+    } catch (error) {
+      return { success: false, error: this.formatError(error) };
+    }
+  }
+
+  async screenshotAnnotate(params: { imagePath: string; annotations: import('./index').Annotation[] }): Promise<OperationResult<{ path: string }>> {
+    try {
+      const outputPath = await this.adapter.ocr.annotateScreenshot(params.imagePath, params.annotations);
+      return { success: true, data: { path: outputPath } };
+    } catch (error) {
+      return { success: false, error: this.formatError(error) };
+    }
+  }
+
+  // ==========================================================================
   // Utilities
   // ==========================================================================
 

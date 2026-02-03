@@ -9,6 +9,7 @@ import {
 interface MCPServersPanelProps {
   isOpen: boolean;
   onClose: () => void;
+  variant?: 'modal' | 'sidebar';
 }
 
 type ServerFormData = {
@@ -41,7 +42,7 @@ const defaultFormData: ServerFormData = {
   headers: '',
 };
 
-export function MCPServersPanel({ isOpen, onClose }: MCPServersPanelProps) {
+export function MCPServersPanel({ isOpen, onClose, variant = 'modal' }: MCPServersPanelProps) {
   const [servers, setServers] = useState<StoredMCPServer[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isEditing, setIsEditing] = useState(false);
@@ -228,6 +229,75 @@ export function MCPServersPanel({ isOpen, onClose }: MCPServersPanelProps) {
   };
 
   if (!isOpen) return null;
+
+  if (variant === 'sidebar') {
+    return (
+      <div className="h-full w-[420px] bg-[color:var(--app-surface)] border-l border-[color:var(--app-border)] flex flex-col">
+        <div className="flex items-center justify-between p-4 border-b border-[color:var(--app-border)]">
+          <h2 className="text-lg font-semibold text-[color:var(--app-text)]">
+            MCP Servers
+          </h2>
+          <button
+            onClick={onClose}
+            className="p-2 rounded hover:bg-[color:var(--app-surface-2)] text-[color:var(--app-text-muted)] hover:text-[color:var(--app-text)]"
+            title="Close"
+            aria-label="Close MCP Servers panel"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-4">
+          {error && (
+            <div className="mb-4 p-3 bg-red-100 text-red-700 rounded">
+              {error}
+            </div>
+          )}
+
+          {isEditing ? (
+            <ServerForm
+              formData={formData}
+              setFormData={setFormData}
+              onSubmit={handleSubmit}
+              onCancel={resetForm}
+              isEditing={!!editingId}
+            />
+          ) : (
+            <>
+              <button
+                onClick={() => setIsEditing(true)}
+                className="mb-4 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+              >
+                + Add MCP Server
+              </button>
+
+              {isLoading ? (
+                <div className="text-center py-8 text-gray-500">Loading...</div>
+              ) : servers.length === 0 ? (
+                <div className="text-center py-8 text-gray-500">
+                  No MCP servers configured. Click "Add MCP Server" to get started.
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {servers.map((server) => (
+                    <ServerCard
+                      key={server.id}
+                      server={server}
+                      onEdit={() => handleEdit(server)}
+                      onDelete={() => handleDelete(server.id)}
+                      onToggle={() => handleToggle(server.id)}
+                    />
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">

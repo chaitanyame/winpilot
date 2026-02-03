@@ -1,6 +1,6 @@
 // Linux Platform Adapter (Stub - To be implemented in Phase 6)
 
-import { IPlatformAdapter, IWindowManager, IFileSystem, IApps, ISystem, IProcess, INetwork, IServices, IWifi } from '../index';
+import { IPlatformAdapter, IWindowManager, IFileSystem, IApps, ISystem, IProcess, INetwork, IServices, IWifi, IMedia, IBrowser, IEmail, IOcr } from '../index';
 import { WindowInfo, FileInfo, AppInfo, ProcessInfo, SystemInfoData, NetworkInfoData, NetworkTestResult, ServiceInfo } from '../../shared/types';
 import { exec } from 'child_process';
 import { promisify } from 'util';
@@ -162,6 +162,121 @@ class LinuxWifi implements IWifi {
   }
 }
 
+// Stub implementations for new interfaces
+
+class LinuxMedia implements IMedia {
+  async play(): Promise<boolean> {
+    try {
+      // Try playerctl first (works with most media players)
+      await execAsync('playerctl play');
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  async pause(): Promise<boolean> {
+    try {
+      await execAsync('playerctl pause');
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  async playPause(): Promise<boolean> {
+    try {
+      await execAsync('playerctl play-pause');
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  async next(): Promise<boolean> {
+    try {
+      await execAsync('playerctl next');
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  async previous(): Promise<boolean> {
+    try {
+      await execAsync('playerctl previous');
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  async stop(): Promise<boolean> {
+    try {
+      await execAsync('playerctl stop');
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
+class LinuxBrowser implements IBrowser {
+  async openUrl(url: string): Promise<boolean> {
+    try {
+      await execAsync(`xdg-open "${url}"`);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  async search(query: string, engine: string = 'google'): Promise<boolean> {
+    const engines: Record<string, string> = {
+      google: 'https://www.google.com/search?q=',
+      bing: 'https://www.bing.com/search?q=',
+      duckduckgo: 'https://duckduckgo.com/?q=',
+    };
+    const baseUrl = engines[engine] || engines.google;
+    return this.openUrl(baseUrl + encodeURIComponent(query));
+  }
+  async newTab(): Promise<boolean> { return false; }
+  async closeTab(): Promise<boolean> { return false; }
+  async nextTab(): Promise<boolean> { return false; }
+  async previousTab(): Promise<boolean> { return false; }
+  async refreshTab(): Promise<boolean> { return false; }
+  async bookmark(): Promise<boolean> { return false; }
+}
+
+class LinuxEmail implements IEmail {
+  async compose(params: { to?: string; subject?: string; body?: string }): Promise<boolean> {
+    try {
+      let mailtoUrl = 'mailto:';
+      if (params.to) mailtoUrl += encodeURIComponent(params.to);
+      const queryParams: string[] = [];
+      if (params.subject) queryParams.push(`subject=${encodeURIComponent(params.subject)}`);
+      if (params.body) queryParams.push(`body=${encodeURIComponent(params.body)}`);
+      if (queryParams.length > 0) mailtoUrl += '?' + queryParams.join('&');
+      await execAsync(`xdg-open "${mailtoUrl}"`);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  async openMailClient(): Promise<boolean> {
+    try {
+      await execAsync('xdg-open mailto:');
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
+class LinuxOcr implements IOcr {
+  async extractText(): Promise<string> {
+    console.warn('Linux OCR not yet implemented - requires tesseract');
+    throw new Error('Not implemented');
+  }
+  async extractTextFromClipboard(): Promise<string> { throw new Error('Not implemented'); }
+  async extractTextFromRegion(): Promise<string> { throw new Error('Not implemented'); }
+  async annotateScreenshot(): Promise<string> { throw new Error('Not implemented'); }
+}
+
 const linuxAdapter: IPlatformAdapter = {
   platform: 'linux',
   windowManager: new LinuxWindowManager(),
@@ -172,6 +287,10 @@ const linuxAdapter: IPlatformAdapter = {
   network: new LinuxNetwork(),
   services: new LinuxServices(),
   wifi: new LinuxWifi(),
+  media: new LinuxMedia(),
+  browser: new LinuxBrowser(),
+  email: new LinuxEmail(),
+  ocr: new LinuxOcr(),
 };
 
 export default linuxAdapter;

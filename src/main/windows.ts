@@ -5,6 +5,12 @@ import path from 'path';
 import { COMMAND_PALETTE_WIDTH, COMMAND_PALETTE_HEIGHT } from '../shared/constants';
 
 let commandWindow: BrowserWindow | null = null;
+let suppressAutoHide = false;
+
+export function setAutoHideSuppressed(value: boolean): void {
+  console.log('[Windows] setAutoHideSuppressed:', value);
+  suppressAutoHide = value;
+}
 
 /**
  * Create the command palette window
@@ -93,10 +99,44 @@ export async function createCommandWindow(): Promise<BrowserWindow> {
     await commandWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
   }
 
-  // Hide window when it loses focus
+  // Keep window visible; only hide/minimize via explicit user actions.
+
+  // Minimize when window loses focus (with debounce to allow IPC suppression to take effect)
+  let blurTimeout: NodeJS.Timeout | null = null;
   commandWindow.on('blur', () => {
-    if (commandWindow && !commandWindow.webContents.isDevToolsFocused()) {
-      hideCommandWindow();
+    console.log('[Windows] blur event, suppressAutoHide:', suppressAutoHide);
+    if (!commandWindow || commandWindow.isDestroyed()) return;
+    
+    // Check suppression immediately - if already suppressed, don't even schedule
+    if (suppressAutoHide) {
+      console.log('[Windows] blur suppressed, not minimizing');
+      return;
+    }
+    
+    // Clear any pending blur timeout
+    if (blurTimeout) {
+      clearTimeout(blurTimeout);
+      blurTimeout = null;
+    }
+    
+    // Debounce the minimize to allow setAutoHideSuppressed IPC to arrive
+    blurTimeout = setTimeout(() => {
+      console.log('[Windows] blur timeout fired, suppressAutoHide:', suppressAutoHide);
+      if (!commandWindow || commandWindow.isDestroyed()) return;
+      if (suppressAutoHide) {
+        console.log('[Windows] blur timeout suppressed, not minimizing');
+        return;
+      }
+      console.log('[Windows] minimizing window');
+      commandWindow.minimize();
+    }, 100);
+  });
+
+  // Also clear blur timeout when window gains focus
+  commandWindow.on('focus', () => {
+    if (blurTimeout) {
+      clearTimeout(blurTimeout);
+      blurTimeout = null;
     }
   });
 
@@ -104,7 +144,8 @@ export async function createCommandWindow(): Promise<BrowserWindow> {
   commandWindow.on('close', (event) => {
     if (!app.isQuitting) {
       event.preventDefault();
-      hideCommandWindow();
+      // Don't force hide if auto-hide is suppressed (e.g., during voice recording)
+      hideCommandWindow(!suppressAutoHide);
     }
   });
 
@@ -154,6 +195,9 @@ export function showCommandWindow(): void {
       console.warn('Failed to center window:', error);
     }
   }
+  if (commandWindow.isMinimized()) {
+    commandWindow.restore();
+  }
   commandWindow.show();
   commandWindow.focus();
 
@@ -164,9 +208,15 @@ export function showCommandWindow(): void {
 /**
  * Hide the command window
  */
-export function hideCommandWindow(): void {
+export function hideCommandWindow(force = false): void {
+  console.log('[Windows] hideCommandWindow called, force:', force, 'suppressAutoHide:', suppressAutoHide);
   if (!commandWindow) return;
-  
+  if (suppressAutoHide && !force) {
+    console.log('[Windows] hide suppressed');
+    return;
+  }
+
+  console.log('[Windows] hiding window');
   commandWindow.hide();
   
   // Notify renderer that window is hidden
@@ -206,6 +256,7 @@ export function focusCommandInput(): void {
  * Minimize the command window
  */
 export function minimizeCommandWindow(): void {
+  console.log('[Windows] minimizeCommandWindow called');
   if (commandWindow) {
     commandWindow.minimize();
   }

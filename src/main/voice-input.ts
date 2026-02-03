@@ -1,7 +1,7 @@
 // Voice Input Manager
 
 import { getSettings } from './store';
-import { getCommandWindow } from './windows';
+import { getCommandWindow, setAutoHideSuppressed, showCommandWindow } from './windows';
 
 /**
  * Voice Input Manager
@@ -31,8 +31,20 @@ class VoiceInputManager {
     this.isRecording = true;
     this.recordingStartTime = Date.now();
 
+    // Ensure window stays visible during voice recording
+    setAutoHideSuppressed(true);
+
+    // Show and focus the window
     const window = getCommandWindow();
-    if (window) {
+    if (window && !window.isDestroyed()) {
+      showCommandWindow();
+      // Ensure window is visible after a short delay (in case of race conditions)
+      setTimeout(() => {
+        if (window && !window.isDestroyed() && !window.isVisible()) {
+          console.log('Window became invisible during voice recording, re-showing...');
+          showCommandWindow();
+        }
+      }, 100);
       window.webContents.send('voice:recordingStarted');
     }
   }
@@ -48,6 +60,7 @@ class VoiceInputManager {
 
     console.log('Stopping voice recording...');
     this.isRecording = false;
+    setAutoHideSuppressed(true);
 
     const duration = Date.now() - this.recordingStartTime;
     console.log(`Recording duration: ${duration}ms`);
@@ -78,6 +91,7 @@ class VoiceInputManager {
     if (window) {
       window.webContents.send('voice:transcript', transcript);
     }
+    setAutoHideSuppressed(false);
   }
 
   /**
@@ -88,6 +102,7 @@ class VoiceInputManager {
     if (window) {
       window.webContents.send('voice:error', error);
     }
+    setAutoHideSuppressed(false);
   }
 
   /**
@@ -103,6 +118,7 @@ class VoiceInputManager {
   reset(): void {
     this.isRecording = false;
     this.recordingStartTime = 0;
+    setAutoHideSuppressed(false);
   }
 }
 

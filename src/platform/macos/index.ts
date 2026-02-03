@@ -1,6 +1,6 @@
 // macOS Platform Adapter (Stub - To be implemented in Phase 5)
 
-import { IPlatformAdapter, IWindowManager, IFileSystem, IApps, ISystem, IProcess, INetwork, IServices, IWifi } from '../index';
+import { IPlatformAdapter, IWindowManager, IFileSystem, IApps, ISystem, IProcess, INetwork, IServices, IWifi, IMedia, IBrowser, IEmail, IOcr } from '../index';
 import { WindowInfo, FileInfo, AppInfo, ProcessInfo, SystemInfoData, NetworkInfoData, NetworkTestResult, ServiceInfo } from '../../shared/types';
 import { exec } from 'child_process';
 import { promisify } from 'util';
@@ -161,6 +161,81 @@ class MacOSWifi implements IWifi {
   }
 }
 
+// Stub implementations for new interfaces
+
+class MacOSMedia implements IMedia {
+  async play(): Promise<boolean> {
+    console.warn('macOS media control not yet implemented');
+    return false;
+  }
+  async pause(): Promise<boolean> { return false; }
+  async playPause(): Promise<boolean> { return false; }
+  async next(): Promise<boolean> { return false; }
+  async previous(): Promise<boolean> { return false; }
+  async stop(): Promise<boolean> { return false; }
+}
+
+class MacOSBrowser implements IBrowser {
+  async openUrl(url: string): Promise<boolean> {
+    try {
+      await execAsync(`open "${url}"`);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  async search(query: string, engine: string = 'google'): Promise<boolean> {
+    const engines: Record<string, string> = {
+      google: 'https://www.google.com/search?q=',
+      bing: 'https://www.bing.com/search?q=',
+      duckduckgo: 'https://duckduckgo.com/?q=',
+    };
+    const baseUrl = engines[engine] || engines.google;
+    return this.openUrl(baseUrl + encodeURIComponent(query));
+  }
+  async newTab(): Promise<boolean> { return false; }
+  async closeTab(): Promise<boolean> { return false; }
+  async nextTab(): Promise<boolean> { return false; }
+  async previousTab(): Promise<boolean> { return false; }
+  async refreshTab(): Promise<boolean> { return false; }
+  async bookmark(): Promise<boolean> { return false; }
+}
+
+class MacOSEmail implements IEmail {
+  async compose(params: { to?: string; subject?: string; body?: string }): Promise<boolean> {
+    try {
+      let mailtoUrl = 'mailto:';
+      if (params.to) mailtoUrl += encodeURIComponent(params.to);
+      const queryParams: string[] = [];
+      if (params.subject) queryParams.push(`subject=${encodeURIComponent(params.subject)}`);
+      if (params.body) queryParams.push(`body=${encodeURIComponent(params.body)}`);
+      if (queryParams.length > 0) mailtoUrl += '?' + queryParams.join('&');
+      await execAsync(`open "${mailtoUrl}"`);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  async openMailClient(): Promise<boolean> {
+    try {
+      await execAsync('open -a Mail');
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
+class MacOSOcr implements IOcr {
+  async extractText(): Promise<string> {
+    console.warn('macOS OCR not yet implemented');
+    throw new Error('Not implemented');
+  }
+  async extractTextFromClipboard(): Promise<string> { throw new Error('Not implemented'); }
+  async extractTextFromRegion(): Promise<string> { throw new Error('Not implemented'); }
+  async annotateScreenshot(): Promise<string> { throw new Error('Not implemented'); }
+}
+
 const macosAdapter: IPlatformAdapter = {
   platform: 'macos',
   windowManager: new MacOSWindowManager(),
@@ -171,6 +246,10 @@ const macosAdapter: IPlatformAdapter = {
   network: new MacOSNetwork(),
   services: new MacOSServices(),
   wifi: new MacOSWifi(),
+  media: new MacOSMedia(),
+  browser: new MacOSBrowser(),
+  email: new MacOSEmail(),
+  ocr: new MacOSOcr(),
 };
 
 export default macosAdapter;

@@ -16,11 +16,30 @@ export function useCopilot(): UseCopilotReturn {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const currentAssistantMessageRef = useRef<string>('');
+  const responseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const RESPONSE_TIMEOUT_MS = 90000;
+
+  const clearResponseTimeout = useCallback(() => {
+    if (responseTimeoutRef.current) {
+      clearTimeout(responseTimeoutRef.current);
+      responseTimeoutRef.current = null;
+    }
+  }, []);
+
+  const armResponseTimeout = useCallback(() => {
+    clearResponseTimeout();
+    responseTimeoutRef.current = setTimeout(() => {
+      window.electronAPI.cancelMessage();
+      setIsLoading(false);
+      setError('Request timed out. Please try again.');
+    }, RESPONSE_TIMEOUT_MS);
+  }, [clearResponseTimeout]);
 
   // Setup stream listeners
   useEffect(() => {
     const unsubscribeChunk = window.electronAPI.onStreamChunk((chunk: string) => {
       currentAssistantMessageRef.current += chunk;
+      armResponseTimeout();
       
       setMessages((prev) => {
         const lastMessage = prev[prev.length - 1];
@@ -49,6 +68,7 @@ export function useCopilot(): UseCopilotReturn {
     });
 
     const unsubscribeEnd = window.electronAPI.onStreamEnd((data) => {
+      clearResponseTimeout();
       setIsLoading(false);
       currentAssistantMessageRef.current = '';
       
@@ -61,7 +81,7 @@ export function useCopilot(): UseCopilotReturn {
       unsubscribeChunk();
       unsubscribeEnd();
     };
-  }, []);
+  }, [armResponseTimeout, clearResponseTimeout]);
 
   const sendMessage = useCallback(async (content: string) => {
     if (!content.trim() || isLoading) return;
@@ -69,6 +89,7 @@ export function useCopilot(): UseCopilotReturn {
     setError(null);
     setIsLoading(true);
     currentAssistantMessageRef.current = '';
+    armResponseTimeout();
 
     // Add user message
     const userMessage: Message = {
@@ -84,21 +105,22 @@ export function useCopilot(): UseCopilotReturn {
       return updated.length > 50 ? updated.slice(-50) : updated;
     });
 
-    try {
-      await window.electronAPI.sendMessage(content);
-    } catch (err) {
+    window.electronAPI.sendMessage(content).catch((err) => {
+      clearResponseTimeout();
       setIsLoading(false);
       setError(err instanceof Error ? err.message : 'Failed to send message');
-    }
-  }, [isLoading]);
+    });
+  }, [armResponseTimeout, clearResponseTimeout, isLoading]);
 
   const cancelMessage = useCallback(() => {
+    clearResponseTimeout();
     window.electronAPI.cancelMessage();
     setIsLoading(false);
     currentAssistantMessageRef.current = '';
-  }, []);
+  }, [clearResponseTimeout]);
 
   const clearMessages = useCallback(async () => {
+    clearResponseTimeout();
     setMessages([]);
     setError(null);
     // Also clear the server-side Copilot session to start fresh
@@ -107,7 +129,7 @@ export function useCopilot(): UseCopilotReturn {
     } catch (err) {
       console.error('Failed to clear session:', err);
     }
-  }, []);
+  }, [clearResponseTimeout]);
 
   return {
     messages,

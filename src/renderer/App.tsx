@@ -5,7 +5,7 @@ import { TimerWidgets } from './components/TimerWidgets';
 import { useTheme } from './hooks/useTheme';
 
 function App() {
-  const { theme } = useTheme();
+  useTheme();
 
   useEffect(() => {
     // Listen for window shown/hidden events
@@ -24,7 +24,7 @@ function App() {
   }, []);
 
   return (
-    <div className={`app ${theme}`}>
+    <div className="app">
       <CommandPalette />
       <TimerWidgets />
       <ToastContainer />

@@ -13,6 +13,8 @@ import { timerManager } from './timers';
 import { initDatabase, closeDatabase } from './database';
 import { reminderManager } from './reminders';
 import { copilotController } from '../copilot/client';
+import { clipboardMonitor } from './clipboard-monitor';
+import { ensureInstalledAppsCache } from './app-indexer';
 
 // In development, use a separate userData directory to avoid conflicts
 if (!app.isPackaged) {
@@ -81,6 +83,9 @@ async function initApp() {
   // Initialize SQLite database
   initDatabase();
 
+  // Refresh installed apps cache (skip if last run < 6 hours)
+  await ensureInstalledAppsCache();
+
   // Create the command window (hidden initially)
   await createCommandWindow();
 
@@ -95,6 +100,9 @@ async function initApp() {
 
   // Initialize task scheduler
   await taskScheduler.init();
+
+  // Start clipboard monitoring
+  clipboardMonitor.startMonitoring();
 
   // Pre-initialize the copilot session to reduce first-question latency
   try {
@@ -132,6 +140,7 @@ app.on('before-quit', async () => {
   taskScheduler.destroy();
   timerManager.destroy();
   reminderManager.destroy();
+  clipboardMonitor.destroy();
   closeDatabase();
   unregisterHotkeys();
   destroyTray();

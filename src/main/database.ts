@@ -108,6 +108,33 @@ function createTables(): void {
       updated_at INTEGER NOT NULL DEFAULT (unixepoch())
     );
   `);
+
+  // Installed apps cache table
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS installed_apps (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      normalized_name TEXT NOT NULL,
+      path TEXT,
+      source TEXT,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+  `);
+
+  database.exec(`
+    CREATE INDEX IF NOT EXISTS idx_installed_apps_name ON installed_apps(name);
+    CREATE INDEX IF NOT EXISTS idx_installed_apps_normalized ON installed_apps(normalized_name);
+  `);
+
+  // App index metadata
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS app_index_meta (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+  `);
 }
 
 // ============================================================================
@@ -392,6 +419,97 @@ export function cleanupOldData(daysToKeep: number = 30): void {
 
   // Vacuum to reclaim space
   database.exec('VACUUM');
+}
+
+// ============================================================================
+// Installed Apps Cache
+// ============================================================================
+
+export interface InstalledAppRecord {
+  id: number;
+  name: string;
+  normalizedName: string;
+  path: string;
+  source: string;
+  updated_at: number;
+}
+
+export interface InstalledAppInput {
+  name: string;
+  normalizedName: string;
+  path?: string;
+  source?: string;
+}
+
+export function getInstalledAppsCache(): InstalledAppRecord[] {
+  const database = getDatabase();
+  const stmt = database.prepare(`
+    SELECT id, name, normalized_name, path, source, updated_at
+    FROM installed_apps
+    ORDER BY name COLLATE NOCASE
+  `);
+  const rows = stmt.all() as Array<{
+    id: number;
+    name: string;
+    normalized_name: string;
+    path: string | null;
+    source: string | null;
+    updated_at: number;
+  }>;
+
+  return rows.map(row => ({
+    id: row.id,
+    name: row.name,
+    normalizedName: row.normalized_name,
+    path: row.path || '',
+    source: row.source || 'registry',
+    updated_at: row.updated_at,
+  }));
+}
+
+export function replaceInstalledAppsCache(apps: InstalledAppInput[]): number {
+  const database = getDatabase();
+  const now = Date.now();
+
+  const deleteStmt = database.prepare('DELETE FROM installed_apps');
+  const insertStmt = database.prepare(`
+    INSERT INTO installed_apps (name, normalized_name, path, source, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `);
+
+  const transaction = database.transaction((rows: InstalledAppInput[]) => {
+    deleteStmt.run();
+    for (const app of rows) {
+      insertStmt.run(
+        app.name,
+        app.normalizedName,
+        app.path || '',
+        app.source || 'registry',
+        now,
+        now
+      );
+    }
+  });
+
+  transaction(apps);
+  return apps.length;
+}
+
+export function getAppIndexMeta(key: string): string | null {
+  const database = getDatabase();
+  const stmt = database.prepare('SELECT value FROM app_index_meta WHERE key = ?');
+  const row = stmt.get(key) as { value: string } | undefined;
+  return row?.value ?? null;
+}
+
+export function setAppIndexMeta(key: string, value: string): void {
+  const database = getDatabase();
+  const stmt = database.prepare(`
+    INSERT INTO app_index_meta (key, value, updated_at)
+    VALUES (?, ?, ?)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+  `);
+  stmt.run(key, value, Date.now());
 }
 
 /**

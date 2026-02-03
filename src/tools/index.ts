@@ -6,6 +6,8 @@ import { getUnifiedAdapter } from '../platform/unified-adapter';
 import { logger } from '../utils/logger';
 import { p } from '../utils/zod-wrapper';
 import { requestPermissionForTool } from '../main/permission-gate';
+import { findInstalledAppByName } from '../main/app-indexer';
+import { showNotification } from '../main/notifications';
 import {
   timerManager,
   createTimer,
@@ -514,6 +516,17 @@ export const appsLaunchTool = defineTool('apps_launch', {
   }),
   handler: async ({ name, path, args }) => {
     logger.tool('apps_launch called', { name, path, args });
+    if (name && !path) {
+      const match = findInstalledAppByName(name);
+      if (!match) {
+        showNotification({
+          title: 'App not installed',
+          message: `"${name}" is not installed on this device.`,
+          type: 'error',
+        });
+        return `"${name}" is not installed on this device.`;
+      }
+    }
     const result = await adapter.launchApp({ name, path, args });
     logger.tool('apps_launch result', result);
     return result.success

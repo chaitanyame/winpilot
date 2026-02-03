@@ -1,8 +1,9 @@
 // Electron Store for Settings
 
 import Store from 'electron-store';
-import { Settings, ScheduledTask, TaskLog, Timer } from '../shared/types';
+import { Settings, ScheduledTask, TaskLog, Timer, ClipboardEntry } from '../shared/types';
 import { DEFAULT_SETTINGS, DEFAULT_MCP_SERVERS } from '../shared/constants';
+import { getBundledWhisperPaths } from '../utils/whisper-path';
 import { StoredMCPServer, MCPServerConfig } from '../shared/mcp-types';
 
 interface StoreSchema {
@@ -20,6 +21,7 @@ interface StoreSchema {
   scheduledTasks: ScheduledTask[];
   taskLogs: TaskLog[];
   activeTimers: Timer[];
+  clipboardHistory: ClipboardEntry[];
 }
 
 let store: Store<StoreSchema>;
@@ -38,6 +40,7 @@ export function initStore(): Store<StoreSchema> {
       scheduledTasks: [],
       taskLogs: [],
       activeTimers: [],
+      clipboardHistory: [],
     },
   });
 
@@ -99,6 +102,17 @@ export function getSettings(): Settings {
     needsUpdate = true;
   }
 
+  if (!settings.appearanceMode) {
+    const legacyTheme = (settings as { theme?: Settings['appearanceMode'] }).theme;
+    settings.appearanceMode = legacyTheme || DEFAULT_SETTINGS.appearanceMode;
+    needsUpdate = true;
+  }
+
+  if (!settings.themeId) {
+    settings.themeId = DEFAULT_SETTINGS.themeId;
+    needsUpdate = true;
+  }
+
   // Migrate legacy "whisper" provider (API-based) to local whisper.cpp provider.
   if (settings.voiceInput?.provider === ('whisper' as any)) {
     settings.voiceInput.provider = 'whisper_cpp';
@@ -111,8 +125,36 @@ export function getSettings(): Settings {
     needsUpdate = true;
   }
 
+  // Auto-configure bundled whisper.cpp if available and paths are missing.
+  if (settings.voiceInput) {
+    const bundledWhisper = getBundledWhisperPaths();
+    if (bundledWhisper.available) {
+      const binaryMissing = !settings.voiceInput.whisperCpp?.binaryPath?.trim();
+      const modelMissing = !settings.voiceInput.whisperCpp?.modelPath?.trim();
+      if (binaryMissing || modelMissing) {
+        settings.voiceInput.whisperCpp = {
+          binaryPath: bundledWhisper.binaryPath || '',
+          modelPath: bundledWhisper.modelPath || '',
+        };
+        settings.voiceInput.provider = 'whisper_cpp';
+        settings.voiceInput.enabled = true;
+        needsUpdate = true;
+      }
+    }
+  }
+
   if (settings.ui?.menuBarMode === undefined) {
     settings.ui.menuBarMode = DEFAULT_SETTINGS.ui.menuBarMode;
+    needsUpdate = true;
+  }
+
+  if (settings.ui?.onboardingSeen === undefined) {
+    settings.ui.onboardingSeen = DEFAULT_SETTINGS.ui.onboardingSeen;
+    needsUpdate = true;
+  }
+
+  if (!settings.recording) {
+    settings.recording = DEFAULT_SETTINGS.recording;
     needsUpdate = true;
   }
 

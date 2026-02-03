@@ -150,10 +150,15 @@ export interface PermissionResponse {
   options?: Record<string, unknown>;
 }
 
+// Appearance settings
+export type AppearanceMode = 'light' | 'dark' | 'system';
+export type ThemeId = 'twitter' | 'claude' | 'neo-brutalism' | 'retro-arcade' | 'aurora' | 'business';
+
 // Settings
 export interface Settings {
   hotkey: string;
-  theme: 'light' | 'dark' | 'system';
+  appearanceMode: AppearanceMode;
+  themeId: ThemeId;
   permissions: {
     defaultLevel: PermissionLevel;
     rememberChoices: boolean;
@@ -168,6 +173,7 @@ export interface Settings {
     floatingWindow: boolean;
     toastNotifications: boolean;
     menuBarMode: boolean;
+    onboardingSeen: boolean;
   };
   safety: {
     maxFilesPerOperation: number;
@@ -198,6 +204,10 @@ export interface Settings {
     };
     language: string;
     showVisualFeedback: boolean;
+  };
+  recording: {
+    /** Output folder for recordings. Empty string means app directory. */
+    outputPath: string;
   };
 }
 
@@ -260,6 +270,7 @@ export const IPC_CHANNELS = {
   APP_TOGGLE_WINDOW: 'app:toggleWindow',
   APP_GET_SETTINGS: 'app:getSettings',
   APP_SET_SETTINGS: 'app:setSettings',
+  APP_SETTINGS_UPDATED: 'app:settingsUpdated',
   APP_PERMISSION_REQUEST: 'app:permissionRequest',
   APP_PERMISSION_RESPONSE: 'app:permissionResponse',
 
@@ -275,6 +286,17 @@ export const IPC_CHANNELS = {
   COPILOT_CANCEL: 'copilot:cancel',
   COPILOT_CLEAR_SESSION: 'copilot:clearSession',
   COPILOT_ACTION_LOG: 'copilot:actionLog',
+
+  // Recording
+  RECORDING_LIST: 'recording:list',
+  RECORDING_GET: 'recording:get',
+  RECORDING_DELETE: 'recording:delete',
+  RECORDING_OPEN: 'recording:open',
+  RECORDING_OPEN_FOLDER: 'recording:openFolder',
+  RECORDING_STOP: 'recording:stop',
+  RECORDING_SUBSCRIBE: 'recording:subscribe',
+  RECORDING_UPDATED: 'recording:updated',
+  RECORDING_PROGRESS: 'recording:progress',
 } as const;
 
 // Tool definitions for Copilot
