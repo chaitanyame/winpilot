@@ -14,6 +14,7 @@ import { initDatabase, closeDatabase } from './database';
 import { reminderManager } from './reminders';
 import { copilotController } from '../copilot/client';
 import { clipboardMonitor } from './clipboard-monitor';
+import { clipboardWatcher } from './clipboard-watcher';
 import { ensureInstalledAppsCache } from './app-indexer';
 
 // In development, use a separate userData directory to avoid conflicts
@@ -101,8 +102,14 @@ async function initApp() {
   // Initialize task scheduler
   await taskScheduler.init();
 
-  // Start clipboard monitoring
-  clipboardMonitor.startMonitoring();
+  // Start clipboard monitoring (event-driven on Windows; polling fallback)
+  const usingEvents = clipboardWatcher.start();
+  clipboardMonitor.startMonitoring(!usingEvents);
+  if (usingEvents) {
+    clipboardWatcher.on('change', () => {
+      clipboardMonitor.checkClipboard();
+    });
+  }
 
   // Pre-initialize the copilot session to reduce first-question latency
   try {
@@ -140,6 +147,7 @@ app.on('before-quit', async () => {
   taskScheduler.destroy();
   timerManager.destroy();
   reminderManager.destroy();
+  clipboardWatcher.stop();
   clipboardMonitor.destroy();
   closeDatabase();
   unregisterHotkeys();

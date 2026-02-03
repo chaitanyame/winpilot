@@ -1,12 +1,17 @@
 // Global Hotkey Registration
 
 import { globalShortcut } from 'electron';
-import { toggleCommandWindow } from './windows';
+import { toggleCommandWindow, toggleClipboardHistoryWindow, toggleVoiceRecordingWindow, toggleAudioRecordingWindow, toggleVideoRecordingWindow } from './windows';
 import { getSettings } from './store';
 import { voiceInputManager } from './voice-input';
 
 let registeredHotkey: string | null = null;
 let registeredVoiceHotkey: string | null = null;
+let registeredClipboardHistoryHotkey: string | null = null;
+let registeredVoiceTranscribeHotkey: string | null = null;
+let registeredVoiceCommandHotkey: string | null = null;
+let registeredAudioRecordingHotkey: string | null = null;
+let registeredVideoRecordingHotkey: string | null = null;
 
 /**
  * Register global hotkeys
@@ -40,6 +45,9 @@ export function registerHotkeys(): void {
 
   // Register voice input hotkey if enabled
   registerVoiceHotkey();
+  
+  // Register all feature hotkeys
+  registerFeatureHotkeys();
 }
 
 /**
@@ -54,6 +62,7 @@ export function unregisterHotkeys(): void {
     globalShortcut.unregister(registeredVoiceHotkey);
     registeredVoiceHotkey = null;
   }
+  unregisterFeatureHotkeys();
   globalShortcut.unregisterAll();
 }
 
@@ -145,5 +154,146 @@ export function unregisterVoiceHotkey(): void {
     globalShortcut.unregister(registeredVoiceHotkey);
     registeredVoiceHotkey = null;
     console.log('Voice hotkey unregistered');
+  }
+}
+
+/**
+ * Register all feature hotkeys (clipboard, transcribe, command, recording)
+ */
+export function registerFeatureHotkeys(): void {
+  const settings = getSettings();
+  const hotkeys = settings.hotkeys;
+  
+  if (!hotkeys) return;
+
+  // Clipboard History Hotkey
+  try {
+    if (registeredClipboardHistoryHotkey) {
+      globalShortcut.unregister(registeredClipboardHistoryHotkey);
+    }
+    
+    globalShortcut.register(hotkeys.clipboardHistory, () => {
+      console.log('Clipboard history hotkey triggered');
+      toggleClipboardHistoryWindow().catch(err => {
+        console.error('Failed to toggle clipboard history window:', err);
+      });
+    });
+    
+    if (globalShortcut.isRegistered(hotkeys.clipboardHistory)) {
+      registeredClipboardHistoryHotkey = hotkeys.clipboardHistory;
+      console.log('Clipboard history hotkey registered:', hotkeys.clipboardHistory);
+    }
+  } catch (error) {
+    console.error('Error registering clipboard history hotkey:', error);
+  }
+
+  // Voice Transcribe Hotkey (speech-to-text only)
+  try {
+    if (registeredVoiceTranscribeHotkey) {
+      globalShortcut.unregister(registeredVoiceTranscribeHotkey);
+    }
+    
+    globalShortcut.register(hotkeys.voiceTranscribe, () => {
+      console.log('Voice transcribe hotkey triggered');
+      toggleVoiceRecordingWindow('transcribe').catch(err => {
+        console.error('Failed to toggle voice transcribe window:', err);
+      });
+    });
+    
+    if (globalShortcut.isRegistered(hotkeys.voiceTranscribe)) {
+      registeredVoiceTranscribeHotkey = hotkeys.voiceTranscribe;
+      console.log('Voice transcribe hotkey registered:', hotkeys.voiceTranscribe);
+    }
+  } catch (error) {
+    console.error('Error registering voice transcribe hotkey:', error);
+  }
+
+  // Voice Command Hotkey (speech-to-command)
+  try {
+    if (registeredVoiceCommandHotkey) {
+      globalShortcut.unregister(registeredVoiceCommandHotkey);
+    }
+    
+    globalShortcut.register(hotkeys.voiceCommand, () => {
+      console.log('Voice command hotkey triggered');
+      toggleVoiceRecordingWindow('command').catch(err => {
+        console.error('Failed to toggle voice command window:', err);
+      });
+    });
+    
+    if (globalShortcut.isRegistered(hotkeys.voiceCommand)) {
+      registeredVoiceCommandHotkey = hotkeys.voiceCommand;
+      console.log('Voice command hotkey registered:', hotkeys.voiceCommand);
+    }
+  } catch (error) {
+    console.error('Error registering voice command hotkey:', error);
+  }
+
+  // Audio Recording Hotkey
+  try {
+    if (registeredAudioRecordingHotkey) {
+      globalShortcut.unregister(registeredAudioRecordingHotkey);
+    }
+    
+    globalShortcut.register(hotkeys.audioRecording, () => {
+      console.log('Audio recording hotkey triggered');
+      toggleAudioRecordingWindow().catch(err => {
+        console.error('Failed to toggle audio recording window:', err);
+      });
+    });
+    
+    if (globalShortcut.isRegistered(hotkeys.audioRecording)) {
+      registeredAudioRecordingHotkey = hotkeys.audioRecording;
+      console.log('Audio recording hotkey registered:', hotkeys.audioRecording);
+    }
+  } catch (error) {
+    console.error('Error registering audio recording hotkey:', error);
+  }
+
+  // Video Recording Hotkey
+  try {
+    if (registeredVideoRecordingHotkey) {
+      globalShortcut.unregister(registeredVideoRecordingHotkey);
+    }
+    
+    globalShortcut.register(hotkeys.videoRecording, () => {
+      console.log('Video recording hotkey triggered');
+      toggleVideoRecordingWindow().catch(err => {
+        console.error('Failed to toggle video recording window:', err);
+      });
+    });
+    
+    if (globalShortcut.isRegistered(hotkeys.videoRecording)) {
+      registeredVideoRecordingHotkey = hotkeys.videoRecording;
+      console.log('Video recording hotkey registered:', hotkeys.videoRecording);
+    }
+  } catch (error) {
+    console.error('Error registering video recording hotkey:', error);
+  }
+}
+
+/**
+ * Unregister all feature hotkeys
+ */
+export function unregisterFeatureHotkeys(): void {
+  if (registeredClipboardHistoryHotkey) {
+    globalShortcut.unregister(registeredClipboardHistoryHotkey);
+    registeredClipboardHistoryHotkey = null;
+  }
+  if (registeredVoiceTranscribeHotkey) {
+    globalShortcut.unregister(registeredVoiceTranscribeHotkey);
+    registeredVoiceTranscribeHotkey = null;
+  }
+  if (registeredVoiceCommandHotkey) {
+    globalShortcut.unregister(registeredVoiceCommandHotkey);
+    registeredVoiceCommandHotkey = null;
+  }
+  if (registeredAudioRecordingHotkey) {
+    globalShortcut.unregister(registeredAudioRecordingHotkey);
+    registeredAudioRecordingHotkey = null;
+  }
+  if (registeredVideoRecordingHotkey) {
+    globalShortcut.unregister(registeredVideoRecordingHotkey);
+    registeredVideoRecordingHotkey = null;
   }
 }

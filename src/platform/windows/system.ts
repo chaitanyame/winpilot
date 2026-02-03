@@ -170,7 +170,7 @@ export class WindowsSystem implements ISystem {
     }
   }
 
-  async getSystemInfo(_params: { sections?: string[] }): Promise<SystemInfoData> {
+  async getSystemInfo(): Promise<SystemInfoData> {
     try {
       const script = `
         $cpu = Get-WmiObject Win32_Processor | Select-Object -First 1
@@ -267,6 +267,118 @@ export class WindowsSystem implements ISystem {
     } catch (error) {
       console.error('Error getting system info:', error);
       throw error;
+    }
+  }
+
+  async simulatePaste(targetHwnd?: number): Promise<boolean> {
+    try {
+      console.log('[System] Simulating paste...');
+      
+      // Write PowerShell script to temp file to avoid escaping issues
+      const os = await import('os');
+      const fs = await import('fs/promises');
+      const scriptPath = path.join(os.tmpdir(), `paste_script_${Date.now()}.ps1`);
+      
+      const script = `Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class KeySender {
+    [DllImport("user32.dll")]
+    public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
+    
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool SetForegroundWindow(IntPtr hWnd);
+    
+    public const byte VK_CONTROL = 0x11;
+    public const byte VK_V = 0x56;
+    public const uint KEYEVENTF_KEYUP = 0x0002;
+    
+    public static void SendCtrlV() {
+        keybd_event(VK_CONTROL, 0, 0, UIntPtr.Zero);
+        System.Threading.Thread.Sleep(50);
+        keybd_event(VK_V, 0, 0, UIntPtr.Zero);
+        System.Threading.Thread.Sleep(50);
+        keybd_event(VK_V, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+        System.Threading.Thread.Sleep(50);
+        keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+    }
+}
+"@
+
+${typeof targetHwnd === 'number' && targetHwnd > 0 ? `[KeySender]::SetForegroundWindow([IntPtr]${targetHwnd})` : ''}
+[KeySender]::SendCtrlV()
+`;
+      
+      await fs.writeFile(scriptPath, script, 'utf-8');
+      await execAsync(`powershell -NoProfile -ExecutionPolicy Bypass -File "${scriptPath}"`);
+      
+      // Clean up temp file
+      await fs.unlink(scriptPath).catch(() => {});
+      
+      console.log('[System] Paste command sent');
+      return true;
+    } catch (error) {
+      console.error('[System] Error simulating paste:', error);
+      return false;
+    }
+  }
+
+  async getForegroundWindowHandle(): Promise<number> {
+    try {
+      const os = await import('os');
+      const fs = await import('fs/promises');
+      const scriptPath = path.join(os.tmpdir(), `get_hwnd_${Date.now()}.ps1`);
+      
+      const script = `Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class Win32 {
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetForegroundWindow();
+}
+"@
+$hwnd = [Win32]::GetForegroundWindow()
+[int]$hwnd
+`;
+      await fs.writeFile(scriptPath, script, 'utf-8');
+      const { stdout } = await execAsync(`powershell -NoProfile -ExecutionPolicy Bypass -File "${scriptPath}"`);
+      await fs.unlink(scriptPath).catch(() => {});
+      
+      const handle = parseInt(stdout.trim(), 10);
+      return Number.isNaN(handle) ? 0 : handle;
+    } catch (error) {
+      console.error('[System] Error getting foreground window:', error);
+      return 0;
+    }
+  }
+
+  async setForegroundWindow(hwnd: number): Promise<boolean> {
+    try {
+      const os = await import('os');
+      const fs = await import('fs/promises');
+      const scriptPath = path.join(os.tmpdir(), `set_hwnd_${Date.now()}.ps1`);
+      
+      const script = `Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class Win32 {
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool SetForegroundWindow(IntPtr hWnd);
+}
+"@
+[Win32]::SetForegroundWindow([IntPtr]${hwnd})
+`;
+      await fs.writeFile(scriptPath, script, 'utf-8');
+      await execAsync(`powershell -NoProfile -ExecutionPolicy Bypass -File "${scriptPath}"`);
+      await fs.unlink(scriptPath).catch(() => {});
+      
+      console.log('[System] Foreground window set to:', hwnd);
+      return true;
+    } catch (error) {
+      console.error('[System] Error setting foreground window:', error);
+      return false;
     }
   }
 }

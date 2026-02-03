@@ -5,6 +5,12 @@ import path from 'path';
 import { COMMAND_PALETTE_WIDTH, COMMAND_PALETTE_HEIGHT } from '../shared/constants';
 
 let commandWindow: BrowserWindow | null = null;
+let clipboardHistoryWindow: BrowserWindow | null = null;
+let voiceRecordingWindow: BrowserWindow | null = null;
+let audioRecordingWindow: BrowserWindow | null = null;
+let videoRecordingWindow: BrowserWindow | null = null;
+let previouslyFocusedWindow: BrowserWindow | null = null;
+let previousForegroundWindowHandle: number | null = null;
 let suppressAutoHide = false;
 
 export function setAutoHideSuppressed(value: boolean): void {
@@ -309,6 +315,406 @@ export function resizeCommandWindow(height: number): void {
     ...bounds,
     height: newHeight,
   });
+}
+
+// ============================================================================
+// Clipboard History Window
+// ============================================================================
+
+/**
+ * Create clipboard history window
+ */
+export async function createClipboardHistoryWindow(): Promise<BrowserWindow> {
+  const primaryDisplay = screen.getPrimaryDisplay();
+  const { width: screenWidth } = primaryDisplay.workAreaSize;
+
+  // Position at right side of screen
+  const windowWidth = 400;
+  const windowHeight = 600;
+  const x = screenWidth - windowWidth - 20;
+  const y = 100;
+
+  clipboardHistoryWindow = new BrowserWindow({
+    width: windowWidth,
+    height: windowHeight,
+    x,
+    y,
+    show: false,
+    frame: false,
+    transparent: true,
+    resizable: true,
+    movable: true,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    title: 'Clipboard History',
+    webPreferences: {
+      preload: path.join(__dirname, '../preload/index.js'),
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: false,
+    },
+  });
+
+  // Load the same main HTML for now (will be separate later)
+  const VITE_DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL;
+  if (VITE_DEV_SERVER_URL) {
+    await clipboardHistoryWindow.loadURL(`${VITE_DEV_SERVER_URL}#clipboard-history`);
+  } else {
+    await clipboardHistoryWindow.loadFile(path.join(__dirname, '../renderer/index.html'), {
+      hash: 'clipboard-history'
+    });
+  }
+
+  clipboardHistoryWindow.on('closed', () => {
+    clipboardHistoryWindow = null;
+  });
+
+  // Close on blur (optional - can be removed if you want it to persist)
+  clipboardHistoryWindow.on('blur', () => {
+    if (!app.isQuitting && clipboardHistoryWindow) {
+      clipboardHistoryWindow.hide();
+    }
+  });
+
+  return clipboardHistoryWindow;
+}
+
+/**
+ * Toggle clipboard history window
+ */
+export async function toggleClipboardHistoryWindow(): Promise<void> {
+  if (!clipboardHistoryWindow || clipboardHistoryWindow.isDestroyed()) {
+    // Store currently focused window BEFORE showing clipboard
+    // Get all windows except our own app windows
+    const allWindows = BrowserWindow.getAllWindows();
+    const focusedWindow = BrowserWindow.getFocusedWindow();
+    
+    // Store the focused window if it's not the command window or clipboard window
+    if (focusedWindow && focusedWindow !== commandWindow && focusedWindow !== clipboardHistoryWindow) {
+      previouslyFocusedWindow = focusedWindow;
+      console.log('[Windows] Storing previous window (focused):', previouslyFocusedWindow.getTitle());
+    } else {
+      // Fall back to finding any visible window that's not ours
+      previouslyFocusedWindow = allWindows.find(w => 
+        w !== commandWindow && 
+        w !== clipboardHistoryWindow && 
+        w.isVisible()
+      ) || null;
+      console.log('[Windows] Storing previous window (fallback):', previouslyFocusedWindow ? previouslyFocusedWindow.getTitle() : 'None');
+    }
+    
+    // Capture current OS foreground window handle for later paste
+    try {
+      const { getPlatformAdapter } = await import('../platform');
+      const adapter = getPlatformAdapter();
+      previousForegroundWindowHandle = await adapter.system.getForegroundWindowHandle();
+      console.log('[Windows] Captured foreground handle:', previousForegroundWindowHandle);
+    } catch (error) {
+      console.error('[Windows] Failed to capture foreground handle:', error);
+      previousForegroundWindowHandle = null;
+    }
+
+    // Create new window
+    await createClipboardHistoryWindow();
+    clipboardHistoryWindow?.show();
+    clipboardHistoryWindow?.focus();
+  } else if (clipboardHistoryWindow.isVisible()) {
+    // Hide if visible
+    clipboardHistoryWindow.hide();
+  } else {
+    // Store currently focused window when showing again
+    const allWindows = BrowserWindow.getAllWindows();
+    const focusedWindow = BrowserWindow.getFocusedWindow();
+    
+    if (focusedWindow && focusedWindow !== commandWindow && focusedWindow !== clipboardHistoryWindow) {
+      previouslyFocusedWindow = focusedWindow;
+      console.log('[Windows] Storing previous window (focused):', previouslyFocusedWindow.getTitle());
+    } else {
+      previouslyFocusedWindow = allWindows.find(w => 
+        w !== commandWindow && 
+        w !== clipboardHistoryWindow && 
+        w.isVisible()
+      ) || null;
+      console.log('[Windows] Storing previous window (fallback):', previouslyFocusedWindow ? previouslyFocusedWindow.getTitle() : 'None');
+    }
+    
+    // Capture current OS foreground window handle for later paste
+    try {
+      const { getPlatformAdapter } = await import('../platform');
+      const adapter = getPlatformAdapter();
+      previousForegroundWindowHandle = await adapter.system.getForegroundWindowHandle();
+      console.log('[Windows] Captured foreground handle:', previousForegroundWindowHandle);
+    } catch (error) {
+      console.error('[Windows] Failed to capture foreground handle:', error);
+      previousForegroundWindowHandle = null;
+    }
+
+    // Show if hidden
+    clipboardHistoryWindow.show();
+    clipboardHistoryWindow.focus();
+  }
+}
+
+export async function hideClipboardHistoryWindow(): Promise<void> {
+  if (clipboardHistoryWindow && !clipboardHistoryWindow.isDestroyed()) {
+    clipboardHistoryWindow.hide();
+  }
+}
+
+export function getPreviouslyFocusedWindow(): BrowserWindow | null {
+  return previouslyFocusedWindow;
+}
+
+export function getPreviousForegroundWindowHandle(): number | null {
+  return previousForegroundWindowHandle;
+}
+
+/**
+ * Get clipboard history window instance
+ */
+export function getClipboardHistoryWindow(): BrowserWindow | null {
+  return clipboardHistoryWindow;
+}
+
+// ============================================================================
+// Voice Recording Window
+// ============================================================================
+
+/**
+ * Create voice recording window
+ */
+export async function createVoiceRecordingWindow(mode: 'transcribe' | 'command'): Promise<BrowserWindow> {
+  const primaryDisplay = screen.getPrimaryDisplay();
+  const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
+
+  // Center on screen
+  const windowWidth = 350;
+  const windowHeight = 200;
+  const x = Math.round((screenWidth - windowWidth) / 2);
+  const y = Math.round((screenHeight - windowHeight) / 2);
+
+  voiceRecordingWindow = new BrowserWindow({
+    width: windowWidth,
+    height: windowHeight,
+    x,
+    y,
+    show: false,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    movable: true,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    title: mode === 'transcribe' ? 'Voice Transcribe' : 'Voice Command',
+    webPreferences: {
+      preload: path.join(__dirname, '../preload/index.js'),
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: false,
+    },
+  });
+
+  const VITE_DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL;
+  if (VITE_DEV_SERVER_URL) {
+    await voiceRecordingWindow.loadURL(`${VITE_DEV_SERVER_URL}#voice-recording?mode=${mode}`);
+  } else {
+    await voiceRecordingWindow.loadFile(path.join(__dirname, '../renderer/index.html'), {
+      hash: `voice-recording?mode=${mode}`
+    });
+  }
+
+  voiceRecordingWindow.on('closed', () => {
+    voiceRecordingWindow = null;
+  });
+
+  return voiceRecordingWindow;
+}
+
+/**
+ * Toggle voice recording window
+ */
+export async function toggleVoiceRecordingWindow(mode: 'transcribe' | 'command'): Promise<void> {
+  if (!voiceRecordingWindow || voiceRecordingWindow.isDestroyed()) {
+    await createVoiceRecordingWindow(mode);
+    voiceRecordingWindow?.show();
+    voiceRecordingWindow?.focus();
+  } else if (voiceRecordingWindow.isVisible()) {
+    voiceRecordingWindow.hide();
+  } else {
+    voiceRecordingWindow.show();
+    voiceRecordingWindow.focus();
+  }
+}
+
+/**
+ * Get voice recording window instance
+ */
+export function getVoiceRecordingWindow(): BrowserWindow | null {
+  return voiceRecordingWindow;
+}
+
+// ============================================================================
+// Audio Recording Window
+// ============================================================================
+
+/**
+ * Create audio recording window
+ */
+export async function createAudioRecordingWindow(): Promise<BrowserWindow> {
+  const primaryDisplay = screen.getPrimaryDisplay();
+  const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
+
+  const windowWidth = 300;
+  const windowHeight = 150;
+  const x = screenWidth - windowWidth - 20;
+  const y = screenHeight - windowHeight - 100;
+
+  audioRecordingWindow = new BrowserWindow({
+    width: windowWidth,
+    height: windowHeight,
+    x,
+    y,
+    show: false,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    movable: true,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    title: 'Audio Recording',
+    webPreferences: {
+      preload: path.join(__dirname, '../preload/index.js'),
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: false,
+    },
+  });
+
+  const VITE_DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL;
+  if (VITE_DEV_SERVER_URL) {
+    await audioRecordingWindow.loadURL(`${VITE_DEV_SERVER_URL}#audio-recording`);
+  } else {
+    await audioRecordingWindow.loadFile(path.join(__dirname, '../renderer/index.html'), {
+      hash: 'audio-recording'
+    });
+  }
+
+  audioRecordingWindow.on('closed', () => {
+    audioRecordingWindow = null;
+  });
+
+  return audioRecordingWindow;
+}
+
+/**
+ * Toggle audio recording window
+ */
+export async function toggleAudioRecordingWindow(): Promise<void> {
+  if (!audioRecordingWindow || audioRecordingWindow.isDestroyed()) {
+    await createAudioRecordingWindow();
+    audioRecordingWindow?.show();
+    audioRecordingWindow?.focus();
+  } else if (audioRecordingWindow.isVisible()) {
+    audioRecordingWindow.hide();
+  } else {
+    audioRecordingWindow.show();
+    audioRecordingWindow.focus();
+  }
+}
+
+/**
+ * Get audio recording window instance
+ */
+export function getAudioRecordingWindow(): BrowserWindow | null {
+  return audioRecordingWindow;
+}
+
+// ============================================================================
+// Video Recording Window
+// ============================================================================
+
+/**
+ * Create video recording window
+ */
+export async function createVideoRecordingWindow(): Promise<BrowserWindow> {
+  const primaryDisplay = screen.getPrimaryDisplay();
+  const { height: screenHeight } = primaryDisplay.workAreaSize;
+
+  const windowWidth = 300;
+  const windowHeight = 150;
+  const x = 20;
+  const y = screenHeight - windowHeight - 100;
+
+  videoRecordingWindow = new BrowserWindow({
+    width: windowWidth,
+    height: windowHeight,
+    x,
+    y,
+    show: false,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    movable: true,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    title: 'Video Recording',
+    webPreferences: {
+      preload: path.join(__dirname, '../preload/index.js'),
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: false,
+    },
+  });
+
+  const VITE_DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL;
+  if (VITE_DEV_SERVER_URL) {
+    await videoRecordingWindow.loadURL(`${VITE_DEV_SERVER_URL}#video-recording`);
+  } else {
+    await videoRecordingWindow.loadFile(path.join(__dirname, '../renderer/index.html'), {
+      hash: 'video-recording'
+    });
+  }
+
+  videoRecordingWindow.on('closed', () => {
+    videoRecordingWindow = null;
+  });
+
+  return videoRecordingWindow;
+}
+
+/**
+ * Toggle video recording window
+ */
+export async function toggleVideoRecordingWindow(): Promise<void> {
+  if (!videoRecordingWindow || videoRecordingWindow.isDestroyed()) {
+    await createVideoRecordingWindow();
+    videoRecordingWindow?.show();
+    videoRecordingWindow?.focus();
+  } else if (videoRecordingWindow.isVisible()) {
+    videoRecordingWindow.hide();
+  } else {
+    videoRecordingWindow.show();
+    videoRecordingWindow.focus();
+  }
+}
+
+/**
+ * Get video recording window instance
+ */
+export function getVideoRecordingWindow(): BrowserWindow | null {
+  return videoRecordingWindow;
 }
 
 // Add isQuitting flag to app

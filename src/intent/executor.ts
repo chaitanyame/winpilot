@@ -103,7 +103,7 @@ export class ToolExecutor {
    * Format execution result for streaming
    * Matches the format expected by the IPC handler
    */
-  formatForStreaming(result: ToolExecutionResult, _toolName: string): string {
+  formatForStreaming(result: ToolExecutionResult): string {
     if (result.success) {
       // Format similar to LLM responses
       return `${result.response}`;

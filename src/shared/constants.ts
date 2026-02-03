@@ -3,6 +3,16 @@
 export const APP_NAME = 'Desktop Commander';
 export const APP_VERSION = '0.1.0';
 
+// Clipboard history limits
+export const CLIPBOARD_LIMITS = {
+  MAX_TEXT_SIZE_BYTES: 1024 * 1024,       // 1MB max for text entries
+  MAX_IMAGE_SIZE_BYTES: 10 * 1024 * 1024, // 10MB max per image
+  MAX_IMAGE_STORAGE_MB: 100,              // 100MB total image storage
+  THUMBNAIL_SIZE: 150,                     // 150x150 max thumbnail
+  MAX_FILES_PER_ENTRY: 100,               // Max files in a single copy operation
+  MAX_UNPINNED_ENTRIES: 50,               // Max unpinned entries to keep
+};
+
 // Default hotkey for command palette
 export const DEFAULT_HOTKEY = 'CommandOrControl+Shift+Space';
 
@@ -17,11 +27,8 @@ export const TRAY_ICON_ACTIVE = 'icon-active';
 export const TRAY_ICON_ERROR = 'icon-error';
 
 import { PermissionLevel } from './types';
-import { getBundledWhisperPaths } from '../utils/whisper-path';
 
 // Default settings
-const bundledWhisper = getBundledWhisperPaths();
-
 export const DEFAULT_SETTINGS = {
   hotkey: DEFAULT_HOTKEY,
   appearanceMode: 'system' as const,
@@ -66,18 +73,25 @@ export const DEFAULT_SETTINGS = {
     maxConcurrent: 3,
   },
   voiceInput: {
-    enabled: bundledWhisper.available,
+    enabled: false,
     hotkey: 'CommandOrControl+Shift+V',
-    provider: bundledWhisper.available ? 'whisper_cpp' as const : 'browser' as const,
-    whisperCpp: {
-      binaryPath: bundledWhisper.binaryPath || '',
-      modelPath: bundledWhisper.modelPath || '',
+    provider: 'browser' as const,
+    openaiWhisper: {
+      apiKey: '',
+      model: 'whisper-1',
     },
     language: 'en-US',
     showVisualFeedback: true,
   },
   recording: {
     outputPath: '', // Empty means app directory (resources/recordings)
+  },
+  hotkeys: {
+    clipboardHistory: 'CommandOrControl+Shift+H',
+    voiceTranscribe: 'CommandOrControl+Shift+T',
+    voiceCommand: 'CommandOrControl+Shift+C',
+    audioRecording: 'CommandOrControl+Shift+A',
+    videoRecording: 'CommandOrControl+Shift+R',
   },
 };
 

@@ -837,10 +837,23 @@ export const clipboardHistoryTool = defineTool('clipboard_history', {
 
     const formatted = limited.map((entry, i) => {
       const time = new Date(entry.timestamp).toLocaleString();
-      const preview = entry.content.length > 100
-        ? entry.content.slice(0, 100) + '...'
-        : entry.content;
-      const pinned = entry.pinned ? ' 📌' : '';
+      const pinned = entry.pinned ? ' [pinned]' : '';
+      let preview: string;
+      switch (entry.type) {
+        case 'text':
+          preview = entry.content.length > 100
+            ? entry.content.slice(0, 100) + '...'
+            : entry.content;
+          break;
+        case 'image':
+          preview = `[Image ${entry.width}x${entry.height} ${entry.format.toUpperCase()}]`;
+          break;
+        case 'files':
+          preview = `[${entry.files.length} file(s): ${entry.files.slice(0, 3).map(f => f.name).join(', ')}${entry.files.length > 3 ? '...' : ''}]`;
+          break;
+        default:
+          preview = '[Unknown type]';
+      }
       return `${i + 1}. [${time}]${pinned}\n${preview}\n`;
     }).join('\n');
 
@@ -865,9 +878,22 @@ export const clipboardRestoreTool = defineTool('clipboard_restore', {
     const entry = results[0];
     clipboardMonitor.restoreToClipboard(entry.id);
 
-    const preview = entry.content.length > 100
-      ? entry.content.slice(0, 100) + '...'
-      : entry.content;
+    let preview: string;
+    switch (entry.type) {
+      case 'text':
+        preview = entry.content.length > 100
+          ? entry.content.slice(0, 100) + '...'
+          : entry.content;
+        break;
+      case 'image':
+        preview = `[Image ${entry.width}x${entry.height} ${entry.format.toUpperCase()}]`;
+        break;
+      case 'files':
+        preview = `[${entry.files.length} file(s): ${entry.files.map(f => f.name).join(', ')}]`;
+        break;
+      default:
+        preview = '[Unknown type]';
+    }
 
     return `Restored to clipboard:\n${preview}`;
   }

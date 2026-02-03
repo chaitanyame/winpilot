@@ -1,18 +1,21 @@
-import { useState, useEffect, useMemo, useDeferredValue } from 'react';
+import { useState, useEffect, useMemo, useDeferredValue, useRef } from 'react';
 import { motion } from 'framer-motion';
-import { X, Search, Trash2, Pin, Copy, Clock } from 'lucide-react';
-import type { ClipboardEntry } from '../../shared/types';
+import { X, Search, Trash2, Pin, Copy, Clock, Image, File, Folder } from 'lucide-react';
+import type { ClipboardEntry, TextClipboardEntry, ImageClipboardEntry, FilesClipboardEntry } from '../../shared/types';
 
 interface Props {
   isOpen: boolean;
   onClose: () => void;
-  variant?: 'modal' | 'sidebar';
+  variant?: 'modal' | 'sidebar' | 'window';
 }
 
 export function ClipboardHistoryPanel({ isOpen, onClose, variant = 'modal' }: Props) {
   const [entries, setEntries] = useState<ClipboardEntry[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [focusedIndex, setFocusedIndex] = useState(0);
+  const [thumbnailCache, setThumbnailCache] = useState<Record<string, string>>({});
+  const listContainerRef = useRef<HTMLDivElement | null>(null);
 
   // Debounce search for performance
   const deferredQuery = useDeferredValue(searchQuery);
@@ -20,6 +23,7 @@ export function ClipboardHistoryPanel({ isOpen, onClose, variant = 'modal' }: Pr
   useEffect(() => {
     if (isOpen) {
       loadEntries();
+      setFocusedIndex(0);
     }
   }, [isOpen]);
 
@@ -27,7 +31,19 @@ export function ClipboardHistoryPanel({ isOpen, onClose, variant = 'modal' }: Pr
     try {
       setIsLoading(true);
       const data = await window.electronAPI.clipboardHistoryGet();
+      console.log('[UI] Loaded entries:', data?.length, 'entries');
+      console.log('[UI] Entry types:', data?.map(e => e.type).join(', '));
       setEntries(data || []);
+
+      // Load thumbnails for image entries
+      const imageEntries = (data || []).filter((e): e is ImageClipboardEntry => e.type === 'image');
+      console.log('[UI] Found', imageEntries.length, 'image entries');
+      for (const entry of imageEntries) {
+        console.log('[UI] Image entry:', entry.id, 'thumbnailPath:', entry.thumbnailPath);
+        if (!thumbnailCache[entry.thumbnailPath]) {
+          loadThumbnail(entry.thumbnailPath);
+        }
+      }
     } catch (error) {
       console.error('Failed to load clipboard history:', error);
     } finally {
@@ -35,13 +51,24 @@ export function ClipboardHistoryPanel({ isOpen, onClose, variant = 'modal' }: Pr
     }
   };
 
-  const handleRestore = async (id: string) => {
+  const loadThumbnail = async (thumbnailPath: string) => {
     try {
-      await window.electronAPI.clipboardHistoryRestore(id);
-      // Close panel after restore
-      onClose();
+      console.log('[UI] Loading thumbnail:', thumbnailPath);
+      const dataUrl = await window.electronAPI.clipboardHistoryGetImage(thumbnailPath);
+      console.log('[UI] Got dataUrl:', dataUrl ? `${dataUrl.substring(0, 50)}... (${dataUrl.length} chars)` : 'null');
+      if (dataUrl) {
+        setThumbnailCache(prev => ({ ...prev, [thumbnailPath]: dataUrl }));
+      }
     } catch (error) {
-      console.error('Failed to restore clipboard entry:', error);
+      console.error('Failed to load thumbnail:', error);
+    }
+  };
+
+  const handlePasteItem = async (entry: ClipboardEntry) => {
+    try {
+      await window.electronAPI.pasteClipboardItem(entry.id);
+    } catch (error) {
+      console.error('Failed to paste clipboard item:', error);
     }
   };
 
@@ -77,18 +104,168 @@ export function ClipboardHistoryPanel({ isOpen, onClose, variant = 'modal' }: Pr
   const filteredEntries = useMemo(() => {
     if (!deferredQuery.trim()) return entries;
     const query = deferredQuery.toLowerCase();
-    return entries.filter(e => e.content.toLowerCase().includes(query));
+    return entries.filter(e => {
+      switch (e.type) {
+        case 'text':
+          return e.content.toLowerCase().includes(query);
+        case 'image':
+          return `image ${e.width}x${e.height}`.toLowerCase().includes(query);
+        case 'files':
+          return e.files.some(f => f.name.toLowerCase().includes(query));
+        default:
+          return false;
+      }
+    });
   }, [entries, deferredQuery]);
 
   // Group by pinned/unpinned
   const pinnedEntries = filteredEntries.filter(e => e.pinned);
   const unpinnedEntries = filteredEntries.filter(e => !e.pinned);
 
+  // Keyboard navigation
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+        const activeElement = document.activeElement as HTMLElement | null;
+        if (activeElement && activeElement.tagName === 'INPUT') {
+          return;
+        }
+      }
+      const totalItems = filteredEntries.length;
+      if (totalItems === 0) return;
+
+      switch (e.key) {
+        case 'ArrowDown':
+          e.preventDefault();
+          setFocusedIndex(prev => Math.min(prev + 1, totalItems - 1));
+          break;
+        case 'ArrowUp':
+          e.preventDefault();
+          setFocusedIndex(prev => Math.max(prev - 1, 0));
+          break;
+        case 'Home':
+          e.preventDefault();
+          setFocusedIndex(0);
+          break;
+        case 'End':
+          e.preventDefault();
+          setFocusedIndex(totalItems - 1);
+          break;
+        case 'Enter':
+          e.preventDefault();
+          if (filteredEntries[focusedIndex]) {
+            handlePasteItem(filteredEntries[focusedIndex]);
+          }
+          break;
+        case 'Escape':
+          e.preventDefault();
+          onClose();
+          break;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, filteredEntries, focusedIndex, onClose]);
+
+  // Reset focus when filtered entries change
+  useEffect(() => {
+    if (focusedIndex >= filteredEntries.length) {
+      setFocusedIndex(Math.max(0, filteredEntries.length - 1));
+    }
+  }, [filteredEntries, focusedIndex]);
+
+  // Scroll focused item into view
+  useEffect(() => {
+    if (!isOpen || !listContainerRef.current) return;
+    const target = listContainerRef.current.querySelector(
+      `[data-entry-index="${focusedIndex}"]`
+    ) as HTMLElement | null;
+    if (target) {
+      target.scrollIntoView({ block: 'nearest' });
+    }
+  }, [focusedIndex, filteredEntries, isOpen]);
+
   if (!isOpen) return null;
 
-  if (variant === 'sidebar') {
+  const renderContent = () => (
+    <>
+      {isLoading ? (
+        <div className="flex items-center justify-center py-12 text-[color:var(--app-text-muted)]">
+          Loading...
+        </div>
+      ) : filteredEntries.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-12 text-[color:var(--app-text-muted)]">
+          <Copy className="w-12 h-12 mb-3 opacity-30" />
+          <p className="text-sm">
+            {entries.length === 0 ? 'No clipboard history yet' : 'No matching entries'}
+          </p>
+        </div>
+      ) : (
+        <>
+          {pinnedEntries.length > 0 && (
+            <div className="mb-4">
+              <h3 className="text-xs font-semibold text-[color:var(--app-text-muted)] uppercase mb-2 flex items-center gap-1">
+                <Pin className="w-3 h-3" />
+                Pinned
+              </h3>
+              <div className="space-y-2">
+                {pinnedEntries.map(entry => {
+                  const entryIndex = filteredEntries.indexOf(entry);
+                  return (
+                    <ClipboardEntryItem
+                      key={entry.id}
+                      entry={entry}
+                      onDelete={handleDelete}
+                      onPin={handlePin}
+                      onPaste={handlePasteItem}
+                      isFocused={entryIndex === focusedIndex}
+                      index={entryIndex}
+                      thumbnailCache={thumbnailCache}
+                    />
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {unpinnedEntries.length > 0 && (
+            <div>
+              {pinnedEntries.length > 0 && (
+                <h3 className="text-xs font-semibold text-[color:var(--app-text-muted)] uppercase mb-2 flex items-center gap-1">
+                  <Clock className="w-3 h-3" />
+                  Recent
+                </h3>
+              )}
+              <div className="space-y-2">
+                {unpinnedEntries.map(entry => {
+                  const entryIndex = filteredEntries.indexOf(entry);
+                  return (
+                    <ClipboardEntryItem
+                      key={entry.id}
+                      entry={entry}
+                      onDelete={handleDelete}
+                      onPin={handlePin}
+                      onPaste={handlePasteItem}
+                      isFocused={entryIndex === focusedIndex}
+                      index={entryIndex}
+                      thumbnailCache={thumbnailCache}
+                    />
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </>
+  );
+
+  if (variant === 'window') {
     return (
-      <div className="h-full w-[420px] bg-[color:var(--app-surface)] border-l border-[color:var(--app-border)] flex flex-col">
+      <div className="h-full w-full bg-[color:var(--app-surface)] flex flex-col min-h-0">
         <div className="px-5 py-4 border-b border-[color:var(--app-border)] flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Copy className="w-5 h-5 text-[color:var(--app-accent)]" />
@@ -126,63 +303,55 @@ export function ClipboardHistoryPanel({ isOpen, onClose, variant = 'modal' }: Pr
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4 space-y-2">
-          {isLoading ? (
-            <div className="flex items-center justify-center py-12 text-[color:var(--app-text-muted)]">
-              Loading...
-            </div>
-          ) : filteredEntries.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 text-[color:var(--app-text-muted)]">
-              <Copy className="w-12 h-12 mb-3 opacity-30" />
-              <p className="text-sm">
-                {entries.length === 0 ? 'No clipboard history yet' : 'No matching entries'}
-              </p>
-            </div>
-          ) : (
-            <>
-              {pinnedEntries.length > 0 && (
-                <div className="mb-4">
-                  <h3 className="text-xs font-semibold text-[color:var(--app-text-muted)] uppercase mb-2 flex items-center gap-1">
-                    <Pin className="w-3 h-3" />
-                    Pinned
-                  </h3>
-                  <div className="space-y-2">
-                    {pinnedEntries.map(entry => (
-                      <ClipboardEntryItem
-                        key={entry.id}
-                        entry={entry}
-                        onRestore={handleRestore}
-                        onDelete={handleDelete}
-                        onPin={handlePin}
-                      />
-                    ))}
-                  </div>
-                </div>
-              )}
+        <div ref={listContainerRef} className="flex-1 min-h-0 overflow-y-auto p-4 space-y-2">
+          {renderContent()}
+        </div>
+      </div>
+    );
+  }
 
-              {unpinnedEntries.length > 0 && (
-                <div>
-                  {pinnedEntries.length > 0 && (
-                    <h3 className="text-xs font-semibold text-[color:var(--app-text-muted)] uppercase mb-2 flex items-center gap-1">
-                      <Clock className="w-3 h-3" />
-                      Recent
-                    </h3>
-                  )}
-                  <div className="space-y-2">
-                    {unpinnedEntries.map(entry => (
-                      <ClipboardEntryItem
-                        key={entry.id}
-                        entry={entry}
-                        onRestore={handleRestore}
-                        onDelete={handleDelete}
-                        onPin={handlePin}
-                      />
-                    ))}
-                  </div>
-                </div>
-              )}
-            </>
-          )}
+  if (variant === 'sidebar') {
+    return (
+      <div className="h-full w-[420px] bg-[color:var(--app-surface)] border-l border-[color:var(--app-border)] flex flex-col min-h-0">
+        <div className="px-5 py-4 border-b border-[color:var(--app-border)] flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Copy className="w-5 h-5 text-[color:var(--app-accent)]" />
+            <h2 className="text-lg font-semibold text-[color:var(--app-text)]">Clipboard History</h2>
+            <span className="text-sm text-[color:var(--app-text-muted)]">({filteredEntries.length} items)</span>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-1.5 rounded-lg hover:bg-[color:var(--app-surface-2)] text-[color:var(--app-text-muted)] hover:text-[color:var(--app-text)] transition-colors"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="px-5 py-3 border-b border-[color:var(--app-border)] flex items-center gap-3">
+          <div className="flex-1 relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[color:var(--app-text-muted)]" />
+            <input
+              type="text"
+              placeholder="Search clipboard history..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full pl-10 pr-4 py-2 rounded-lg bg-[color:var(--app-surface-2)] text-[color:var(--app-text)]
+                         placeholder-[color:var(--app-text-muted)] border border-[color:var(--app-border)]
+                         focus:border-[color:var(--app-accent)] focus:ring-1 focus:ring-[color:var(--app-accent)]/20"
+            />
+          </div>
+          <button
+            onClick={handleClearAll}
+            disabled={unpinnedEntries.length === 0}
+            className="px-3 py-2 rounded-lg bg-[color:var(--app-surface-2)] hover:bg-[color:var(--app-surface)]
+                       disabled:opacity-50 disabled:cursor-not-allowed text-sm transition-colors"
+          >
+            Clear All
+          </button>
+        </div>
+
+        <div ref={listContainerRef} className="flex-1 min-h-0 overflow-y-auto p-4 space-y-2" style={{ maxHeight: 'calc(100vh - 140px)' }}>
+          {renderContent()}
         </div>
       </div>
     );
@@ -201,104 +370,47 @@ export function ClipboardHistoryPanel({ isOpen, onClose, variant = 'modal' }: Pr
         animate={{ scale: 1, opacity: 1 }}
         exit={{ scale: 0.95, opacity: 0 }}
         onClick={(e) => e.stopPropagation()}
-        className="bg-stone-950 rounded-xl shadow-2xl max-w-2xl w-full mx-4 overflow-hidden border border-stone-800 max-h-[80vh] flex flex-col"
+        className="bg-[color:var(--app-surface)] rounded-xl shadow-2xl max-w-2xl w-full mx-4 overflow-hidden border border-[color:var(--app-border)] max-h-[80vh] flex flex-col min-h-0"
       >
         {/* Header */}
-        <div className="px-5 py-4 border-b border-stone-800 flex items-center justify-between">
+        <div className="px-5 py-4 border-b border-[color:var(--app-border)] flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Copy className="w-5 h-5 text-purple-400" />
-            <h2 className="text-lg font-semibold text-stone-200">Clipboard History</h2>
-            <span className="text-sm text-stone-500">({filteredEntries.length} items)</span>
+            <Copy className="w-5 h-5 text-[color:var(--app-accent)]" />
+            <h2 className="text-lg font-semibold text-[color:var(--app-text)]">Clipboard History</h2>
+            <span className="text-sm text-[color:var(--app-text-muted)]">({filteredEntries.length} items)</span>
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-lg hover:bg-stone-800 text-stone-400 hover:text-stone-200 transition-colors"
+            className="p-1.5 rounded-lg hover:bg-[color:var(--app-surface-2)] text-[color:var(--app-text-muted)] hover:text-[color:var(--app-text)] transition-colors"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Search Bar */}
-        <div className="px-5 py-3 border-b border-stone-800 flex items-center gap-3">
+        <div className="px-5 py-3 border-b border-[color:var(--app-border)] flex items-center gap-3">
           <div className="flex-1 relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-stone-500" />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[color:var(--app-text-muted)]" />
             <input
               type="text"
               placeholder="Search clipboard history..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 rounded-lg bg-stone-900 text-stone-200 placeholder-stone-500 border border-stone-700 focus:border-purple-500 focus:ring-1 focus:ring-purple-500/20"
+              className="w-full pl-10 pr-4 py-2 rounded-lg bg-[color:var(--app-surface-2)] text-[color:var(--app-text)] placeholder-[color:var(--app-text-muted)] border border-[color:var(--app-border)] focus:border-[color:var(--app-accent)] focus:ring-1 focus:ring-[color:var(--app-accent)]/20"
             />
           </div>
           <button
             onClick={handleClearAll}
             disabled={unpinnedEntries.length === 0}
-            className="px-3 py-2 rounded-lg bg-stone-800 hover:bg-stone-700 disabled:opacity-50 disabled:cursor-not-allowed text-stone-300 hover:text-stone-100 text-sm transition-colors"
+            className="px-3 py-2 rounded-lg bg-[color:var(--app-surface-2)] hover:bg-[color:var(--app-surface)] disabled:opacity-50 disabled:cursor-not-allowed text-[color:var(--app-text)] text-sm transition-colors"
           >
             Clear All
           </button>
         </div>
 
         {/* Content */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-2">
-          {isLoading ? (
-            <div className="flex items-center justify-center py-12 text-stone-500">
-              Loading...
-            </div>
-          ) : filteredEntries.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 text-stone-500">
-              <Copy className="w-12 h-12 mb-3 opacity-30" />
-              <p className="text-sm">
-                {entries.length === 0 ? 'No clipboard history yet' : 'No matching entries'}
-              </p>
-            </div>
-          ) : (
-            <>
-              {/* Pinned Section */}
-              {pinnedEntries.length > 0 && (
-                <div className="mb-4">
-                  <h3 className="text-xs font-semibold text-stone-400 uppercase mb-2 flex items-center gap-1">
-                    <Pin className="w-3 h-3" />
-                    Pinned
-                  </h3>
-                  <div className="space-y-2">
-                    {pinnedEntries.map(entry => (
-                      <ClipboardEntryItem
-                        key={entry.id}
-                        entry={entry}
-                        onRestore={handleRestore}
-                        onDelete={handleDelete}
-                        onPin={handlePin}
-                      />
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Unpinned Section */}
-              {unpinnedEntries.length > 0 && (
-                <div>
-                  {pinnedEntries.length > 0 && (
-                    <h3 className="text-xs font-semibold text-stone-400 uppercase mb-2 flex items-center gap-1">
-                      <Clock className="w-3 h-3" />
-                      Recent
-                    </h3>
-                  )}
-                  <div className="space-y-2">
-                    {unpinnedEntries.map(entry => (
-                      <ClipboardEntryItem
-                        key={entry.id}
-                        entry={entry}
-                        onRestore={handleRestore}
-                        onDelete={handleDelete}
-                        onPin={handlePin}
-                      />
-                    ))}
-                  </div>
-                </div>
-              )}
-            </>
-          )}
+        <div ref={listContainerRef} className="flex-1 min-h-0 overflow-y-auto p-4 space-y-2" style={{ maxHeight: 'calc(80vh - 140px)' }}>
+          {renderContent()}
         </div>
       </motion.div>
     </motion.div>
@@ -306,11 +418,14 @@ export function ClipboardHistoryPanel({ isOpen, onClose, variant = 'modal' }: Pr
 }
 
 // Individual clipboard entry component
-function ClipboardEntryItem({ entry, onRestore, onDelete, onPin }: {
+function ClipboardEntryItem({ entry, onDelete, onPin, onPaste, isFocused, index, thumbnailCache }: {
   entry: ClipboardEntry;
-  onRestore: (id: string) => void;
   onDelete: (id: string) => void;
   onPin: (id: string) => void;
+  onPaste: (entry: ClipboardEntry) => void;
+  isFocused: boolean;
+  index: number;
+  thumbnailCache: Record<string, string>;
 }) {
   const formatTime = (timestamp: number) => {
     const date = new Date(timestamp);
@@ -330,26 +445,39 @@ function ClipboardEntryItem({ entry, onRestore, onDelete, onPin }: {
     return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
   };
 
-  // Truncate content for display
-  const displayContent = entry.content.length > 200
-    ? entry.content.slice(0, 200) + '...'
-    : entry.content;
+  const renderContent = () => {
+    switch (entry.type) {
+      case 'text':
+        return <TextEntryContent entry={entry} isFocused={isFocused} />;
+      case 'image':
+        return <ImageEntryContent entry={entry} isFocused={isFocused} thumbnailCache={thumbnailCache} />;
+      case 'files':
+        return <FilesEntryContent entry={entry} isFocused={isFocused} />;
+      default:
+        return null;
+    }
+  };
 
   return (
     <motion.div
       initial={{ opacity: 0, y: 5 }}
       animate={{ opacity: 1, y: 0 }}
-      className="group p-3 rounded-lg bg-stone-900/50 border border-stone-800 hover:border-stone-700 hover:bg-stone-900/80 transition-all cursor-pointer"
-      onClick={() => onRestore(entry.id)}
+      data-entry-index={index}
+      className={`group p-3 rounded-lg border transition-all cursor-pointer ${
+        isFocused
+          ? 'bg-[color:var(--app-accent)] border-[color:var(--app-accent)] ring-2 ring-[color:var(--app-accent)]/50'
+          : 'bg-[color:var(--app-surface-2)]/50 border-[color:var(--app-border)] hover:border-[color:var(--app-border)] hover:bg-[color:var(--app-surface-2)]'
+      }`}
+      onClick={() => onPaste(entry)}
     >
       <div className="flex items-start justify-between gap-2">
         <div className="flex-1 min-w-0">
-          <p className="text-sm text-stone-200 break-words whitespace-pre-wrap font-mono">
-            {displayContent}
-          </p>
-          <div className="flex items-center gap-2 mt-2 text-xs text-stone-500">
+          {renderContent()}
+          <div className={`flex items-center gap-2 mt-2 text-xs ${
+            isFocused ? 'text-white/80' : 'text-[color:var(--app-text-muted)]'
+          }`}>
             <span>{formatTime(entry.timestamp)}</span>
-            <span>•</span>
+            <span>-</span>
             <span>{formatSize(entry.size)}</span>
           </div>
         </div>
@@ -359,8 +487,8 @@ function ClipboardEntryItem({ entry, onRestore, onDelete, onPin }: {
               e.stopPropagation();
               onPin(entry.id);
             }}
-            className={`p-1.5 rounded hover:bg-stone-800 transition-colors ${
-              entry.pinned ? 'text-purple-400' : 'text-stone-400 hover:text-purple-400'
+            className={`p-1.5 rounded hover:bg-[color:var(--app-surface-2)] transition-colors ${
+              entry.pinned ? 'text-[color:var(--app-accent)]' : 'text-[color:var(--app-text-muted)] hover:text-[color:var(--app-accent)]'
             }`}
             title={entry.pinned ? 'Unpin' : 'Pin'}
           >
@@ -371,7 +499,7 @@ function ClipboardEntryItem({ entry, onRestore, onDelete, onPin }: {
               e.stopPropagation();
               onDelete(entry.id);
             }}
-            className="p-1.5 rounded hover:bg-rose-900/30 text-stone-400 hover:text-rose-400 transition-colors"
+            className="p-1.5 rounded hover:bg-red-500/20 text-[color:var(--app-text-muted)] hover:text-red-400 transition-colors"
             title="Delete"
           >
             <Trash2 className="w-4 h-4" />
@@ -379,5 +507,101 @@ function ClipboardEntryItem({ entry, onRestore, onDelete, onPin }: {
         </div>
       </div>
     </motion.div>
+  );
+}
+
+// Text entry content
+function TextEntryContent({ entry, isFocused }: { entry: TextClipboardEntry; isFocused: boolean }) {
+  const displayContent = entry.content.length > 200
+    ? entry.content.slice(0, 200) + '...'
+    : entry.content;
+
+  return (
+    <p className={`text-sm break-words whitespace-pre-wrap font-mono line-clamp-2 ${
+      isFocused ? 'text-white font-semibold' : 'text-[color:var(--app-text)]'
+    }`}>
+      {displayContent}
+    </p>
+  );
+}
+
+// Image entry content
+function ImageEntryContent({ entry, isFocused, thumbnailCache }: {
+  entry: ImageClipboardEntry;
+  isFocused: boolean;
+  thumbnailCache: Record<string, string>;
+}) {
+  const thumbnailUrl = thumbnailCache[entry.thumbnailPath];
+
+  return (
+    <div className="flex items-start gap-3">
+      <div className={`w-16 h-16 rounded-lg overflow-hidden flex-shrink-0 border ${
+        isFocused ? 'border-white/50' : 'border-[color:var(--app-border)]'
+      } bg-[color:var(--app-surface-2)]`}>
+        {thumbnailUrl ? (
+          <img
+            src={thumbnailUrl}
+            alt="Clipboard image"
+            className="w-full h-full object-cover"
+          />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center">
+            <Image className={`w-6 h-6 ${isFocused ? 'text-white/70' : 'text-[color:var(--app-text-muted)]'}`} />
+          </div>
+        )}
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className={`flex items-center gap-2 text-sm ${
+          isFocused ? 'text-white font-semibold' : 'text-[color:var(--app-text)]'
+        }`}>
+          <Image className="w-4 h-4" />
+          <span>Image</span>
+        </div>
+        <p className={`text-xs mt-1 ${isFocused ? 'text-white/70' : 'text-[color:var(--app-text-muted)]'}`}>
+          {entry.width} x {entry.height} - {entry.format.toUpperCase()}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// Files entry content
+function FilesEntryContent({ entry, isFocused }: { entry: FilesClipboardEntry; isFocused: boolean }) {
+  const maxDisplay = 3;
+  const displayFiles = entry.files.slice(0, maxDisplay);
+  const remaining = entry.files.length - maxDisplay;
+
+  const getFileIcon = (file: { isDirectory: boolean; extension: string }) => {
+    if (file.isDirectory) return <Folder className="w-4 h-4" />;
+    return <File className="w-4 h-4" />;
+  };
+
+  return (
+    <div className="space-y-1">
+      <div className={`flex items-center gap-2 text-sm ${
+        isFocused ? 'text-white font-semibold' : 'text-stone-200'
+      }`}>
+        <File className="w-4 h-4" />
+        <span>{entry.files.length} file{entry.files.length !== 1 ? 's' : ''}</span>
+      </div>
+      <div className="space-y-0.5">
+        {displayFiles.map((file, idx) => (
+          <div
+            key={idx}
+            className={`flex items-center gap-2 text-xs ${
+              isFocused ? 'text-purple-100' : 'text-stone-400'
+            }`}
+          >
+            {getFileIcon(file)}
+            <span className="truncate">{file.name}</span>
+          </div>
+        ))}
+        {remaining > 0 && (
+          <p className={`text-xs ${isFocused ? 'text-purple-200' : 'text-stone-500'}`}>
+            +{remaining} more
+          </p>
+        )}
+      </div>
+    </div>
   );
 }

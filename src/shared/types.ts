@@ -195,12 +195,12 @@ export interface Settings {
   voiceInput: {
     enabled: boolean;
     hotkey: string;
-    provider: 'browser' | 'whisper_cpp';
-    whisperCpp: {
-      /** Path to whisper.cpp CLI executable (e.g. whisper-cli/main). */
-      binaryPath: string;
-      /** Path to a ggml/gguf model file (e.g. ggml-base.en.bin). */
-      modelPath: string;
+    provider: 'browser' | 'openai_whisper';
+    openaiWhisper: {
+      /** OpenAI API key for Whisper API. */
+      apiKey: string;
+      /** Model name (default: whisper-1). */
+      model: string;
     };
     language: string;
     showVisualFeedback: boolean;
@@ -208,6 +208,18 @@ export interface Settings {
   recording: {
     /** Output folder for recordings. Empty string means app directory. */
     outputPath: string;
+  };
+  hotkeys: {
+    /** Hotkey to open clipboard history (default: Ctrl+Shift+H) */
+    clipboardHistory: string;
+    /** Hotkey for speech-to-text transcription only (default: Ctrl+Shift+T) */
+    voiceTranscribe: string;
+    /** Hotkey for speech-to-command execution (default: Ctrl+Shift+C) */
+    voiceCommand: string;
+    /** Hotkey to start/stop audio recording (default: Ctrl+Shift+A) */
+    audioRecording: string;
+    /** Hotkey to start/stop video recording (default: Ctrl+Shift+R) */
+    videoRecording: string;
   };
 }
 
@@ -265,6 +277,7 @@ export const IPC_CHANNELS = {
   CLIPBOARD_HISTORY_PIN: 'clipboard:history:pin',
   CLIPBOARD_HISTORY_RESTORE: 'clipboard:history:restore',
   CLIPBOARD_HISTORY_SEARCH: 'clipboard:history:search',
+  CLIPBOARD_HISTORY_GET_IMAGE: 'clipboard:history:getImage',
 
   // App control
   APP_TOGGLE_WINDOW: 'app:toggleWindow',
@@ -437,13 +450,43 @@ export interface ActionLog {
 }
 
 // Clipboard History types
-export interface ClipboardEntry {
+export type ClipboardContentType = 'text' | 'image' | 'files';
+
+interface ClipboardEntryBase {
   id: string;
-  content: string;
   timestamp: number;
   pinned: boolean;
   size: number;
+  type: ClipboardContentType;
 }
+
+export interface TextClipboardEntry extends ClipboardEntryBase {
+  type: 'text';
+  content: string;
+}
+
+export interface ImageClipboardEntry extends ClipboardEntryBase {
+  type: 'image';
+  thumbnailPath: string;
+  imagePath: string;
+  width: number;
+  height: number;
+  format: 'png' | 'jpeg';
+}
+
+export interface ClipboardFileReference {
+  path: string;
+  name: string;
+  extension: string;
+  isDirectory: boolean;
+}
+
+export interface FilesClipboardEntry extends ClipboardEntryBase {
+  type: 'files';
+  files: ClipboardFileReference[];
+}
+
+export type ClipboardEntry = TextClipboardEntry | ImageClipboardEntry | FilesClipboardEntry;
 
 // Recording Status
 export enum RecordingStatus {

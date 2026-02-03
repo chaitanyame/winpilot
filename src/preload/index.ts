@@ -78,6 +78,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   clipboardHistoryPin: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.CLIPBOARD_HISTORY_PIN, id),
   clipboardHistoryRestore: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.CLIPBOARD_HISTORY_RESTORE, id),
   clipboardHistorySearch: (query: string) => ipcRenderer.invoke(IPC_CHANNELS.CLIPBOARD_HISTORY_SEARCH, query),
+  clipboardHistoryGetImage: (imagePath: string) => ipcRenderer.invoke(IPC_CHANNELS.CLIPBOARD_HISTORY_GET_IMAGE, imagePath),
+  pasteClipboardItem: (entryId: string) => ipcRenderer.invoke('clipboard:pasteItem', entryId),
 
   // Copilot
   sendMessage: (message: string) => ipcRenderer.invoke(IPC_CHANNELS.COPILOT_SEND_MESSAGE, message),
@@ -159,6 +161,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   voiceIsRecording: () => ipcRenderer.invoke('voice:isRecording'),
   voiceTranscribe: (params: { audio: ArrayBuffer; mimeType: string; language?: string }) =>
     ipcRenderer.invoke('voice:transcribe', params),
+  voiceGetApiKeyStatus: () => ipcRenderer.invoke('voice:getApiKeyStatus'),
+  voiceSetApiKey: (apiKey: string) => ipcRenderer.invoke('voice:setApiKey', apiKey),
+  voiceClearApiKey: () => ipcRenderer.invoke('voice:clearApiKey'),
 
   onVoiceRecordingStarted: (callback: () => void) => {
     const handler = () => callback();
@@ -182,6 +187,33 @@ contextBridge.exposeInMainWorld('electronAPI', {
     const handler = (_: unknown, error: string) => callback(error);
     ipcRenderer.on('voice:error', handler);
     return () => ipcRenderer.removeListener('voice:error', handler);
+  },
+
+  // Hotkey events
+  onHotkeyClipboardHistory: (callback: () => void) => {
+    const handler = () => callback();
+    ipcRenderer.on('hotkey:clipboardHistory', handler);
+    return () => ipcRenderer.removeListener('hotkey:clipboardHistory', handler);
+  },
+  onHotkeyVoiceTranscribe: (callback: () => void) => {
+    const handler = () => callback();
+    ipcRenderer.on('hotkey:voiceTranscribe', handler);
+    return () => ipcRenderer.removeListener('hotkey:voiceTranscribe', handler);
+  },
+  onHotkeyVoiceCommand: (callback: () => void) => {
+    const handler = () => callback();
+    ipcRenderer.on('hotkey:voiceCommand', handler);
+    return () => ipcRenderer.removeListener('hotkey:voiceCommand', handler);
+  },
+  onHotkeyAudioRecording: (callback: () => void) => {
+    const handler = () => callback();
+    ipcRenderer.on('hotkey:audioRecording', handler);
+    return () => ipcRenderer.removeListener('hotkey:audioRecording', handler);
+  },
+  onHotkeyVideoRecording: (callback: () => void) => {
+    const handler = () => callback();
+    ipcRenderer.on('hotkey:videoRecording', handler);
+    return () => ipcRenderer.removeListener('hotkey:videoRecording', handler);
   },
 
   // Action log export
@@ -356,6 +388,8 @@ export interface ElectronAPI {
   clipboardHistoryPin: (id: string) => Promise<boolean>;
   clipboardHistoryRestore: (id: string) => Promise<boolean>;
   clipboardHistorySearch: (query: string) => Promise<ClipboardEntry[]>;
+  clipboardHistoryGetImage: (imagePath: string) => Promise<string | null>;
+  pasteClipboardItem: (entryId: string) => Promise<{ success: boolean; error?: string }>;
 
   sendMessage: (message: string) => Promise<void>;
   cancelMessage: () => Promise<void>;
@@ -400,6 +434,16 @@ export interface ElectronAPI {
   onVoiceTranscript: (callback: (transcript: string) => void) => () => void;
   onVoiceError: (callback: (error: string) => void) => () => void;
   voiceTranscribe: (params: { audio: ArrayBuffer; mimeType: string; language?: string }) => Promise<{ success: boolean; transcript?: string; error?: string }>;
+  voiceGetApiKeyStatus: () => Promise<{ hasKey: boolean }>;
+  voiceSetApiKey: (apiKey: string) => Promise<{ success: boolean }>;
+  voiceClearApiKey: () => Promise<{ success: boolean }>;
+
+  // Hotkey event listeners
+  onHotkeyClipboardHistory: (callback: () => void) => () => void;
+  onHotkeyVoiceTranscribe: (callback: () => void) => () => void;
+  onHotkeyVoiceCommand: (callback: () => void) => () => void;
+  onHotkeyAudioRecording: (callback: () => void) => () => void;
+  onHotkeyVideoRecording: (callback: () => void) => () => void;
 
   exportActionLogs: (payload: { logs: ActionLog[]; suggestedName?: string }) => Promise<{ success: boolean; path?: string; cancelled?: boolean; error?: string }>;
   onOpenSettings: (callback: () => void) => () => void;

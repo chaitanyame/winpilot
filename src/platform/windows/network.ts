@@ -9,7 +9,7 @@ const execAsync = promisify(exec);
 
 export class WindowsNetwork implements INetwork {
 
-  async getNetworkInfo(_params: { includeInactive?: boolean }): Promise<NetworkInfoData> {
+  async getNetworkInfo(): Promise<NetworkInfoData> {
     try {
       // Get hostname
       const { stdout: hostnameOutput } = await execAsync('hostname');

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { X, Moon, Sun, Monitor, Keyboard, Shield, FolderClosed, Brain, Mic, Video, FolderOpen, Check } from 'lucide-react';
+import { X, Moon, Sun, Monitor, Keyboard, Shield, FolderClosed, Brain, Mic, Video, FolderOpen, Check, Command } from 'lucide-react';
 import type { Settings, AIModel, ThemeId, AppearanceMode } from '../../shared/types';
 
 interface Props {
@@ -10,8 +10,9 @@ interface Props {
 
 export function SettingsPanel({ isOpen, onClose }: Props) {
   const [settings, setSettings] = useState<Settings | null>(null);
-  const [activeTab, setActiveTab] = useState<'general' | 'ai' | 'voice' | 'recording' | 'permissions' | 'safety'>('general');
+  const [activeTab, setActiveTab] = useState<'general' | 'ai' | 'voice' | 'recording' | 'hotkeys' | 'permissions' | 'safety'>('general');
   const [appPath, setAppPath] = useState<string>('');
+
 
   const themeOptions: Array<{ id: ThemeId; name: string; description: string; swatches: string[] }> = [
     {
@@ -102,6 +103,7 @@ export function SettingsPanel({ isOpen, onClose }: Props) {
     { id: 'ai', label: 'AI', icon: Brain },
     { id: 'voice', label: 'Voice', icon: Mic },
     { id: 'recording', label: 'Recording', icon: Video },
+    { id: 'hotkeys', label: 'Hotkeys', icon: Command },
     { id: 'permissions', label: 'Permissions', icon: Shield },
     { id: 'safety', label: 'Safety', icon: FolderClosed },
   ] as const;
@@ -413,22 +415,60 @@ export function SettingsPanel({ isOpen, onClose }: Props) {
                   onChange={(e) => updateSettings({
                     voiceInput: {
                       ...settings.voiceInput,
-                      provider: e.target.value as 'browser' | 'whisper_cpp'
+                      provider: e.target.value as 'browser' | 'openai_whisper'
                     }
                   })}
                   className="w-full px-4 py-2 rounded-lg border border-dark-200 dark:border-dark-600
                            bg-white dark:bg-dark-700 text-dark-700 dark:text-dark-300"
                   disabled={!settings.voiceInput?.enabled}
                 >
-                  <option value="browser">Web Speech API (Browser-based)</option>
-                  <option value="whisper_cpp">Whisper.cpp (Offline, requires setup)</option>
+                  <option value="browser">Web Speech API (Built-in, free, offline)</option>
+                  <option value="openai_whisper">OpenAI Whisper API (Cloud, requires API key)</option>
                 </select>
                 <p className="text-xs text-dark-500 mt-1">
-                  {settings.voiceInput?.provider === 'whisper_cpp'
-                    ? 'Offline model, requires Whisper binary and model files' 
-                    : 'Online service, uses browser\'s built-in speech recognition'}
+                  {settings.voiceInput?.provider === 'openai_whisper'
+                    ? 'Cloud-based transcription via OpenAI Whisper API - highest accuracy'
+                    : 'Browser built-in speech recognition - works offline, no setup required'}
                 </p>
               </div>
+
+              {/* OpenAI API Key (only show for openai_whisper provider) */}
+              {settings.voiceInput?.provider === 'openai_whisper' && (
+                <div>
+                  <label className="block text-sm font-medium text-dark-700 dark:text-dark-300 mb-2">
+                    OpenAI API Key
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      type="password"
+                      placeholder="sk-..."
+                      className="flex-1 px-4 py-2 rounded-lg border border-dark-200 dark:border-dark-600 
+                               bg-white dark:bg-dark-700 text-dark-700 dark:text-dark-300"
+                      disabled={!settings.voiceInput?.enabled}
+                      onBlur={async (e) => {
+                        const apiKey = e.target.value.trim();
+                        if (apiKey) {
+                          await window.electronAPI.voiceSetApiKey(apiKey);
+                          e.target.value = ''; // Clear input for security
+                        }
+                      }}
+                    />
+                    <button
+                      onClick={async () => {
+                        await window.electronAPI.voiceClearApiKey();
+                        alert('API key cleared');
+                      }}
+                      className="px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg
+                               transition-colors font-medium"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                  <p className="text-xs text-dark-500 mt-1">
+                    Get your API key from <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener" className="text-primary-500 hover:underline">OpenAI Platform</a>
+                  </p>
+                </div>
+              )}
 
               {/* Language */}
               <div>
@@ -568,6 +608,109 @@ export function SettingsPanel({ isOpen, onClose }: Props) {
                   <Video className="w-3 h-3 inline mr-1" />
                   Recordings are saved as MP4 (screen/webcam) or MP3 (audio). Use "start screen recording" or
                   "start audio recording" commands to begin.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'hotkeys' && (
+            <div className="space-y-6">
+              <div className="p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg mb-4">
+                <p className="text-xs text-blue-700 dark:text-blue-300">
+                  <Command className="w-3 h-3 inline mr-1" />
+                  Configure global hotkeys for quick actions. Use Ctrl (Windows/Linux) or Cmd (Mac) + Shift + a letter.
+                </p>
+              </div>
+
+              {/* Clipboard History Hotkey */}
+              <div>
+                <label className="block text-sm font-medium text-dark-700 dark:text-dark-300 mb-2">
+                  Clipboard History
+                </label>
+                <input
+                  type="text"
+                  value={settings.hotkeys?.clipboardHistory || 'CommandOrControl+Shift+H'}
+                  readOnly
+                  className="w-full px-4 py-2 rounded-lg border border-dark-200 dark:border-dark-600 
+                           bg-dark-50 dark:bg-dark-700 text-dark-600 dark:text-dark-400"
+                />
+                <p className="text-xs text-dark-500 mt-1">
+                  Open clipboard history viewer
+                </p>
+              </div>
+
+              {/* Voice Transcribe Hotkey */}
+              <div>
+                <label className="block text-sm font-medium text-dark-700 dark:text-dark-300 mb-2">
+                  Voice Transcribe (Speech-to-Text)
+                </label>
+                <input
+                  type="text"
+                  value={settings.hotkeys?.voiceTranscribe || 'CommandOrControl+Shift+T'}
+                  readOnly
+                  className="w-full px-4 py-2 rounded-lg border border-dark-200 dark:border-dark-600 
+                           bg-dark-50 dark:bg-dark-700 text-dark-600 dark:text-dark-400"
+                />
+                <p className="text-xs text-dark-500 mt-1">
+                  Transcribe speech to text without executing commands
+                </p>
+              </div>
+
+              {/* Voice Command Hotkey */}
+              <div>
+                <label className="block text-sm font-medium text-dark-700 dark:text-dark-300 mb-2">
+                  Voice Command (Speech-to-Command)
+                </label>
+                <input
+                  type="text"
+                  value={settings.hotkeys?.voiceCommand || 'CommandOrControl+Shift+C'}
+                  readOnly
+                  className="w-full px-4 py-2 rounded-lg border border-dark-200 dark:border-dark-600 
+                           bg-dark-50 dark:bg-dark-700 text-dark-600 dark:text-dark-400"
+                />
+                <p className="text-xs text-dark-500 mt-1">
+                  Speak a command and execute it immediately
+                </p>
+              </div>
+
+              {/* Audio Recording Hotkey */}
+              <div>
+                <label className="block text-sm font-medium text-dark-700 dark:text-dark-300 mb-2">
+                  Audio Recording
+                </label>
+                <input
+                  type="text"
+                  value={settings.hotkeys?.audioRecording || 'CommandOrControl+Shift+A'}
+                  readOnly
+                  className="w-full px-4 py-2 rounded-lg border border-dark-200 dark:border-dark-600 
+                           bg-dark-50 dark:bg-dark-700 text-dark-600 dark:text-dark-400"
+                />
+                <p className="text-xs text-dark-500 mt-1">
+                  Start/stop audio recording
+                </p>
+              </div>
+
+              {/* Video Recording Hotkey */}
+              <div>
+                <label className="block text-sm font-medium text-dark-700 dark:text-dark-300 mb-2">
+                  Video Recording
+                </label>
+                <input
+                  type="text"
+                  value={settings.hotkeys?.videoRecording || 'CommandOrControl+Shift+R'}
+                  readOnly
+                  className="w-full px-4 py-2 rounded-lg border border-dark-200 dark:border-dark-600 
+                           bg-dark-50 dark:bg-dark-700 text-dark-600 dark:text-dark-400"
+                />
+                <p className="text-xs text-dark-500 mt-1">
+                  Start/stop screen recording
+                </p>
+              </div>
+
+              <div className="p-3 bg-amber-50 dark:bg-amber-900/20 rounded-lg">
+                <p className="text-xs text-amber-700 dark:text-amber-300">
+                  <Keyboard className="w-3 h-3 inline mr-1" />
+                  Hotkey customization coming soon. Current shortcuts are fixed to prevent conflicts.
                 </p>
               </div>
             </div>

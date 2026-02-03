@@ -3,7 +3,6 @@
 import Store from 'electron-store';
 import { Settings, ScheduledTask, TaskLog, Timer, ClipboardEntry } from '../shared/types';
 import { DEFAULT_SETTINGS, DEFAULT_MCP_SERVERS } from '../shared/constants';
-import { getBundledWhisperPaths } from '../utils/whisper-path';
 import { StoredMCPServer, MCPServerConfig } from '../shared/mcp-types';
 
 interface StoreSchema {
@@ -113,34 +112,23 @@ export function getSettings(): Settings {
     needsUpdate = true;
   }
 
-  // Migrate legacy "whisper" provider (API-based) to local whisper.cpp provider.
-  if (settings.voiceInput?.provider === ('whisper' as any)) {
-    settings.voiceInput.provider = 'whisper_cpp';
+  // Migrate legacy providers to browser (faster-whisper removed)
+  if (settings.voiceInput?.provider && !['browser', 'openai_whisper'].includes(settings.voiceInput.provider)) {
+    settings.voiceInput.provider = 'browser';
     needsUpdate = true;
   }
 
-  // Ensure whisper.cpp config exists.
-  if (!settings.voiceInput?.whisperCpp) {
-    settings.voiceInput.whisperCpp = DEFAULT_SETTINGS.voiceInput.whisperCpp;
+  // Ensure openaiWhisper config exists.
+  if (!settings.voiceInput?.openaiWhisper) {
+    settings.voiceInput.openaiWhisper = DEFAULT_SETTINGS.voiceInput.openaiWhisper;
     needsUpdate = true;
   }
 
-  // Auto-configure bundled whisper.cpp if available and paths are missing.
-  if (settings.voiceInput) {
-    const bundledWhisper = getBundledWhisperPaths();
-    if (bundledWhisper.available) {
-      const binaryMissing = !settings.voiceInput.whisperCpp?.binaryPath?.trim();
-      const modelMissing = !settings.voiceInput.whisperCpp?.modelPath?.trim();
-      if (binaryMissing || modelMissing) {
-        settings.voiceInput.whisperCpp = {
-          binaryPath: bundledWhisper.binaryPath || '',
-          modelPath: bundledWhisper.modelPath || '',
-        };
-        settings.voiceInput.provider = 'whisper_cpp';
-        settings.voiceInput.enabled = true;
-        needsUpdate = true;
-      }
-    }
+  // Remove old whisperCpp/fasterWhisper config if it exists
+  if (settings.voiceInput && ('whisperCpp' in settings.voiceInput || 'fasterWhisper' in settings.voiceInput)) {
+    delete (settings.voiceInput as any).whisperCpp;
+    delete (settings.voiceInput as any).fasterWhisper;
+    needsUpdate = true;
   }
 
   if (settings.ui?.menuBarMode === undefined) {
@@ -155,6 +143,12 @@ export function getSettings(): Settings {
 
   if (!settings.recording) {
     settings.recording = DEFAULT_SETTINGS.recording;
+    needsUpdate = true;
+  }
+
+  // Add hotkeys section if missing
+  if (!settings.hotkeys) {
+    settings.hotkeys = DEFAULT_SETTINGS.hotkeys;
     needsUpdate = true;
   }
 

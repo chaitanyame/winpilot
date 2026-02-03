@@ -512,6 +512,42 @@ export function setAppIndexMeta(key: string, value: string): void {
   stmt.run(key, value, Date.now());
 }
 
+// ============================================================================
+// App Settings Operations (for sensitive data like API keys)
+// ============================================================================
+
+/**
+ * Get an app setting value from the database
+ */
+export function getAppSetting(key: string): string | null {
+  const database = getDatabase();
+  const stmt = database.prepare('SELECT value FROM settings WHERE key = ?');
+  const row = stmt.get(key) as { value: string } | undefined;
+  return row?.value ?? null;
+}
+
+/**
+ * Set an app setting value in the database
+ */
+export function setAppSetting(key: string, value: string): void {
+  const database = getDatabase();
+  const stmt = database.prepare(`
+    INSERT INTO settings (key, value, updated_at)
+    VALUES (?, ?, ?)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+  `);
+  stmt.run(key, value, Date.now());
+}
+
+/**
+ * Delete an app setting from the database
+ */
+export function deleteAppSetting(key: string): void {
+  const database = getDatabase();
+  const stmt = database.prepare('DELETE FROM settings WHERE key = ?');
+  stmt.run(key);
+}
+
 /**
  * Close the database
  */

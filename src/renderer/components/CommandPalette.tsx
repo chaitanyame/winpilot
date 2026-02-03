@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { motion } from 'framer-motion';
-import { Send, X, History, Square, Monitor, Plug, Trash2, Settings as SettingsIcon, Clock, Mic, MicOff, Volume2, Brain, Minus, Maximize2, Expand, ScrollText, Copy, Video, Loader2, Sparkles, ChevronRight, ChevronLeft } from 'lucide-react';
+import { Send, X, History, Square, Monitor, Plug, Trash2, Settings as SettingsIcon, Clock, Mic, MicOff, Volume2, Brain, Minus, Maximize2, ScrollText, Copy, Video, Loader2, Sparkles, ChevronRight, ChevronLeft } from 'lucide-react';
 import { MessageStream } from './MessageStream';
 import { MCPServersPanel } from './MCPServersPanel';
 import { SettingsPanel } from './SettingsPanel';
@@ -153,7 +153,7 @@ export function CommandPalette() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
-  const voiceProviderRef = useRef<'browser' | 'whisper_cpp'>('browser');
+  const voiceProviderRef = useRef<'browser' | 'openai_whisper'>('browser');
   const voiceErrorTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const speechTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -690,7 +690,7 @@ export function CommandPalette() {
           clearTimeout(speechTimeoutRef.current);
         }
 
-        if (voiceProviderRef.current === 'whisper_cpp') {
+        if (voiceProviderRef.current === 'openai_whisper') {
           await startWhisperRecording();
           return;
         }
@@ -733,7 +733,7 @@ export function CommandPalette() {
         console.log('Voice recording stopped from hotkey');
         window.electronAPI.setAutoHideSuppressed(true);
 
-        if (voiceProviderRef.current === 'whisper_cpp') {
+        if (voiceProviderRef.current === 'openai_whisper') {
           await stopWhisperRecordingAndTranscribe();
           return;
         }
@@ -885,7 +885,7 @@ export function CommandPalette() {
     ? 'Transcribing...'
     : isSpeechDetected
       ? 'Capturing...'
-      : voiceProvider === 'whisper_cpp'
+      : voiceProvider === 'openai_whisper'
         ? 'Recording...'
         : 'Listening...';
 

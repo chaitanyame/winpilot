@@ -51,11 +51,13 @@ interface SpeechRecognitionErrorEvent extends Event {
   readonly message: string;
 }
 
+// eslint-disable-next-line no-var
 declare var SpeechRecognition: {
   prototype: SpeechRecognition;
   new(): SpeechRecognition;
 };
 
+// eslint-disable-next-line no-var
 declare var webkitSpeechRecognition: {
   prototype: SpeechRecognition;
   new(): SpeechRecognition;

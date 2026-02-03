@@ -45,6 +45,9 @@ export interface ISystem {
   lockScreen(): Promise<boolean>;
   sleep(): Promise<boolean>;
   getSystemInfo(params: { sections?: string[] }): Promise<SystemInfoData>;
+  simulatePaste(targetHwnd?: number): Promise<boolean>;
+  getForegroundWindowHandle(): Promise<number>;
+  setForegroundWindow(hwnd: number): Promise<boolean>;
 }
 
 // Process Interface

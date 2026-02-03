@@ -46,6 +46,7 @@
     "@types/better-sqlite3": "^7.6.13",
     "@types/menubar": "^5.1.6",
     "better-sqlite3": "^11.10.0",
+    "clipboard-event": "^1.6.0",
     "electron-store": "^8.1.0",
     "framer-motion": "^10.16.16",
     "lucide-react": "^0.303.0",

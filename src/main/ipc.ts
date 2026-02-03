@@ -1,17 +1,14 @@
 // IPC Handlers for Main Process
 
-import { ipcMain, clipboard, shell, dialog, app } from 'electron';
+import { ipcMain, clipboard, shell, dialog, app, BrowserWindow } from 'electron';
 import fs from 'fs/promises';
 import fsSync from 'fs';
 import path from 'path';
-import { execFile as execFileCallback } from 'child_process';
-import { promisify } from 'util';
 
-// Cache voice transcription utilities at module level for performance
-const execFileAsync = promisify(execFileCallback);
 import { IPC_CHANNELS, ScheduledTask, Timer, ActionLog, Recording, RecordingType } from '../shared/types';
 import { MCP_IPC_CHANNELS, MCPServerConfig } from '../shared/mcp-types';
 import { getSettings, setSettings, getHistory, addToHistory, clearHistory, getMcpServers, addMcpServer, updateMcpServer, deleteMcpServer, toggleMcpServer, getScheduledTasks, addScheduledTask, updateScheduledTask, deleteScheduledTask, getTaskLogs } from './store';
+import { getAppSetting, setAppSetting, deleteAppSetting } from './database';
 import { hideCommandWindow, showCommandWindow, resizeCommandWindow, minimizeCommandWindow, maximizeCommandWindow, fitWindowToScreen, getCommandWindow, setAutoHideSuppressed } from './windows';
 import { updateHotkey, registerVoiceHotkey, unregisterVoiceHotkey } from './hotkeys';
 import { updateTrayMenu } from './tray';
@@ -35,6 +32,56 @@ async function ensureIntentRouterInitialized() {
   if (!intentRouterInitialized) {
     await intentRouter.initialize();
     intentRouterInitialized = true;
+  }
+}
+
+// Helper: Transcribe with OpenAI Whisper API
+async function transcribeWithOpenAI(audioBuffer: Buffer, language: string, settings: any): Promise<{ success: boolean; transcript?: string; error?: string }> {
+  const apiKey = getAppSetting('openai_whisper_api_key');
+  
+  if (!apiKey || !apiKey.trim()) {
+    return { success: false, error: 'OpenAI API key not configured. Please add your API key in Settings -> Voice.' };
+  }
+
+  const model = settings.voiceInput.openaiWhisper?.model || 'whisper-1';
+
+  try {
+    // Create form data (multipart/form-data)
+    const FormData = require('form-data');
+    const form = new FormData();
+    
+    form.append('file', audioBuffer, {
+      filename: 'audio.wav',
+      contentType: 'audio/wav',
+    });
+    form.append('model', model);
+    form.append('language', language);
+
+    // Make request to OpenAI API
+    const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        ...form.getHeaders(),
+      },
+      body: form,
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      return { success: false, error: `OpenAI API error: ${response.status} ${errorText}` };
+    }
+
+    const result = await response.json() as { text: string };
+    const transcript = result.text?.trim();
+
+    if (!transcript) {
+      return { success: false, error: 'OpenAI API returned empty transcript.' };
+    }
+
+    return { success: true, transcript };
+  } catch (error: any) {
+    return { success: false, error: error?.message || String(error) };
   }
 }
 
@@ -77,7 +124,15 @@ export function setupIpcHandlers(): void {
   ipcMain.handle('app:getHistory', () => getHistory());
   ipcMain.handle('app:clearHistory', () => clearHistory());
 
-  ipcMain.on('app:hide', () => hideCommandWindow());
+  ipcMain.on('app:hide', (event: Electron.IpcMainEvent) => {
+    const senderWindow = BrowserWindow.fromWebContents(event.sender);
+    const commandWindow = getCommandWindow();
+    if (commandWindow && senderWindow === commandWindow) {
+      hideCommandWindow();
+      return;
+    }
+    senderWindow?.hide();
+  });
   ipcMain.on('app:show', () => showCommandWindow());
   ipcMain.on('app:autoHideSuppressed', (event: Electron.IpcMainEvent, value: boolean) => {
     setAutoHideSuppressed(Boolean(value));
@@ -265,6 +320,62 @@ export function setupIpcHandlers(): void {
 
   ipcMain.handle(IPC_CHANNELS.CLIPBOARD_HISTORY_SEARCH, (_, query: string) => {
     return clipboardMonitor.searchHistory(query);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.CLIPBOARD_HISTORY_GET_IMAGE, async (_, imagePath: string) => {
+    return clipboardMonitor.getImageDataUrl(imagePath);
+  });
+
+  // Clipboard paste with auto-paste (supports text, image, and files)
+  ipcMain.handle('clipboard:pasteItem', async (_event, entryId: string) => {
+    try {
+      console.log('[Paste] Starting paste operation for entry:', entryId);
+      const { getPlatformAdapter } = await import('../platform');
+      const adapter = getPlatformAdapter();
+
+      // 0. Use captured foreground window handle from when clipboard was opened
+      const { getPreviousForegroundWindowHandle } = await import('./windows');
+      const foregroundHwnd = getPreviousForegroundWindowHandle();
+      console.log('[Paste] Stored foreground window handle:', foregroundHwnd);
+
+      // 1. Restore entry to system clipboard
+      const restored = clipboardMonitor.restoreToClipboard(entryId);
+      if (!restored) {
+        return { success: false, error: 'Failed to restore clipboard entry' };
+      }
+      console.log('[Paste] Entry restored to clipboard');
+
+      // 2. Hide clipboard window
+      const { hideClipboardHistoryWindow } = await import('./windows');
+      await hideClipboardHistoryWindow();
+      console.log('[Paste] Clipboard window hidden');
+
+      // 3. Restore focus to the original foreground window
+      if (foregroundHwnd && foregroundHwnd !== 0) {
+        await adapter.system.setForegroundWindow(foregroundHwnd);
+        console.log('[Paste] Restored focus to window:', foregroundHwnd);
+
+        // 4. Wait for focus to settle
+        await new Promise(resolve => setTimeout(resolve, 300));
+      } else {
+        console.log('[Paste] No valid foreground window, waiting for OS to restore focus...');
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+
+      console.log('[Paste] About to simulate paste...');
+
+      // 5. Simulate Ctrl+V paste (also sets foreground inside script)
+      const success = await adapter.system.simulatePaste(foregroundHwnd ?? undefined);
+      console.log('[Paste] Paste simulation result:', success);
+
+      return { success };
+    } catch (error) {
+      console.error('[Paste] Error:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error)
+      };
+    }
   });
 
   // Copilot handlers
@@ -541,61 +652,43 @@ export function setupIpcHandlers(): void {
         return { success: false, error: 'Voice input is disabled in settings.' };
       }
 
-      if (settings.voiceInput.provider !== 'whisper_cpp') {
-        return { success: false, error: 'Voice provider is not set to whisper.cpp.' };
-      }
-
-      const binaryPath = settings.voiceInput.whisperCpp?.binaryPath?.trim();
-      const modelPath = settings.voiceInput.whisperCpp?.modelPath?.trim();
-      if (!binaryPath || !modelPath) {
-        return { success: false, error: 'Configure whisper.cpp binary path and model path in Settings -> Voice.' };
-      }
-
+      const provider = settings.voiceInput.provider;
       const audioBuffer = Buffer.from(payload.audio);
-      const language = payload.language?.trim() || undefined;
+      const language = payload.language?.trim() || 'en';
 
-      // whisper.cpp CLI expects a WAV file; renderer sends PCM16 WAV.
-      const tmpDir = await fs.mkdtemp(path.join(app.getPath('temp'), 'desktop-commander-whispercpp-'));
-      const inputPath = path.join(tmpDir, 'input.wav');
-      const outBase = path.join(tmpDir, 'output');
-      const outTxt = `${outBase}.txt`;
-
-      await fs.writeFile(inputPath, audioBuffer);
-
-      const args: string[] = [
-        '-m', modelPath,
-        '-f', inputPath,
-        '-otxt',
-        '-of', outBase,
-      ];
-      if (language) {
-        args.push('-l', language);
+      // Route to appropriate provider
+      if (provider === 'openai_whisper') {
+        return await transcribeWithOpenAI(audioBuffer, language, settings);
+      } else if (provider === 'browser') {
+        // Browser provider is handled in renderer, this should not be called
+        return { success: false, error: 'Browser provider should be handled in renderer process.' };
+      } else {
+        return { success: false, error: `Unknown provider: ${provider}. Use browser or openai_whisper.` };
       }
-
-      const { stdout, stderr } = await execFileAsync(binaryPath, args, {
-        windowsHide: true,
-        timeout: 5 * 60 * 1000,
-        maxBuffer: 1024 * 1024 * 10,
-      });
-
-      let transcript = '';
-      try {
-        transcript = (await fs.readFile(outTxt, 'utf8')).trim();
-      } catch {
-        transcript = (stdout || '').trim();
-      }
-
-      if (!transcript) {
-        return { success: false, error: (stderr || '').trim() || 'whisper.cpp produced no transcript.' };
-      }
-
-      // Best-effort cleanup.
-      await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => undefined);
-
-      return { success: true, transcript };
     } catch (error: any) {
       return { success: false, error: error?.message || String(error) };
     }
+  });
+
+  // OpenAI API key management (never sent to renderer)
+  ipcMain.handle('voice:getApiKeyStatus', () => {
+    const apiKey = getAppSetting('openai_whisper_api_key');
+    return { hasKey: Boolean(apiKey && apiKey.trim()) };
+  });
+
+  ipcMain.handle('voice:setApiKey', (_evt, apiKey: string) => {
+    if (apiKey && apiKey.trim()) {
+      setAppSetting('openai_whisper_api_key', apiKey.trim());
+      return { success: true };
+    } else {
+      deleteAppSetting('openai_whisper_api_key');
+      return { success: true };
+    }
+  });
+
+  ipcMain.handle('voice:clearApiKey', () => {
+    deleteAppSetting('openai_whisper_api_key');
+    return { success: true };
   });
 
   // Action logs export (renderer keeps logs in-memory; this just persists them to disk)

@@ -51,6 +51,9 @@ class LinuxSystem implements ISystem {
   async getSystemInfo(): Promise<SystemInfoData> {
     throw new Error('Not implemented');
   }
+  async simulatePaste(_targetHwnd?: number): Promise<boolean> { return false; }
+  async getForegroundWindowHandle(): Promise<number> { return 0; }
+  async setForegroundWindow(): Promise<boolean> { return false; }
 }
 
 class LinuxProcess implements IProcess {
