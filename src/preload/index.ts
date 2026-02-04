@@ -178,6 +178,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   voiceToClipboardTranscribe: (params: { audio: ArrayBuffer; mimeType: string; language?: string }) =>
     ipcRenderer.invoke('voiceToClipboard:transcribe', params),
   voiceToClipboardIsRecording: () => ipcRenderer.invoke('voiceToClipboard:isRecording'),
+  voiceToClipboardPaste: () => ipcRenderer.invoke('voiceToClipboard:paste'),
+  
+  onVoiceToClipboardStop: (callback: () => void) => {
+    const handler = () => callback();
+    ipcRenderer.on('voiceToClipboard:stop', handler);
+    return () => ipcRenderer.removeListener('voiceToClipboard:stop', handler);
+  },
 
   onVoiceRecordingStarted: (callback: () => void) => {
     const handler = () => callback();
@@ -498,6 +505,8 @@ export interface ElectronAPI {
   // Voice-to-clipboard API (Ctrl+Shift+W)
   voiceToClipboardTranscribe: (params: { audio: ArrayBuffer; mimeType: string; language?: string }) => Promise<{ success: boolean; transcript?: string; error?: string }>;
   voiceToClipboardIsRecording: () => Promise<boolean>;
+  voiceToClipboardPaste: () => Promise<{ success: boolean; error?: string }>;
+  onVoiceToClipboardStop: (callback: () => void) => () => void;
 
   // Audio capture helper window API
   startAudioCapture: () => Promise<{ success: boolean; sampleRate?: number; error?: string }>;

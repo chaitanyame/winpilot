@@ -1,29 +1,40 @@
 // Voice-to-Clipboard Controller
 // Manages voice recording → transcription → clipboard/paste workflow
 
-import { clipboard, BrowserWindow } from 'electron';
+import { BrowserWindow, screen } from 'electron';
 import { getSettings } from './store';
-import { showVoicePill, hideVoicePill, updateVoicePillState } from './voice-pill-window';
-import { execAsync } from './utils/exec';
+import { getPlatformAdapter } from '../platform';
+import path from 'path';
 
 interface RecordingState {
   isRecording: boolean;
   startTime: number;
-  recorderWindow: BrowserWindow | null;
+  voiceWindow: BrowserWindow | null;
+  previousForegroundWindowHandle: number | null;
+  pendingStop: boolean;
 }
 
 class VoiceToClipboardManager {
   private state: RecordingState = {
     isRecording: false,
     startTime: 0,
-    recorderWindow: null,
+    voiceWindow: null,
+    previousForegroundWindowHandle: null,
+    pendingStop: false,
   };
 
   async toggleRecording(): Promise<void> {
+    if (this.state.pendingStop) {
+      console.log('[VoiceToClipboard] Stop already in progress, ignoring toggle');
+      return;
+    }
+
     if (this.state.isRecording) {
       await this.stopRecording();
-    } else {
+    } else if (!this.state.voiceWindow || this.state.voiceWindow.isDestroyed()) {
       await this.startRecording();
+    } else {
+      console.log('[VoiceToClipboard] Window already open, ignoring toggle');
     }
   }
 
@@ -36,8 +47,6 @@ class VoiceToClipboardManager {
     const settings = getSettings();
     if (!settings.voiceInput?.enabled) {
       console.log('[VoiceToClipboard] Voice input disabled');
-      showVoicePill('error', 'Voice input disabled');
-      setTimeout(() => hideVoicePill(), 2000);
       return;
     }
 
@@ -45,11 +54,18 @@ class VoiceToClipboardManager {
     this.state.isRecording = true;
     this.state.startTime = Date.now();
 
-    // Show listening pill
-    showVoicePill('listening', 'Listening...');
+    // Capture the current foreground window before showing our UI
+    try {
+      const adapter = getPlatformAdapter();
+      this.state.previousForegroundWindowHandle = await adapter.system.getForegroundWindowHandle();
+      console.log('[VoiceToClipboard] Captured foreground handle:', this.state.previousForegroundWindowHandle);
+    } catch (error) {
+      console.error('[VoiceToClipboard] Failed to capture foreground handle:', error);
+      this.state.previousForegroundWindowHandle = null;
+    }
 
-    // Create an invisible recorder window that will handle getUserMedia
-    this.state.recorderWindow = this.createRecorderWindow();
+    // Create and show the voice window
+    this.state.voiceWindow = this.createVoiceWindow();
   }
 
   async stopRecording(): Promise<void> {
@@ -60,118 +76,112 @@ class VoiceToClipboardManager {
 
     console.log('[VoiceToClipboard] Stopping recording...');
     this.state.isRecording = false;
+    this.state.pendingStop = true;
 
     const duration = Date.now() - this.state.startTime;
     console.log(`[VoiceToClipboard] Recording duration: ${duration}ms`);
 
-    // Update pill to show transcribing state
-    updateVoicePillState('transcribing', 'Transcribing...');
-
-    // Tell recorder window to stop and transcribe
-    if (this.state.recorderWindow && !this.state.recorderWindow.isDestroyed()) {
-      this.state.recorderWindow.webContents.send('voiceToClipboard:stop');
+    // Tell window to stop recording and transcribe
+    if (this.state.voiceWindow && !this.state.voiceWindow.isDestroyed()) {
+      this.state.voiceWindow.webContents.send('voiceToClipboard:stop');
     }
   }
 
-  private createRecorderWindow(): BrowserWindow {
+  private createVoiceWindow(): BrowserWindow {
     const isDev = process.env.NODE_ENV === 'development' || !process.env.NODE_ENV;
-    
+    const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().workAreaSize;
+
     const win = new BrowserWindow({
-      width: 1,
-      height: 1,
-      x: -1000,
-      y: -1000,
+      width: 600,
+      height: 400,
+      x: Math.floor((screenWidth - 600) / 2),
+      y: Math.floor((screenHeight - 400) / 2),
       frame: false,
-      show: false,
+      transparent: false,
+      alwaysOnTop: true,
       skipTaskbar: true,
+      resizable: false,
+      minimizable: false,
+      maximizable: false,
+      show: false,
+      backgroundColor: '#1f2937',
       webPreferences: {
-        nodeIntegration: true,
-        contextIsolation: false,
+        nodeIntegration: false,
+        contextIsolation: true,
+        preload: path.join(__dirname, '../preload/index.js'),
       },
     });
 
-    // Load the recorder HTML
-    const recorderPath = isDev
-      ? require('path').join(__dirname, '../../src/renderer/voice-recorder/index.html')
-      : require('path').join(__dirname, '../renderer/voice-recorder/index.html');
-    
-    win.loadFile(recorderPath);
+    // Load the voice-to-clipboard window
+    if (isDev) {
+      // In development, Vite serves multiple entry points
+      win.loadURL('http://localhost:5173/src/renderer/voice-to-clipboard/index.html');
+    } else {
+      win.loadFile(path.join(__dirname, '../renderer/voice-to-clipboard/index.html'));
+    }
 
-    // Start recording once loaded
-    win.webContents.once('did-finish-load', () => {
-      win.webContents.send('voiceToClipboard:start');
+    win.once('ready-to-show', () => {
+      win.show();
+      win.focus();
+    });
+
+    win.on('closed', () => {
+      this.cleanup();
     });
 
     return win;
   }
 
-  async handleTranscriptionComplete(transcript: string): Promise<void> {
-    if (!transcript || transcript.trim().length === 0) {
-      updateVoicePillState('error', 'No speech detected');
-      setTimeout(() => hideVoicePill(), 2000);
-      this.cleanupRecorderWindow();
-      return;
-    }
-
-    console.log('[VoiceToClipboard] Transcription complete:', transcript);
-
-    // Copy to clipboard
-    clipboard.writeText(transcript);
-    console.log('[VoiceToClipboard] Copied to clipboard');
-
-    // Check if auto-paste is enabled
+  async handlePaste(force = false): Promise<void> {
     const settings = getSettings();
-    const autoPaste = settings.voiceInput?.autoPasteOnTranscribe !== false; // Default true
+    const autoPaste = force || settings.voiceInput?.autoPasteOnTranscribe !== false;
 
     if (autoPaste) {
-      // Show success state briefly
-      updateVoicePillState('success', 'Pasting...');
-
       // Small delay to ensure clipboard is written
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise(resolve => setTimeout(resolve, 150));
 
-      // Simulate Ctrl+V to paste
       try {
+        console.log('[VoiceToClipboard] Simulating paste...');
+        await this.restoreForegroundFocus();
         await this.simulatePaste();
-        console.log('[VoiceToClipboard] Auto-paste complete');
+        console.log('[VoiceToClipboard] Paste complete');
       } catch (err) {
-        console.error('[VoiceToClipboard] Auto-paste failed:', err);
+        console.error('[VoiceToClipboard] Paste failed:', err);
+        throw err;
       }
-
-      // Hide pill after paste
-      setTimeout(() => hideVoicePill(), 800);
     } else {
-      // Just show success without pasting
-      updateVoicePillState('success', 'Copied!');
-      setTimeout(() => hideVoicePill(), 1500);
+      console.log('[VoiceToClipboard] Auto-paste disabled, skipping');
     }
-
-    this.cleanupRecorderWindow();
-  }
-
-  async handleTranscriptionError(error: string): Promise<void> {
-    console.error('[VoiceToClipboard] Transcription error:', error);
-    updateVoicePillState('error', error || 'Transcription failed');
-    setTimeout(() => hideVoicePill(), 2000);
-    this.cleanupRecorderWindow();
   }
 
   private async simulatePaste(): Promise<void> {
-    // Use PowerShell SendKeys to simulate Ctrl+V
-    // This works better than robotjs for simple paste operations
-    const cmd = `
-      Add-Type -AssemblyName System.Windows.Forms
-      [System.Windows.Forms.SendKeys]::SendWait("^v")
-    `;
-    
-    await execAsync(`powershell -Command "${cmd.replace(/\n/g, ' ')}"`);
+    const adapter = getPlatformAdapter();
+    const handle = this.state.previousForegroundWindowHandle ?? undefined;
+    console.log('[VoiceToClipboard] Simulating paste with handle:', handle ?? 'none');
+    const success = await adapter.system.simulatePaste(handle);
+    console.log('[VoiceToClipboard] Paste simulation result:', success);
+    if (!success) {
+      throw new Error('Paste simulation failed');
+    }
   }
 
-  private cleanupRecorderWindow(): void {
-    if (this.state.recorderWindow && !this.state.recorderWindow.isDestroyed()) {
-      this.state.recorderWindow.close();
+  private async restoreForegroundFocus(): Promise<void> {
+    const handle = this.state.previousForegroundWindowHandle;
+    if (!handle || handle === 0) {
+      console.log('[VoiceToClipboard] No valid foreground handle to restore');
+      await new Promise(resolve => setTimeout(resolve, 300));
+      return;
     }
-    this.state.recorderWindow = null;
+
+    try {
+      const adapter = getPlatformAdapter();
+      await adapter.system.setForegroundWindow(handle);
+      console.log('[VoiceToClipboard] Restored focus to window:', handle);
+      await new Promise(resolve => setTimeout(resolve, 300));
+    } catch (error) {
+      console.error('[VoiceToClipboard] Failed to restore focus:', error);
+      await new Promise(resolve => setTimeout(resolve, 300));
+    }
   }
 
   getIsRecording(): boolean {
@@ -180,8 +190,12 @@ class VoiceToClipboardManager {
 
   cleanup(): void {
     this.state.isRecording = false;
-    hideVoicePill();
-    this.cleanupRecorderWindow();
+    if (this.state.voiceWindow && !this.state.voiceWindow.isDestroyed()) {
+      this.state.voiceWindow.close();
+    }
+    this.state.voiceWindow = null;
+    this.state.previousForegroundWindowHandle = null;
+    this.state.pendingStop = false;
   }
 }
 

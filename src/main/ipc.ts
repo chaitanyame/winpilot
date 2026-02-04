@@ -81,7 +81,15 @@ async function transcribeWithOpenAI(audioBuffer: Buffer, language: string, setti
     }
 
     const result = await response.json() as { text: string };
-    const transcript = result.text?.trim();
+    let transcript = result.text?.trim();
+    
+    // Filter out Whisper artifacts
+    if (transcript) {
+      transcript = transcript
+        .replace(/\[BLANK_AUDIO\]/g, '')
+        .replace(/\(speaking in foreign language\)/gi, '')
+        .trim();
+    }
 
     if (!transcript) {
       return { success: false, error: 'OpenAI API returned empty transcript.' };
@@ -353,7 +361,13 @@ async function transcribeWithLocalWhisper(audioBuffer: Buffer, language: string,
       }
 
       // Parse output - whisper outputs text directly
-      const transcript = stdout.trim();
+      let transcript = stdout.trim();
+      
+      // Filter out Whisper artifacts
+      transcript = transcript
+        .replace(/\[BLANK_AUDIO\]/g, '')
+        .replace(/\(speaking in foreign language\)/gi, '')
+        .trim();
 
       if (!transcript) {
         return { success: false, error: 'No speech detected or transcription failed.' };
@@ -1110,9 +1124,6 @@ export function setupIpcHandlers(): void {
     try {
       const settings = getSettings();
       if (!settings.voiceInput?.enabled) {
-        // Import dynamically to avoid circular dependency
-        const { voiceToClipboardManager } = await import('./voice-to-clipboard');
-        voiceToClipboardManager.handleTranscriptionError('Voice input is disabled in settings');
         return { success: false, error: 'Voice input is disabled in settings.' };
       }
 
@@ -1130,19 +1141,18 @@ export function setupIpcHandlers(): void {
         result = { success: false, error: `Unknown provider: ${provider}` };
       }
 
-      // Import dynamically to avoid circular dependency
-      const { voiceToClipboardManager } = await import('./voice-to-clipboard');
-      
-      if (result.success && result.transcript) {
-        await voiceToClipboardManager.handleTranscriptionComplete(result.transcript);
-      } else {
-        await voiceToClipboardManager.handleTranscriptionError(result.error || 'Transcription failed');
-      }
-
       return result;
     } catch (error: any) {
+      return { success: false, error: error?.message || String(error) };
+    }
+  });
+
+  ipcMain.handle('voiceToClipboard:paste', async () => {
+    try {
       const { voiceToClipboardManager } = await import('./voice-to-clipboard');
-      await voiceToClipboardManager.handleTranscriptionError(error?.message || String(error));
+      await voiceToClipboardManager.handlePaste(true); // Force paste when user presses Enter
+      return { success: true };
+    } catch (error: any) {
       return { success: false, error: error?.message || String(error) };
     }
   });
