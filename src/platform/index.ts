@@ -48,6 +48,8 @@ export interface ISystem {
   simulatePaste(targetHwnd?: number): Promise<boolean>;
   getForegroundWindowHandle(): Promise<number>;
   setForegroundWindow(hwnd: number): Promise<boolean>;
+  getActiveWindowInfo(): Promise<{ appName: string; windowTitle: string; processId: number } | null>;
+  captureSelectedText?(): Promise<string | null>;
 }
 
 // Process Interface

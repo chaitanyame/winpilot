@@ -358,7 +358,7 @@ $hwnd = [Win32]::GetForegroundWindow()
       const os = await import('os');
       const fs = await import('fs/promises');
       const scriptPath = path.join(os.tmpdir(), `set_hwnd_${Date.now()}.ps1`);
-      
+
       const script = `Add-Type @"
 using System;
 using System.Runtime.InteropServices;
@@ -373,12 +373,164 @@ public class Win32 {
       await fs.writeFile(scriptPath, script, 'utf-8');
       await execAsync(`powershell -NoProfile -ExecutionPolicy Bypass -File "${scriptPath}"`);
       await fs.unlink(scriptPath).catch(() => {});
-      
+
       console.log('[System] Foreground window set to:', hwnd);
       return true;
     } catch (error) {
       console.error('[System] Error setting foreground window:', error);
       return false;
+    }
+  }
+
+  async getActiveWindowInfo(): Promise<{ appName: string; windowTitle: string; processId: number } | null> {
+    try {
+      const os = await import('os');
+      const fs = await import('fs/promises');
+      const scriptPath = path.join(os.tmpdir(), `get_active_window_${Date.now()}.ps1`);
+
+      const script = `Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+using System.Diagnostics;
+using System.Text;
+
+public class ActiveWindowInfo {
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    public static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
+
+    [DllImport("user32.dll")]
+    public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+
+    public static object GetInfo() {
+        IntPtr hWnd = GetForegroundWindow();
+        if (hWnd == IntPtr.Zero) {
+            return null;
+        }
+
+        StringBuilder title = new StringBuilder(512);
+        GetWindowText(hWnd, title, title.Capacity);
+        string windowTitle = title.ToString();
+
+        uint processId;
+        GetWindowThreadProcessId(hWnd, out processId);
+
+        string appName = "";
+        try {
+            Process proc = Process.GetProcessById((int)processId);
+            appName = proc.ProcessName;
+        } catch {
+            appName = "Unknown";
+        }
+
+        return new {
+            appName = appName,
+            windowTitle = windowTitle,
+            processId = (int)processId
+        };
+    }
+}
+"@
+$result = [ActiveWindowInfo]::GetInfo()
+if ($result -eq $null) {
+    Write-Output "null"
+} else {
+    $result | ConvertTo-Json -Compress
+}
+`;
+
+      await fs.writeFile(scriptPath, script, 'utf-8');
+      const { stdout } = await execAsync(`powershell -NoProfile -ExecutionPolicy Bypass -File "${scriptPath}"`);
+      await fs.unlink(scriptPath).catch(() => {});
+
+      const output = stdout.trim();
+      if (!output || output === 'null') {
+        return null;
+      }
+
+      const data = JSON.parse(output);
+      return {
+        appName: data.appName || 'Unknown',
+        windowTitle: data.windowTitle || '',
+        processId: data.processId || 0
+      };
+    } catch (error) {
+      console.error('[System] Error getting active window info:', error);
+      return null;
+    }
+  }
+
+  async captureSelectedText(): Promise<string | null> {
+    try {
+      const { clipboard } = await import('electron');
+
+      // Save current clipboard content
+      const originalClipboard = clipboard.readText();
+
+      // Write PowerShell script to simulate Ctrl+C
+      const os = await import('os');
+      const fs = await import('fs/promises');
+      const scriptPath = path.join(os.tmpdir(), `capture_text_${Date.now()}.ps1`);
+
+      const script = `Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class KeySender {
+    [DllImport("user32.dll")]
+    public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
+
+    public const byte VK_CONTROL = 0x11;
+    public const byte VK_C = 0x43;
+    public const uint KEYEVENTF_KEYUP = 0x0002;
+
+    public static void SendCtrlC() {
+        keybd_event(VK_CONTROL, 0, 0, UIntPtr.Zero);
+        System.Threading.Thread.Sleep(50);
+        keybd_event(VK_C, 0, 0, UIntPtr.Zero);
+        System.Threading.Thread.Sleep(50);
+        keybd_event(VK_C, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+        System.Threading.Thread.Sleep(50);
+        keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+    }
+}
+"@
+[KeySender]::SendCtrlC()
+`;
+
+      await fs.writeFile(scriptPath, script, 'utf-8');
+      await execAsync(`powershell -NoProfile -ExecutionPolicy Bypass -File "${scriptPath}"`);
+
+      // Wait for clipboard to update
+      await new Promise(resolve => setTimeout(resolve, 150));
+
+      // Clean up temp file
+      await fs.unlink(scriptPath).catch(() => {});
+
+      // Read new clipboard content
+      const selectedText = clipboard.readText();
+
+      // Only return if different from original (something was actually selected)
+      if (selectedText && selectedText !== originalClipboard) {
+        // Restore original clipboard
+        if (originalClipboard) {
+          clipboard.writeText(originalClipboard);
+        } else {
+          clipboard.clear();
+        }
+        return selectedText;
+      }
+
+      // Restore original clipboard if nothing was selected
+      if (originalClipboard) {
+        clipboard.writeText(originalClipboard);
+      }
+
+      return null;
+    } catch (error) {
+      console.error('[System] Error capturing selected text:', error);
+      return null;
     }
   }
 }

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { X, Moon, Sun, Monitor, Keyboard, Shield, FolderClosed, Brain, Mic, Video, FolderOpen, Check, Command } from 'lucide-react';
+import { X, Moon, Sun, Monitor, Keyboard, Shield, FolderClosed, Brain, Mic, Video, FolderOpen, Check, Command, Eye } from 'lucide-react';
 import type { Settings, AIModel, ThemeId, AppearanceMode } from '../../shared/types';
 
 interface Props {
@@ -10,7 +10,7 @@ interface Props {
 
 export function SettingsPanel({ isOpen, onClose }: Props) {
   const [settings, setSettings] = useState<Settings | null>(null);
-  const [activeTab, setActiveTab] = useState<'general' | 'ai' | 'voice' | 'recording' | 'hotkeys' | 'permissions' | 'safety' | 'privacy'>('general');
+  const [activeTab, setActiveTab] = useState<'general' | 'ai' | 'voice' | 'recording' | 'hotkeys' | 'permissions' | 'safety' | 'privacy' | 'context'>('general');
   const [appPath, setAppPath] = useState<string>('');
 
 
@@ -107,6 +107,7 @@ export function SettingsPanel({ isOpen, onClose }: Props) {
     { id: 'permissions', label: 'Permissions', icon: Shield },
     { id: 'safety', label: 'Safety', icon: FolderClosed },
     { id: 'privacy', label: 'Privacy', icon: Shield },
+    { id: 'context', label: 'Context', icon: Eye },
   ] as const;
 
   return (
@@ -140,7 +141,7 @@ export function SettingsPanel({ isOpen, onClose }: Props) {
 
         {/* Tabs */}
         <div className="border-b border-dark-200 dark:border-dark-700">
-          <div className="flex gap-1 p-2">
+          <div className="flex gap-1 p-2 overflow-x-auto">
             {tabs.map((tab) => {
               const Icon = tab.icon;
               return (
@@ -423,15 +424,51 @@ export function SettingsPanel({ isOpen, onClose }: Props) {
                            bg-white dark:bg-dark-700 text-dark-700 dark:text-dark-300"
                   disabled={!settings.voiceInput?.enabled}
                 >
-                  <option value="browser">Web Speech API (Built-in, free, offline)</option>
-                  <option value="openai_whisper">OpenAI Whisper API (Cloud, requires API key)</option>
+                  <option value="local_whisper">Local Whisper (Recommended - Free, Offline)</option>
+                  <option value="openai_whisper">OpenAI Whisper API (Cloud)</option>
+                  <option value="browser">Web Speech API (⚠️ Not working in Electron)</option>
                 </select>
                 <p className="text-xs text-dark-500 mt-1">
-                  {settings.voiceInput?.provider === 'openai_whisper'
-                    ? 'Cloud-based transcription via OpenAI Whisper API - highest accuracy'
-                    : 'Browser built-in speech recognition - works offline, no setup required'}
+                  {settings.voiceInput?.provider === 'local_whisper'
+                    ? 'Runs locally on your machine - free, private, no API key needed. Model downloads automatically.'
+                    : settings.voiceInput?.provider === 'openai_whisper'
+                    ? 'Cloud-based transcription via OpenAI Whisper API - highest accuracy, requires API key'
+                    : '⚠️ Web Speech API requires Google services not available in Electron.'}
                 </p>
               </div>
+
+              {/* Local Whisper Model Size (only show for local_whisper provider) */}
+              {settings.voiceInput?.provider === 'local_whisper' && (
+                <div>
+                  <label className="block text-sm font-medium text-dark-700 dark:text-dark-300 mb-2">
+                    Model Size
+                  </label>
+                  <select
+                    value={settings.voiceInput?.localWhisper?.modelSize || 'base'}
+                    onChange={(e) => updateSettings({
+                      voiceInput: {
+                        ...settings.voiceInput,
+                        localWhisper: {
+                          ...settings.voiceInput?.localWhisper,
+                          modelSize: e.target.value as 'tiny' | 'base' | 'small' | 'medium' | 'large'
+                        }
+                      }
+                    })}
+                    className="w-full px-4 py-2 rounded-lg border border-dark-200 dark:border-dark-600
+                             bg-white dark:bg-dark-700 text-dark-700 dark:text-dark-300"
+                    disabled={!settings.voiceInput?.enabled}
+                  >
+                    <option value="tiny">Tiny (~75MB) - Fastest, lower accuracy</option>
+                    <option value="base">Base (~150MB) - Good balance (Recommended)</option>
+                    <option value="small">Small (~500MB) - Better accuracy</option>
+                    <option value="medium">Medium (~1.5GB) - High accuracy</option>
+                    <option value="large">Large (~3GB) - Best accuracy, slowest</option>
+                  </select>
+                  <p className="text-xs text-dark-500 mt-1">
+                    Model will be downloaded automatically on first use. Larger models are more accurate but slower.
+                  </p>
+                </div>
+              )}
 
               {/* OpenAI API Key (only show for openai_whisper provider) */}
               {settings.voiceInput?.provider === 'openai_whisper' && (
@@ -830,6 +867,144 @@ export function SettingsPanel({ isOpen, onClose }: Props) {
                   <Shield className="w-3 h-3 inline mr-1" />
                   When enabled, Desktop Commander will hide itself if a screen sharing app
                   (Zoom, Teams, OBS, etc.) is detected.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'context' && (
+            <div className="space-y-6">
+              {/* Enable Context Capture */}
+              <div>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={settings.contextAwareness?.enabled ?? true}
+                    onChange={(e) => updateSettings({
+                      contextAwareness: {
+                        ...settings.contextAwareness,
+                        enabled: e.target.checked,
+                      },
+                    })}
+                    className="w-4 h-4 rounded border-dark-300 text-primary-500"
+                  />
+                  <div className="flex items-center gap-2">
+                    <Eye className="w-4 h-4 text-dark-600 dark:text-dark-400" />
+                    <span className="text-sm text-dark-600 dark:text-dark-400">
+                      Enable context awareness
+                    </span>
+                  </div>
+                </label>
+                <p className="text-xs text-dark-500 mt-1 ml-6">
+                  Automatically capture information about your active window to provide better context
+                </p>
+              </div>
+
+              {/* Show Context Badge */}
+              <div>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={settings.contextAwareness?.showContextBadge ?? true}
+                    onChange={(e) => updateSettings({
+                      contextAwareness: {
+                        ...settings.contextAwareness,
+                        showContextBadge: e.target.checked,
+                      },
+                    })}
+                    className="w-4 h-4 rounded border-dark-300 text-primary-500"
+                    disabled={!settings.contextAwareness?.enabled}
+                  />
+                  <div className="flex items-center gap-2">
+                    <Eye className="w-4 h-4 text-dark-600 dark:text-dark-400" />
+                    <span className="text-sm text-dark-600 dark:text-dark-400">
+                      Show context badge
+                    </span>
+                  </div>
+                </label>
+                <p className="text-xs text-dark-500 mt-1 ml-6">
+                  Display a visual indicator showing the current active window
+                </p>
+              </div>
+
+              {/* Capture Selected Text */}
+              <div>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={settings.contextAwareness?.captureSelectedText ?? false}
+                    onChange={(e) => updateSettings({
+                      contextAwareness: {
+                        ...settings.contextAwareness,
+                        captureSelectedText: e.target.checked,
+                      },
+                    })}
+                    className="w-4 h-4 rounded border-dark-300 text-primary-500"
+                    disabled={!settings.contextAwareness?.enabled}
+                  />
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-dark-600 dark:text-dark-400">
+                      Capture selected text
+                    </span>
+                    <span className="badge-experimental">Experimental</span>
+                  </div>
+                </label>
+                <p className="text-xs text-dark-500 mt-1 ml-6">
+                  Include selected text from the active window in context (may not work in all apps)
+                </p>
+              </div>
+
+              {/* Injection Style */}
+              <div>
+                <label className="block text-sm font-medium text-dark-700 dark:text-dark-300 mb-2">
+                  <Eye className="w-4 h-4 inline mr-2" />
+                  Context injection style
+                </label>
+                <select
+                  value={settings.contextAwareness?.injectionStyle || 'visible'}
+                  onChange={(e) => updateSettings({
+                    contextAwareness: {
+                      ...settings.contextAwareness,
+                      injectionStyle: e.target.value as 'visible' | 'hidden',
+                    },
+                  })}
+                  className="setting-select"
+                  disabled={!settings.contextAwareness?.enabled}
+                >
+                  <option value="visible">Visible (prepend to message)</option>
+                  <option value="hidden">Hidden (system prompt only)</option>
+                </select>
+                <p className="text-xs text-dark-500 mt-1">
+                  {settings.contextAwareness?.injectionStyle === 'visible'
+                    ? 'Context will be shown at the top of your message before sending to the AI'
+                    : 'Context will be included in the system prompt without being visible in the chat'}
+                </p>
+              </div>
+
+              {/* Context Badge Preview */}
+              <div>
+                <label className="block text-sm font-medium text-dark-700 dark:text-dark-300 mb-2">
+                  Badge preview
+                </label>
+                <div className="p-3 bg-dark-50 dark:bg-dark-800 rounded-lg border border-dark-200 dark:border-dark-700">
+                  <div className="context-badge-preview">
+                    <Eye className="w-3 h-3" />
+                    <span className="font-medium">Chrome</span>
+                    <span className="text-dark-500">·</span>
+                    <span className="text-dark-600">github.com</span>
+                  </div>
+                  <p className="text-xs text-dark-500 mt-2">
+                    This badge shows the app and window title of your active window
+                  </p>
+                </div>
+              </div>
+
+              <div className="p-3 bg-primary-50 dark:bg-primary-900/20 rounded-lg">
+                <p className="text-xs text-primary-700 dark:text-primary-300">
+                  <Eye className="w-3 h-3 inline mr-1" />
+                  Context awareness helps the AI understand what you're working on by detecting
+                  your active window. This information is used to provide more relevant responses
+                  and is never shared externally.
                 </p>
               </div>
             </div>

@@ -54,6 +54,14 @@ class MacOSSystem implements ISystem {
   async simulatePaste(): Promise<boolean> { return false; }
   async getForegroundWindowHandle(): Promise<number> { return 0; }
   async setForegroundWindow(): Promise<boolean> { return false; }
+  async getActiveWindowInfo(): Promise<{ appName: string; windowTitle: string; processId: number } | null> {
+    console.warn('macOS getActiveWindowInfo not yet implemented');
+    return null;
+  }
+  async captureSelectedText(): Promise<string | null> {
+    console.warn('macOS captureSelectedText not yet implemented');
+    return null;
+  }
 }
 
 class MacOSProcess implements IProcess {

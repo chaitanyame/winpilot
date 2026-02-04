@@ -117,9 +117,15 @@ export function getSettings(): Settings {
     needsUpdate = true;
   }
 
-  // Migrate legacy providers to browser (faster-whisper removed)
-  if (settings.voiceInput?.provider && !['browser', 'openai_whisper'].includes(settings.voiceInput.provider)) {
-    settings.voiceInput.provider = 'browser';
+  // Migrate browser provider to local_whisper (browser doesn't work in Electron)
+  if (settings.voiceInput?.provider === 'browser') {
+    settings.voiceInput.provider = 'local_whisper';
+    needsUpdate = true;
+  }
+
+  // Ensure localWhisper config exists
+  if (!settings.voiceInput?.localWhisper) {
+    settings.voiceInput.localWhisper = DEFAULT_SETTINGS.voiceInput.localWhisper;
     needsUpdate = true;
   }
 
@@ -176,6 +182,12 @@ export function getSettings(): Settings {
     if (hotkeysUpdated) {
       needsUpdate = true;
     }
+  }
+
+  // Add contextAwareness section if missing
+  if (!settings.contextAwareness) {
+    settings.contextAwareness = DEFAULT_SETTINGS.contextAwareness;
+    needsUpdate = true;
   }
 
   if (needsUpdate) {

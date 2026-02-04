@@ -1,9 +1,10 @@
 // Global Hotkey Registration
 
 import { globalShortcut } from 'electron';
-import { toggleCommandWindow, toggleClipboardHistoryWindow, toggleVoiceRecordingWindow, toggleAudioRecordingWindow, toggleVideoRecordingWindow, toggleChatPanelWindow } from './windows';
+import { showCommandWindow, toggleClipboardHistoryWindow, toggleVoiceRecordingWindow, toggleAudioRecordingWindow, toggleVideoRecordingWindow, toggleChatPanelWindow } from './windows';
 import { getSettings } from './store';
 import { voiceInputManager } from './voice-input';
+import { contextCaptureService } from './context-capture';
 
 let registeredHotkey: string | null = null;
 let registeredVoiceHotkey: string | null = null;
@@ -28,9 +29,17 @@ export function registerHotkeys(): void {
     }
 
     // Register the new hotkey
-    globalShortcut.register(hotkey, () => {
+    globalShortcut.register(hotkey, async () => {
       console.log('Hotkey triggered:', hotkey);
-      toggleCommandWindow();
+
+      // Capture context BEFORE showing our window
+      // This is critical - the external app must still be focused
+      const settings = getSettings();
+      if (settings.contextAwareness?.enabled) {
+        await contextCaptureService.captureContext();
+      }
+
+      showCommandWindow();
     });
 
     const success = globalShortcut.isRegistered(hotkey);
@@ -73,8 +82,15 @@ export function unregisterHotkeys(): void {
 export function updateHotkey(newHotkey: string): boolean {
   try {
     // Try to register the new hotkey first
-    globalShortcut.register(newHotkey, () => {
-      toggleCommandWindow();
+    globalShortcut.register(newHotkey, async () => {
+      // Capture context BEFORE showing our window
+      // This is critical - the external app must still be focused
+      const settings = getSettings();
+      if (settings.contextAwareness?.enabled) {
+        await contextCaptureService.captureContext();
+      }
+
+      showCommandWindow();
     });
 
     const success = globalShortcut.isRegistered(newHotkey);

@@ -28,6 +28,15 @@ export interface Bounds {
   height: number;
 }
 
+// Active Window Context
+export interface ActiveWindowContext {
+  appName: string;        // e.g., "chrome", "Code", "explorer"
+  windowTitle: string;    // e.g., "GitHub - Google Chrome"
+  processId?: number;
+  selectedText?: string;  // Optional: captured via clipboard trick
+  capturedAt: number;     // Timestamp
+}
+
 // File system types
 export interface FileInfo {
   name: string;
@@ -199,12 +208,16 @@ export interface Settings {
   voiceInput: {
     enabled: boolean;
     hotkey: string;
-    provider: 'browser' | 'openai_whisper';
+    provider: 'browser' | 'openai_whisper' | 'local_whisper';
     openaiWhisper: {
       /** OpenAI API key for Whisper API. */
       apiKey: string;
       /** Model name (default: whisper-1). */
       model: string;
+    };
+    localWhisper: {
+      /** Model size: tiny, base, small, medium, large */
+      modelSize: 'tiny' | 'base' | 'small' | 'medium' | 'large';
     };
     language: string;
     showVisualFeedback: boolean;
@@ -226,6 +239,12 @@ export interface Settings {
     audioRecording: string;
     /** Hotkey to start/stop video recording (default: Ctrl+Shift+R) */
     videoRecording: string;
+  };
+  contextAwareness: {
+    enabled: boolean;
+    captureSelectedText: boolean;
+    showContextBadge: boolean;
+    injectionStyle: 'visible' | 'hidden';  // visible = prepend to message, hidden = system prompt
   };
 }
 
@@ -324,6 +343,10 @@ export const IPC_CHANNELS = {
   SCREEN_SHARE_PRIVACY_LIST_HIDDEN: 'screen-share-privacy:list-hidden',
   SCREEN_SHARE_PRIVACY_GET_AUTO_HIDE: 'screen-share-privacy:get-auto-hide',
   SCREEN_SHARE_PRIVACY_SET_AUTO_HIDE: 'screen-share-privacy:set-auto-hide',
+
+  // Context Awareness
+  CONTEXT_GET: 'context:get',
+  CONTEXT_CLEAR: 'context:clear',
 } as const;
 
 export interface HiddenWindow {

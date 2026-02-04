@@ -106,45 +106,8 @@ export async function createCommandWindow(): Promise<BrowserWindow> {
   }
 
   // Keep window visible; only hide/minimize via explicit user actions.
-
-  // Minimize when window loses focus (with debounce to allow IPC suppression to take effect)
-  let blurTimeout: NodeJS.Timeout | null = null;
-  commandWindow.on('blur', () => {
-    console.log('[Windows] blur event, suppressAutoHide:', suppressAutoHide);
-    if (!commandWindow || commandWindow.isDestroyed()) return;
-    
-    // Check suppression immediately - if already suppressed, don't even schedule
-    if (suppressAutoHide) {
-      console.log('[Windows] blur suppressed, not minimizing');
-      return;
-    }
-    
-    // Clear any pending blur timeout
-    if (blurTimeout) {
-      clearTimeout(blurTimeout);
-      blurTimeout = null;
-    }
-    
-    // Debounce the minimize to allow setAutoHideSuppressed IPC to arrive
-    blurTimeout = setTimeout(() => {
-      console.log('[Windows] blur timeout fired, suppressAutoHide:', suppressAutoHide);
-      if (!commandWindow || commandWindow.isDestroyed()) return;
-      if (suppressAutoHide) {
-        console.log('[Windows] blur timeout suppressed, not minimizing');
-        return;
-      }
-      console.log('[Windows] minimizing window');
-      commandWindow.minimize();
-    }, 100);
-  });
-
-  // Also clear blur timeout when window gains focus
-  commandWindow.on('focus', () => {
-    if (blurTimeout) {
-      clearTimeout(blurTimeout);
-      blurTimeout = null;
-    }
-  });
+  // NOTE: Auto-minimize on blur is DISABLED - it causes issues with voice recording
+  // and other features that temporarily steal focus. Users can manually minimize.
 
   // Prevent window from being destroyed, just hide it
   commandWindow.on('close', (event) => {
@@ -162,53 +125,66 @@ export async function createCommandWindow(): Promise<BrowserWindow> {
  * Show the command window
  */
 export function showCommandWindow(): void {
-  if (!commandWindow || commandWindow.isDestroyed()) return;
+  if (!commandWindow || commandWindow.isDestroyed()) {
+    console.warn('[Windows] showCommandWindow: window is null or destroyed');
+    return;
+  }
 
-  // Center on current screen
-  const safeNumber = (value: number, fallback: number) => (Number.isFinite(value) ? value : fallback);
+  console.log('[Windows] showCommandWindow called, isMinimized:', commandWindow.isMinimized(), 'isVisible:', commandWindow.isVisible());
 
-  const cursorPoint = screen.getCursorScreenPoint();
-  const display = screen.getDisplayNearestPoint(cursorPoint) || screen.getPrimaryDisplay();
-  const screenWidth = safeNumber(display.workAreaSize.width, COMMAND_PALETTE_WIDTH);
-  const screenHeight = safeNumber(display.workAreaSize.height, COMMAND_PALETTE_HEIGHT);
-  const screenX = safeNumber(display.bounds.x, 0);
-  const screenY = safeNumber(display.bounds.y, 0);
+  // FIRST: Always restore and show the window before doing anything else
+  try {
+    if (commandWindow.isMinimized()) {
+      console.log('[Windows] Restoring minimized window');
+      commandWindow.restore();
+    }
+    commandWindow.show();
+    commandWindow.focus();
+  } catch (err) {
+    console.error('[Windows] Failed to restore/show/focus window:', err);
+  }
 
-  const windowBounds = commandWindow.getBounds();
-  const windowWidth = safeNumber(windowBounds.width, COMMAND_PALETTE_WIDTH);
-  const windowHeight = safeNumber(windowBounds.height, COMMAND_PALETTE_HEIGHT);
+  // THEN: Try to position the window (non-critical)
+  try {
+    const safeNumber = (value: number, fallback: number) => (Number.isFinite(value) ? value : fallback);
 
-  const rawX = screenX + (screenWidth - windowWidth) / 2;
-  const rawY = screenY + (screenHeight - windowHeight) / 3;
-  const x = Math.round(safeNumber(rawX, screenX));
-  const y = Math.round(safeNumber(rawY, screenY));
+    const cursorPoint = screen.getCursorScreenPoint();
+    const display = screen.getDisplayNearestPoint(cursorPoint) || screen.getPrimaryDisplay();
+    const screenWidth = safeNumber(display.workAreaSize.width, COMMAND_PALETTE_WIDTH);
+    const screenHeight = safeNumber(display.workAreaSize.height, COMMAND_PALETTE_HEIGHT);
+    const screenX = safeNumber(display.bounds.x, 0);
+    const screenY = safeNumber(display.bounds.y, 0);
 
-  let positioned = false;
+    const windowBounds = commandWindow.getBounds();
+    const windowWidth = safeNumber(windowBounds.width, COMMAND_PALETTE_WIDTH);
+    const windowHeight = safeNumber(windowBounds.height, COMMAND_PALETTE_HEIGHT);
 
-  if (Number.isFinite(x) && Number.isFinite(y)) {
-    try {
+    const rawX = screenX + (screenWidth - windowWidth) / 2;
+    const rawY = screenY + (screenHeight - windowHeight) / 3;
+    const x = Math.round(safeNumber(rawX, screenX));
+    const y = Math.round(safeNumber(rawY, screenY));
+
+    if (Number.isFinite(x) && Number.isFinite(y)) {
       commandWindow.setPosition(x, y);
-      positioned = true;
-    } catch (error) {
-      console.warn('Failed to set window position, falling back to center:', error);
-    }
-  }
-
-  if (!positioned) {
-    try {
+    } else {
       commandWindow.center();
-    } catch (error) {
-      console.warn('Failed to center window:', error);
     }
+  } catch (error) {
+    console.warn('[Windows] Failed to position window:', error);
+    // Still try to center as last resort
+    try { commandWindow.center(); } catch (e) { /* ignore */ }
   }
-  if (commandWindow.isMinimized()) {
-    commandWindow.restore();
-  }
-  commandWindow.show();
-  commandWindow.focus();
 
-  // Notify renderer that window is shown
-  commandWindow.webContents.send('window:shown');
+  // FINALLY: Notify renderer (completely non-critical, wrapped in try-catch)
+  try {
+    if (commandWindow.webContents && !commandWindow.webContents.isDestroyed()) {
+      commandWindow.webContents.send('window:shown');
+    }
+  } catch (err) {
+    // Silently ignore - window is shown, that's what matters
+  }
+
+  console.log('[Windows] showCommandWindow complete, isVisible:', commandWindow.isVisible());
 }
 
 /**
@@ -224,9 +200,15 @@ export function hideCommandWindow(force = false): void {
 
   console.log('[Windows] hiding window');
   commandWindow.hide();
-  
-  // Notify renderer that window is hidden
-  commandWindow.webContents.send('window:hidden');
+
+  // Notify renderer that window is hidden (with safety check)
+  try {
+    if (commandWindow.webContents && !commandWindow.webContents.isDestroyed()) {
+      commandWindow.webContents.send('window:hidden');
+    }
+  } catch (err) {
+    console.warn('Failed to send window:hidden event:', err);
+  }
 }
 
 /**

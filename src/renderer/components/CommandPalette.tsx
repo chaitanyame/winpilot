@@ -11,14 +11,14 @@ import { RecordingsPanel } from './RecordingsPanel';
 import { ScreenSharePrivacyPanel } from './ScreenSharePrivacyPanel';
 import { useCopilot } from '../hooks/useCopilot';
 import { ConfirmationDialog } from './ConfirmationDialog';
-import type { PermissionRequest, PermissionResponse, ActionLog, Settings } from '../../shared/types';
+import type { PermissionRequest, PermissionResponse, ActionLog, Settings, ActiveWindowContext } from '../../shared/types';
 
 // Speech recognition error messages
 const SPEECH_ERROR_MESSAGES: Record<string, string> = {
   'no-speech': 'No speech detected. Please try again.',
   'audio-capture': 'Microphone not found or not accessible.',
   'not-allowed': 'Microphone permission denied. Please allow microphone access.',
-  'network': 'Network error. Please check your connection.',
+  'network': 'Web Speech API not available in Electron. Please switch to OpenAI Whisper in Settings → Voice.',
   'aborted': 'Recording was cancelled.',
   'service-not-allowed': 'Speech recognition service is not allowed.',
 };
@@ -156,10 +156,11 @@ export function CommandPalette() {
   const [isSpeechDetected, setIsSpeechDetected] = useState(false);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [actionLogsClearedAt, setActionLogsClearedAt] = useState(0);
+  const [activeContext, setActiveContext] = useState<ActiveWindowContext | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
-  const voiceProviderRef = useRef<'browser' | 'openai_whisper'>('browser');
+  const voiceProviderRef = useRef<'browser' | 'openai_whisper' | 'local_whisper'>('local_whisper');
   const voiceErrorTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const speechTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -357,6 +358,19 @@ export function CommandPalette() {
     loadSettings();
   }, []);
 
+  // Load active window context on mount
+  useEffect(() => {
+    const loadContext = async () => {
+      try {
+        const context = await window.electronAPI.getActiveContext();
+        setActiveContext(context);
+      } catch (err) {
+        console.error('Failed to load active context:', err);
+      }
+    };
+    loadContext();
+  }, []);
+
   const markOnboardingSeen = useCallback(async () => {
     if (!settings) {
       setShowOnboarding(false);
@@ -396,8 +410,15 @@ export function CommandPalette() {
     }, 3000);
   }, []);
 
-  // Initialize speech recognition (only once, not on input change)
+  // Initialize speech recognition (only for browser provider)
   useEffect(() => {
+    // Skip browser speech recognition if not using browser provider
+    // This prevents the error handlers from interfering with other providers
+    if (settings?.voiceInput?.provider && settings.voiceInput.provider !== 'browser') {
+      console.log('Skipping browser speech recognition - using provider:', settings.voiceInput.provider);
+      return;
+    }
+
     // @ts-ignore - webkit prefix
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
@@ -476,7 +497,7 @@ export function CommandPalette() {
         recognitionRef.current.abort();
       }
     };
-  }, [voiceLanguage, insertTranscript, clearVoiceError]); // Only re-init when language changes
+  }, [voiceLanguage, insertTranscript, clearVoiceError, settings?.voiceInput?.provider]); // Re-init when language or provider changes
 
   // Update recognition language when voiceLanguage changes
   useEffect(() => {
@@ -547,6 +568,12 @@ export function CommandPalette() {
       processor.connect(audioContext.destination);
 
       setIsSpeechDetected(true);
+
+      // Ensure window stays visible after microphone access (getUserMedia may steal focus)
+      setTimeout(() => {
+        window.electronAPI.setAutoHideSuppressed(true);
+        window.electronAPI.show();
+      }, 150);
     } catch (err) {
       console.error('Failed to start whisper.cpp recording:', err);
       setVoiceError('Failed to access microphone for whisper.cpp transcription.');
@@ -684,12 +711,12 @@ export function CommandPalette() {
           if (loadedSettings) {
             setSettings(loadedSettings);
             if (loadedSettings.voiceInput?.language) setVoiceLanguage(loadedSettings.voiceInput.language);
-            voiceProviderRef.current = loadedSettings.voiceInput?.provider || 'browser';
+            voiceProviderRef.current = loadedSettings.voiceInput?.provider || 'local_whisper';
           } else {
-            voiceProviderRef.current = 'browser';
+            voiceProviderRef.current = 'local_whisper';
           }
         } catch {
-          voiceProviderRef.current = 'browser';
+          voiceProviderRef.current = 'local_whisper';
         }
 
         // Clear any existing speech timeout
@@ -697,7 +724,7 @@ export function CommandPalette() {
           clearTimeout(speechTimeoutRef.current);
         }
 
-        if (voiceProviderRef.current === 'openai_whisper') {
+        if (voiceProviderRef.current === 'openai_whisper' || voiceProviderRef.current === 'local_whisper') {
           await startWhisperRecording();
           return;
         }
@@ -740,7 +767,7 @@ export function CommandPalette() {
         console.log('Voice recording stopped from hotkey');
         window.electronAPI.setAutoHideSuppressed(true);
 
-        if (voiceProviderRef.current === 'openai_whisper') {
+        if (voiceProviderRef.current === 'openai_whisper' || voiceProviderRef.current === 'local_whisper') {
           await stopWhisperRecordingAndTranscribe();
           return;
         }
@@ -941,6 +968,37 @@ export function CommandPalette() {
           </span>
         </div>
         <div className="no-drag flex items-center gap-2">
+          {/* Context Awareness Badge */}
+          {activeContext && settings?.contextAwareness?.showContextBadge && (
+            <div className="context-badge">
+              <span className="context-app-name">{activeContext.appName}</span>
+              {activeContext.windowTitle && (
+                <span className="context-window-title" title={activeContext.windowTitle}>
+                  {activeContext.windowTitle}
+                </span>
+              )}
+              {activeContext.selectedText && (
+                <span className="context-has-selection" title="Selected text captured">
+                  <span className="selection-indicator">text</span>
+                </span>
+              )}
+              <button
+                className="clear-context-btn"
+                onClick={async () => {
+                  try {
+                    await window.electronAPI.clearActiveContext();
+                    setActiveContext(null);
+                  } catch (err) {
+                    console.error('Failed to clear context:', err);
+                  }
+                }}
+                title="Clear captured context"
+                aria-label="Clear captured context"
+              >
+                ×
+              </button>
+            </div>
+          )}
           {/* AI Model Badge */}
           {settings?.agenticLoop?.model && (
             <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full

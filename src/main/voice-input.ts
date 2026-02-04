@@ -37,15 +37,30 @@ class VoiceInputManager {
     // Show and focus the window
     const window = getCommandWindow();
     if (window && !window.isDestroyed()) {
-      showCommandWindow();
+      try {
+        showCommandWindow();
+      } catch (err) {
+        console.warn('Failed to show window during voice recording:', err);
+      }
       // Ensure window is visible after a short delay (in case of race conditions)
       setTimeout(() => {
         if (window && !window.isDestroyed() && !window.isVisible()) {
           console.log('Window became invisible during voice recording, re-showing...');
-          showCommandWindow();
+          try {
+            showCommandWindow();
+          } catch (err) {
+            console.warn('Failed to re-show window:', err);
+          }
         }
       }, 100);
-      window.webContents.send('voice:recordingStarted');
+      // Send recording started event with safety check
+      try {
+        if (window.webContents && !window.webContents.isDestroyed()) {
+          window.webContents.send('voice:recordingStarted');
+        }
+      } catch (err) {
+        console.warn('Failed to send voice:recordingStarted:', err);
+      }
     }
   }
 
@@ -66,9 +81,15 @@ class VoiceInputManager {
     console.log(`Recording duration: ${duration}ms`);
 
     const window = getCommandWindow();
-    if (window) {
+    if (window && !window.isDestroyed()) {
       // Tell renderer to stop and transcribe
-      window.webContents.send('voice:recordingStopped');
+      try {
+        if (window.webContents && !window.webContents.isDestroyed()) {
+          window.webContents.send('voice:recordingStopped');
+        }
+      } catch (err) {
+        console.warn('Failed to send voice:recordingStopped:', err);
+      }
     }
   }
 
@@ -88,8 +109,14 @@ class VoiceInputManager {
    */
   sendTranscript(transcript: string): void {
     const window = getCommandWindow();
-    if (window) {
-      window.webContents.send('voice:transcript', transcript);
+    if (window && !window.isDestroyed()) {
+      try {
+        if (window.webContents && !window.webContents.isDestroyed()) {
+          window.webContents.send('voice:transcript', transcript);
+        }
+      } catch (err) {
+        console.warn('Failed to send voice:transcript:', err);
+      }
     }
     setAutoHideSuppressed(false);
   }
@@ -99,8 +126,14 @@ class VoiceInputManager {
    */
   sendError(error: string): void {
     const window = getCommandWindow();
-    if (window) {
-      window.webContents.send('voice:error', error);
+    if (window && !window.isDestroyed()) {
+      try {
+        if (window.webContents && !window.webContents.isDestroyed()) {
+          window.webContents.send('voice:error', error);
+        }
+      } catch (err) {
+        console.warn('Failed to send voice:error:', err);
+      }
     }
     setAutoHideSuppressed(false);
   }

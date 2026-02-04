@@ -3,7 +3,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import { IPC_CHANNELS } from '../shared/types';
 import { MCP_IPC_CHANNELS } from '../shared/mcp-types';
-import type { PermissionRequest, PermissionResponse, ActionLog, ClipboardEntry, Recording, WindowInfo, HiddenWindow } from '../shared/types';
+import type { PermissionRequest, PermissionResponse, ActionLog, ClipboardEntry, Recording, WindowInfo, HiddenWindow, ActiveWindowContext } from '../shared/types';
 
 // Expose protected methods to the renderer process
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -336,6 +336,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener(IPC_CHANNELS.RECORDING_UPDATED, handler);
   },
   subscribeToRecordings: () => ipcRenderer.send(IPC_CHANNELS.RECORDING_SUBSCRIBE),
+
+  // Context Awareness API
+  getActiveContext: () => ipcRenderer.invoke(IPC_CHANNELS.CONTEXT_GET),
+  clearActiveContext: () => ipcRenderer.invoke(IPC_CHANNELS.CONTEXT_CLEAR),
 });
 
 // Type definitions for the exposed API
@@ -514,6 +518,10 @@ export interface ElectronAPI {
   onRecordingProgress: (callback: (recording: Recording) => void) => () => void;
   onRecordingUpdated: (callback: (recording: Recording) => void) => () => void;
   subscribeToRecordings: () => void;
+
+  // Context Awareness API
+  getActiveContext: () => Promise<ActiveWindowContext | null>;
+  clearActiveContext: () => Promise<void>;
 }
 
 declare global {

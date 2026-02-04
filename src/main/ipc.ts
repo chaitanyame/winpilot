@@ -4,6 +4,11 @@ import { ipcMain, clipboard, shell, dialog, app, BrowserWindow } from 'electron'
 import fs from 'fs/promises';
 import fsSync from 'fs';
 import path from 'path';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+import https from 'https';
+
+const execAsync = promisify(exec);
 
 import { IPC_CHANNELS, ScheduledTask, Timer, ActionLog, Recording, RecordingType } from '../shared/types';
 import { MCP_IPC_CHANNELS, MCPServerConfig } from '../shared/mcp-types';
@@ -21,6 +26,7 @@ import { taskScheduler } from './scheduler';
 import { voiceInputManager } from './voice-input';
 import { timerManager } from './timers';
 import { reminderManager } from './reminders';
+import { contextCaptureService } from './context-capture';
 import { IntentRouter } from '../intent/router';
 import { clipboardMonitor } from './clipboard-monitor';
 import { recordingManager } from './recording-manager';
@@ -83,6 +89,185 @@ async function transcribeWithOpenAI(audioBuffer: Buffer, language: string, setti
 
     return { success: true, transcript };
   } catch (error: any) {
+    return { success: false, error: error?.message || String(error) };
+  }
+}
+
+// Whisper.cpp binary and model paths
+const WHISPER_DIR = () => path.join(app.getPath('userData'), 'whisper');
+const WHISPER_BIN = () => path.join(WHISPER_DIR(), 'main.exe');
+const WHISPER_MODELS_DIR = () => path.join(WHISPER_DIR(), 'models');
+
+// Model URLs from Hugging Face
+const MODEL_URLS: Record<string, string> = {
+  'tiny': 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin',
+  'base': 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin',
+  'small': 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin',
+  'medium': 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin',
+  'large': 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin',
+};
+
+// Whisper.cpp Windows binary URL (pre-built)
+const WHISPER_BIN_URL = 'https://github.com/ggerganov/whisper.cpp/releases/download/v1.7.4/whisper-bin-x64.zip';
+
+// Download file helper with redirect support
+async function downloadFile(url: string, destPath: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const file = fsSync.createWriteStream(destPath);
+
+    const download = (downloadUrl: string) => {
+      https.get(downloadUrl, (response) => {
+        // Handle redirects
+        if (response.statusCode === 301 || response.statusCode === 302) {
+          const redirectUrl = response.headers.location;
+          if (redirectUrl) {
+            download(redirectUrl);
+            return;
+          }
+        }
+
+        if (response.statusCode !== 200) {
+          reject(new Error(`Download failed with status ${response.statusCode}`));
+          return;
+        }
+
+        response.pipe(file);
+        file.on('finish', () => {
+          file.close();
+          resolve();
+        });
+      }).on('error', (err) => {
+        fsSync.unlink(destPath, () => {});
+        reject(err);
+      });
+    };
+
+    download(url);
+  });
+}
+
+// Extract zip file (Windows)
+async function extractZip(zipPath: string, destDir: string): Promise<void> {
+  await execAsync(`powershell -Command "Expand-Archive -Path '${zipPath}' -DestinationPath '${destDir}' -Force"`);
+}
+
+// Ensure whisper binary is available
+async function ensureWhisperBinary(): Promise<string> {
+  const binPath = WHISPER_BIN();
+  const whisperDir = WHISPER_DIR();
+
+  // Check if binary exists
+  if (fsSync.existsSync(binPath)) {
+    return binPath;
+  }
+
+  console.log('Downloading whisper.cpp binary...');
+
+  // Create directory
+  await fs.mkdir(whisperDir, { recursive: true });
+
+  // Download zip
+  const zipPath = path.join(whisperDir, 'whisper-bin.zip');
+  await downloadFile(WHISPER_BIN_URL, zipPath);
+
+  // Extract
+  await extractZip(zipPath, whisperDir);
+
+  // Clean up zip
+  await fs.unlink(zipPath).catch(() => {});
+
+  // Find and move main.exe to expected location
+  const extractedDir = path.join(whisperDir, 'whisper-bin-x64');
+  const extractedBin = path.join(extractedDir, 'main.exe');
+
+  if (fsSync.existsSync(extractedBin)) {
+    await fs.copyFile(extractedBin, binPath);
+  }
+
+  if (!fsSync.existsSync(binPath)) {
+    throw new Error('Failed to extract whisper binary');
+  }
+
+  return binPath;
+}
+
+// Ensure model is downloaded
+async function ensureWhisperModel(modelSize: string): Promise<string> {
+  const modelsDir = WHISPER_MODELS_DIR();
+  const modelPath = path.join(modelsDir, `ggml-${modelSize}.bin`);
+
+  // Check if model exists
+  if (fsSync.existsSync(modelPath)) {
+    return modelPath;
+  }
+
+  const modelUrl = MODEL_URLS[modelSize];
+  if (!modelUrl) {
+    throw new Error(`Unknown model size: ${modelSize}`);
+  }
+
+  console.log(`Downloading whisper model (${modelSize})... This may take a while.`);
+
+  // Create directory
+  await fs.mkdir(modelsDir, { recursive: true });
+
+  // Download model
+  await downloadFile(modelUrl, modelPath);
+
+  return modelPath;
+}
+
+// Helper: Transcribe with Local Whisper (whisper.cpp binary)
+async function transcribeWithLocalWhisper(audioBuffer: Buffer, language: string, settings: any): Promise<{ success: boolean; transcript?: string; error?: string }> {
+  const modelSize = settings.voiceInput?.localWhisper?.modelSize || 'base';
+
+  try {
+    // Ensure binary and model are available
+    const binPath = await ensureWhisperBinary();
+    const modelPath = await ensureWhisperModel(modelSize);
+
+    // Write audio buffer to temp file
+    const tempDir = app.getPath('temp');
+    const tempAudioPath = path.join(tempDir, `whisper-input-${Date.now()}.wav`);
+    await fs.writeFile(tempAudioPath, audioBuffer);
+
+    try {
+      // Build command
+      const langArg = language && language !== 'auto' ? `-l ${language}` : '';
+      const cmd = `"${binPath}" -m "${modelPath}" -f "${tempAudioPath}" ${langArg} -np -nt`;
+
+      console.log('Running whisper command:', cmd);
+
+      // Run whisper
+      const { stdout, stderr } = await execAsync(cmd, { timeout: 60000 });
+
+      if (stderr && !stdout) {
+        console.error('Whisper stderr:', stderr);
+      }
+
+      // Parse output - whisper outputs text directly
+      const transcript = stdout.trim();
+
+      if (!transcript) {
+        return { success: false, error: 'No speech detected or transcription failed.' };
+      }
+
+      return { success: true, transcript };
+    } finally {
+      // Clean up temp file
+      await fs.unlink(tempAudioPath).catch(() => {});
+    }
+  } catch (error: any) {
+    console.error('Local Whisper transcription error:', error);
+
+    // Provide helpful error messages
+    if (error?.message?.includes('ENOENT')) {
+      return { success: false, error: 'Whisper binary not found. It will be downloaded on next attempt.' };
+    }
+    if (error?.message?.includes('timeout')) {
+      return { success: false, error: 'Transcription timed out. Try a smaller model or shorter audio.' };
+    }
+
     return { success: false, error: error?.message || String(error) };
   }
 }
@@ -468,8 +653,31 @@ export function setupIpcHandlers(): void {
 
     console.log('[IPC] Received message:', message);
 
+    // Inject context if enabled and available
+    const settings = getSettings();
+    let contextualMessage = message;
+
+    if (settings.contextAwareness?.enabled) {
+      const context = contextCaptureService.getContext();
+
+      if (context) {
+        if (settings.contextAwareness.injectionStyle === 'visible') {
+          // Visible: prepend to user message (editable)
+          const contextPrefix = `[Context: Working in "${context.appName}" - "${context.windowTitle}"]`;
+
+          if (context.selectedText) {
+            contextualMessage = `${contextPrefix}\nSelected text: ${context.selectedText}\n\n${message}`;
+          } else {
+            contextualMessage = `${contextPrefix}\n\n${message}`;
+          }
+        }
+        // Hidden injection would be handled in copilot/client.ts getSystemPrompt()
+        // This is a future enhancement
+      }
+    }
+
     // Add to history
-    addToHistory(message);
+    addToHistory(contextualMessage);
 
     try {
       let routeResult = { handled: false, reason: 'Intent router initializing' } as {
@@ -484,7 +692,7 @@ export function setupIpcHandlers(): void {
       if (intentRouterInitialized) {
         // Try intent-based routing first (Tier 1 & 2)
         console.log('[IPC] Attempting intent-based routing...');
-        routeResult = await intentRouter.route(message);
+        routeResult = await intentRouter.route(contextualMessage);
       } else {
         console.log('[IPC] Intent router not ready, warming in background...');
         ensureIntentRouterInitialized().catch((error) => {
@@ -515,7 +723,7 @@ export function setupIpcHandlers(): void {
       copilotController.setActiveWebContents(sender);
 
       // Use the AsyncGenerator pattern with agentic loop
-      for await (const streamEvent of copilotController.sendMessageWithLoop(message)) {
+      for await (const streamEvent of copilotController.sendMessageWithLoop(contextualMessage)) {
         // Check if sender is still valid before sending
         if (sender.isDestroyed()) {
           console.log('[IPC] Sender destroyed, stopping stream');
@@ -580,6 +788,16 @@ export function setupIpcHandlers(): void {
 
   ipcMain.handle(IPC_CHANNELS.COPILOT_CLEAR_SESSION, async () => {
     await copilotController.clearHistory();
+    contextCaptureService.clearContext();
+  });
+
+  // Context awareness handlers
+  ipcMain.handle(IPC_CHANNELS.CONTEXT_GET, () => {
+    return contextCaptureService.getContext();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.CONTEXT_CLEAR, () => {
+    contextCaptureService.clearContext();
   });
 
   // Permission handlers
@@ -741,13 +959,15 @@ export function setupIpcHandlers(): void {
       const language = payload.language?.trim() || 'en';
 
       // Route to appropriate provider
-      if (provider === 'openai_whisper') {
+      if (provider === 'local_whisper') {
+        return await transcribeWithLocalWhisper(audioBuffer, language, settings);
+      } else if (provider === 'openai_whisper') {
         return await transcribeWithOpenAI(audioBuffer, language, settings);
       } else if (provider === 'browser') {
         // Browser provider is handled in renderer, this should not be called
         return { success: false, error: 'Browser provider should be handled in renderer process.' };
       } else {
-        return { success: false, error: `Unknown provider: ${provider}. Use browser or openai_whisper.` };
+        return { success: false, error: `Unknown provider: ${provider}. Use local_whisper, openai_whisper, or browser.` };
       }
     } catch (error: any) {
       return { success: false, error: error?.message || String(error) };

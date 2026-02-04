@@ -14,7 +14,7 @@ export const CLIPBOARD_LIMITS = {
 };
 
 // Default hotkey for command palette
-export const DEFAULT_HOTKEY = 'CommandOrControl+Shift+Space';
+export const DEFAULT_HOTKEY = 'CommandOrControl+Shift+A';
 
 // Window dimensions
 export const COMMAND_PALETTE_WIDTH = 600;
@@ -78,10 +78,13 @@ export const DEFAULT_SETTINGS = {
   voiceInput: {
     enabled: false,
     hotkey: 'CommandOrControl+Shift+V',
-    provider: 'browser' as const,
+    provider: 'local_whisper' as const,  // local whisper - free, offline, no API key needed
     openaiWhisper: {
       apiKey: '',
       model: 'whisper-1',
+    },
+    localWhisper: {
+      modelSize: 'base' as const,  // good balance of speed and accuracy
     },
     language: 'en-US',
     showVisualFeedback: true,
@@ -96,6 +99,12 @@ export const DEFAULT_SETTINGS = {
     chat: 'CommandOrControl+Shift+C',
     audioRecording: 'CommandOrControl+Shift+A',
     videoRecording: 'CommandOrControl+Shift+R',
+  },
+  contextAwareness: {
+    enabled: true,
+    captureSelectedText: false,
+    showContextBadge: true,
+    injectionStyle: 'visible' as const,
   },
 };
 
