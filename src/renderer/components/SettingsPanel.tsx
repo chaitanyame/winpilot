@@ -572,11 +572,35 @@ export function SettingsPanel({ isOpen, onClose }: Props) {
                 </label>
               </div>
 
+              {/* Auto-Paste on Voice-to-Clipboard */}
+              <div>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={settings.voiceInput?.autoPasteOnTranscribe !== false}
+                    onChange={(e) => updateSettings({
+                      voiceInput: {
+                        ...settings.voiceInput,
+                        autoPasteOnTranscribe: e.target.checked
+                      }
+                    })}
+                    className="w-4 h-4 rounded border-dark-300 text-primary-500"
+                    disabled={!settings.voiceInput?.enabled}
+                  />
+                  <span className="text-sm text-dark-600 dark:text-dark-400">
+                    Auto-paste after voice-to-clipboard (Ctrl+Shift+W)
+                  </span>
+                </label>
+                <p className="text-xs text-dark-500 mt-1 ml-6">
+                  Automatically paste transcribed text to the focused app
+                </p>
+              </div>
+
               <div className="p-3 bg-primary-50 dark:bg-primary-900/20 rounded-lg">
                 <p className="text-xs text-primary-700 dark:text-primary-300">
                   <Mic className="w-3 h-3 inline mr-1" />
                   Voice input allows you to speak commands instead of typing. Press the global hotkey or
-                  click the mic icon to start recording.
+                  click the mic icon to start recording. Use Ctrl+Shift+W for voice-to-clipboard.
                 </p>
               </div>
             </div>

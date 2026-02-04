@@ -1,6 +1,6 @@
 // Electron Window Management
 
-import { BrowserWindow, screen, app } from 'electron';
+import { BrowserWindow, screen, app, ipcMain } from 'electron';
 import path from 'path';
 import { COMMAND_PALETTE_WIDTH, COMMAND_PALETTE_HEIGHT } from '../shared/constants';
 
@@ -37,7 +37,8 @@ export async function createCommandWindow(): Promise<BrowserWindow> {
     y,
     show: false, // Start hidden
     frame: false, // Frameless window
-    transparent: true,
+    transparent: false, // DISABLED - causes getUserMedia crash on Windows
+    backgroundColor: '#1a1a2e', // Dark background to match UI
     resizable: true,
     movable: true,
     minimizable: true,
@@ -51,6 +52,7 @@ export async function createCommandWindow(): Promise<BrowserWindow> {
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: false,
+      backgroundThrottling: false, // Prevent throttling when window loses focus (important for voice recording)
     },
   });
 
@@ -109,6 +111,132 @@ export async function createCommandWindow(): Promise<BrowserWindow> {
   // NOTE: Auto-minimize on blur is DISABLED - it causes issues with voice recording
   // and other features that temporarily steal focus. Users can manually minimize.
 
+  // Track if we're in a restore cycle to prevent endless loops
+  let restoreInProgress = false;
+  let lastBlurTime = 0;
+
+  // Add event listeners to track window state changes
+  commandWindow.on('blur', () => {
+    console.log('[Windows] blur event, suppressAutoHide:', suppressAutoHide);
+    
+    // Don't let blur hide the window during voice recording
+    // But avoid endless blur/focus loops by rate-limiting restores
+    if (suppressAutoHide && !restoreInProgress) {
+      const now = Date.now();
+      // Only attempt restore if it's been at least 1 second since last blur
+      if (now - lastBlurTime < 1000) {
+        console.log('[Windows] blur during voice recording - skipping restore (rate limited)');
+        return;
+      }
+      lastBlurTime = now;
+      
+      console.log('[Windows] blur during voice recording - will restore once');
+      restoreInProgress = true;
+      
+      // Single restore attempt after a delay
+      setTimeout(() => {
+        if (!commandWindow || commandWindow.isDestroyed() || !suppressAutoHide) {
+          restoreInProgress = false;
+          return;
+        }
+        
+        console.log('[Windows] Restoring window after blur');
+        const bounds = commandWindow.getBounds();
+        console.log('[Windows] Current bounds:', JSON.stringify(bounds));
+        
+        // Keep window on top and visible, but don't aggressively steal focus
+        commandWindow.setAlwaysOnTop(true, 'screen-saver');
+        if (commandWindow.isMinimized()) {
+          commandWindow.restore();
+        }
+        commandWindow.show();
+        commandWindow.moveTop();
+        // Only focus if window is not currently focused elsewhere
+        if (!commandWindow.isFocused()) {
+          commandWindow.focus();
+        }
+        
+        restoreInProgress = false;
+      }, 500);
+    }
+  });
+
+  commandWindow.on('minimize', () => {
+    console.log('[Windows] minimize event, suppressAutoHide:', suppressAutoHide);
+    console.log('[Windows] Window state after minimize - isMinimized:', commandWindow?.isMinimized(), 'isVisible:', commandWindow?.isVisible());
+    // Prevent minimize during voice recording
+    if (suppressAutoHide) {
+      console.log('[Windows] Preventing minimize during voice recording - will restore');
+      setTimeout(() => {
+        if (commandWindow && !commandWindow.isDestroyed() && suppressAutoHide) {
+          console.log('[Windows] Restoring from minimize');
+          commandWindow.setAlwaysOnTop(true, 'screen-saver');
+          commandWindow.restore();
+          commandWindow.show();
+          commandWindow.moveTop();
+          commandWindow.focus();
+        }
+      }, 100);
+    }
+  });
+
+  commandWindow.on('hide', () => {
+    console.log('[Windows] hide event, suppressAutoHide:', suppressAutoHide);
+    console.log('[Windows] Window state after hide - isMinimized:', commandWindow?.isMinimized(), 'isVisible:', commandWindow?.isVisible());
+    // Prevent hide during voice recording
+    if (suppressAutoHide) {
+      console.log('[Windows] Preventing hide during voice recording - will show');
+      setTimeout(() => {
+        if (commandWindow && !commandWindow.isDestroyed() && suppressAutoHide) {
+          console.log('[Windows] Re-showing from hide');
+          commandWindow.setAlwaysOnTop(true, 'screen-saver');
+          if (commandWindow.isMinimized()) {
+            commandWindow.restore();
+          }
+          commandWindow.show();
+          commandWindow.moveTop();
+          commandWindow.focus();
+        }
+      }, 100);
+    }
+  });
+
+  commandWindow.on('show', () => {
+    console.log('[Windows] show event');
+    console.log('[Windows] Window state after show - isMinimized:', commandWindow?.isMinimized(), 'isVisible:', commandWindow?.isVisible());
+  });
+
+  commandWindow.on('focus', () => {
+    console.log('[Windows] focus event');
+  });
+
+  // Handle renderer process crash/termination (newer API)
+  commandWindow.webContents.on('render-process-gone', (_event, details) => {
+    console.error('[Windows] Renderer process gone!', JSON.stringify(details));
+    console.error('[Windows] Reason:', details.reason, 'Exit code:', details.exitCode);
+    // Reload the window to recover
+    setTimeout(() => {
+      if (commandWindow && !commandWindow.isDestroyed()) {
+        console.log('[Windows] Reloading window after crash...');
+        commandWindow.reload();
+      }
+    }, 500);
+  });
+
+  // Handle renderer becoming unresponsive
+  commandWindow.webContents.on('unresponsive', () => {
+    console.warn('[Windows] Renderer became unresponsive');
+  });
+
+  commandWindow.webContents.on('responsive', () => {
+    console.log('[Windows] Renderer is responsive again');
+  });
+
+  // Log when renderer is destroyed
+  commandWindow.webContents.on('destroyed', () => {
+    console.warn('[Windows] Renderer webContents destroyed');
+  });
+
   // Prevent window from being destroyed, just hide it
   commandWindow.on('close', (event) => {
     if (!app.isQuitting) {
@@ -119,6 +247,212 @@ export async function createCommandWindow(): Promise<BrowserWindow> {
   });
 
   return commandWindow;
+}
+
+// Audio capture helper window for voice recording
+// This is a hidden, non-transparent window that handles getUserMedia
+// to avoid crashes in the transparent command window
+let audioCaptureWindow: BrowserWindow | null = null;
+let audioCaptureResolve: ((sampleRate: number) => void) | null = null;
+let audioCaptureReject: ((error: string) => void) | null = null;
+let audioCaptureWindowReady = false;
+let audioCaptureWindowReadyResolve: (() => void) | null = null;
+
+/**
+ * Create or get the audio capture helper window
+ * This window is non-transparent and handles getUserMedia safely
+ */
+export async function createAudioCaptureWindow(): Promise<BrowserWindow> {
+  if (audioCaptureWindow && !audioCaptureWindow.isDestroyed()) {
+    return audioCaptureWindow;
+  }
+
+  console.log('[Windows] Creating audio capture helper window...');
+  
+  // Reset ready flag since we're creating a new window
+  audioCaptureWindowReady = false;
+  
+  audioCaptureWindow = new BrowserWindow({
+    width: 200,
+    height: 100,
+    show: true, // Show for debugging
+    frame: true,
+    transparent: false, // NOT transparent - this is key!
+    skipTaskbar: false,
+    backgroundColor: '#000000',
+    title: 'Audio Capture (Debug)',
+    webPreferences: {
+      preload: path.join(__dirname, '../preload/index.js'),
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: false,
+      backgroundThrottling: false,
+    },
+  });
+
+  // Add crash detection for the audio capture window
+  audioCaptureWindow.webContents.on('render-process-gone', (_event, details) => {
+    console.error('[Windows] Audio capture window crashed!', details);
+    audioCaptureWindowReady = false;
+    if (audioCaptureReject) {
+      audioCaptureReject('Audio capture window crashed: ' + details.reason);
+      audioCaptureResolve = null;
+      audioCaptureReject = null;
+    }
+  });
+
+  audioCaptureWindow.on('closed', () => {
+    console.log('[Windows] Audio capture window closed');
+    audioCaptureWindow = null;
+    audioCaptureWindowReady = false;
+  });
+
+  // Load the audio capture HTML page
+  const isDev = !app.isPackaged;
+  if (isDev) {
+    // In dev, load from file system
+    const htmlPath = path.join(__dirname, '../../src/renderer/audio-capture/index.html');
+    await audioCaptureWindow.loadFile(htmlPath);
+  } else {
+    // In production, load from dist
+    const htmlPath = path.join(__dirname, '../renderer/audio-capture/index.html');
+    await audioCaptureWindow.loadFile(htmlPath);
+  }
+  
+  console.log('[Windows] Audio capture helper window created');
+  return audioCaptureWindow;
+}
+
+/**
+ * Get the audio capture window (returns null if not created)
+ */
+export function getAudioCaptureWindow(): BrowserWindow | null {
+  return audioCaptureWindow && !audioCaptureWindow.isDestroyed() ? audioCaptureWindow : null;
+}
+
+/**
+ * Mark audio capture window as ready (called from IPC handler)
+ */
+export function markAudioCaptureWindowReady(): void {
+  console.log('[Windows] Audio capture window marked ready');
+  audioCaptureWindowReady = true;
+  if (audioCaptureWindowReadyResolve) {
+    audioCaptureWindowReadyResolve();
+    audioCaptureWindowReadyResolve = null;
+  }
+}
+
+/**
+ * Start audio capture in the helper window
+ */
+export async function startAudioCapture(): Promise<number> {
+  const window = await createAudioCaptureWindow();
+  
+  // Wait for the window to be ready if it's not already
+  if (!audioCaptureWindowReady) {
+    console.log('[Windows] Waiting for audio capture window to be ready...');
+    await new Promise<void>((resolve) => {
+      audioCaptureWindowReadyResolve = resolve;
+      // Timeout after 5 seconds
+      setTimeout(() => {
+        if (audioCaptureWindowReadyResolve) {
+          console.log('[Windows] Audio capture window ready timeout, proceeding anyway');
+          audioCaptureWindowReadyResolve();
+          audioCaptureWindowReadyResolve = null;
+        }
+      }, 5000);
+    });
+  }
+  
+  console.log('[Windows] Sending audioCapture:start to helper window');
+  
+  return new Promise((resolve, reject) => {
+    audioCaptureResolve = resolve;
+    audioCaptureReject = reject;
+    
+    // Tell the audio capture window to start recording
+    window.webContents.send('audioCapture:start');
+    
+    // Timeout after 10 seconds
+    setTimeout(() => {
+      if (audioCaptureReject) {
+        audioCaptureReject('Audio capture timed out');
+        audioCaptureResolve = null;
+        audioCaptureReject = null;
+      }
+    }, 10000);
+  });
+}
+
+/**
+ * Stop audio capture and get the samples
+ */
+export async function stopAudioCapture(): Promise<{ samples: number[][]; sampleRate: number }> {
+  const window = getAudioCaptureWindow();
+  if (!window) {
+    throw new Error('Audio capture window not available');
+  }
+  
+  // Check if the window's webContents is still valid
+  if (window.isDestroyed() || window.webContents.isDestroyed()) {
+    throw new Error('Audio capture window was destroyed');
+  }
+  
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      ipcMain.removeListener('audioCapture:stopped', handler);
+      reject(new Error('Stop audio capture timed out'));
+    }, 5000);
+    
+    // One-time listener for the stopped event
+    const handler = (_event: Electron.IpcMainEvent, samples: number[][], sampleRate: number) => {
+      clearTimeout(timeout);
+      ipcMain.removeListener('audioCapture:stopped', handler);
+      resolve({ samples, sampleRate });
+    };
+    ipcMain.on('audioCapture:stopped', handler);
+    
+    // Tell the window to stop
+    try {
+      window.webContents.send('audioCapture:stop');
+    } catch (err) {
+      clearTimeout(timeout);
+      ipcMain.removeListener('audioCapture:stopped', handler);
+      reject(err);
+    }
+  });
+}
+
+/**
+ * Handle audio capture ready event
+ */
+export function handleAudioCaptureReady(sampleRate: number): void {
+  if (audioCaptureResolve) {
+    audioCaptureResolve(sampleRate);
+    audioCaptureResolve = null;
+    audioCaptureReject = null;
+  }
+}
+
+/**
+ * Handle audio capture error event
+ */
+export function handleAudioCaptureError(error: string): void {
+  if (audioCaptureReject) {
+    audioCaptureReject(error);
+    audioCaptureResolve = null;
+    audioCaptureReject = null;
+  }
+}
+
+/**
+ * Destroy the audio capture helper window
+ */
+export function destroyAudioCaptureWindow(): void {
+  if (audioCaptureWindow && !audioCaptureWindow.isDestroyed()) {
+    audioCaptureWindow.destroy();
+    audioCaptureWindow = null;
+  }
 }
 
 /**
@@ -134,12 +468,29 @@ export function showCommandWindow(): void {
 
   // FIRST: Always restore and show the window before doing anything else
   try {
+    // Force alwaysOnTop with highest priority during voice recording
+    if (suppressAutoHide) {
+      commandWindow.setAlwaysOnTop(true, 'screen-saver');
+    }
+    
     if (commandWindow.isMinimized()) {
       console.log('[Windows] Restoring minimized window');
       commandWindow.restore();
     }
     commandWindow.show();
+    commandWindow.moveTop();
     commandWindow.focus();
+    
+    // During voice recording, flash taskbar and toggle alwaysOnTop to force z-order
+    if (suppressAutoHide) {
+      // Flash to get attention in case window is behind
+      commandWindow.flashFrame(true);
+      setTimeout(() => {
+        if (commandWindow && !commandWindow.isDestroyed()) {
+          commandWindow.flashFrame(false);
+        }
+      }, 500);
+    }
   } catch (err) {
     console.error('[Windows] Failed to restore/show/focus window:', err);
   }
@@ -191,7 +542,9 @@ export function showCommandWindow(): void {
  * Hide the command window
  */
 export function hideCommandWindow(force = false): void {
+  const stack = new Error().stack;
   console.log('[Windows] hideCommandWindow called, force:', force, 'suppressAutoHide:', suppressAutoHide);
+  console.log('[Windows] Called from:', stack?.split('\n')[2]?.trim());
   if (!commandWindow) return;
   if (suppressAutoHide && !force) {
     console.log('[Windows] hide suppressed');
@@ -244,7 +597,9 @@ export function focusCommandInput(): void {
  * Minimize the command window
  */
 export function minimizeCommandWindow(): void {
+  const stack = new Error().stack;
   console.log('[Windows] minimizeCommandWindow called');
+  console.log('[Windows] Called from:', stack?.split('\n')[2]?.trim());
   if (commandWindow) {
     commandWindow.minimize();
   }

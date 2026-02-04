@@ -511,13 +511,22 @@ export function CommandPalette() {
       mediaStreamRef.current.getTracks().forEach(t => t.stop());
       mediaStreamRef.current = null;
     }
+    if (mediaRecorderRef.current) {
+      try {
+        if (mediaRecorderRef.current.state !== 'inactive') {
+          mediaRecorderRef.current.stop();
+        }
+      } catch {}
+      mediaRecorderRef.current = null;
+    }
   }, []);
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const audioProcessorRef = useRef<ScriptProcessorNode | null>(null);
   const audioSamplesRef = useRef<Float32Array[]>([]);
-  const audioSampleRateRef = useRef<number>(16000);
   const voiceInputManagerActiveRef = useRef(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
 
   // Ensure timers/streams are cleaned up when the component unmounts.
   useEffect(() => {
@@ -535,45 +544,66 @@ export function CommandPalette() {
         audioContextRef.current = null;
       }
       audioSamplesRef.current = [];
+      audioChunksRef.current = [];
       cleanupMediaStream();
     };
   }, [cleanupMediaStream]);
 
   const startWhisperRecording = useCallback(async () => {
     try {
+      console.log('[Voice] startWhisperRecording called');
+      
       // If we're already recording, don't restart.
-      if (audioContextRef.current) return;
+      if (mediaRecorderRef.current) {
+        console.log('[Voice] Already recording, skipping');
+        return;
+      }
 
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Suppress auto-hide BEFORE requesting microphone
+      window.electronAPI.setAutoHideSuppressed(true);
+      console.log('[Voice] Requesting microphone access with MediaRecorder...');
+
+      // Use MediaRecorder API directly - it's more stable than ScriptProcessor
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+        }
+      });
+      
+      console.log('[Voice] Got media stream');
       mediaStreamRef.current = stream;
-      audioSamplesRef.current = [];
-
-      const AudioContextCtor = window.AudioContext || (window as any).webkitAudioContext;
-      const audioContext: AudioContext = new AudioContextCtor();
-      audioContextRef.current = audioContext;
-      audioSampleRateRef.current = audioContext.sampleRate;
-
-      const source = audioContext.createMediaStreamSource(stream);
-
-      // ScriptProcessor is deprecated, but widely supported and sufficient here.
-      const processor = audioContext.createScriptProcessor(4096, 1, 1);
-      audioProcessorRef.current = processor;
-
-      processor.onaudioprocess = (e) => {
-        const input = e.inputBuffer.getChannelData(0);
-        audioSamplesRef.current.push(new Float32Array(input));
+      audioChunksRef.current = [];
+      
+      // Create MediaRecorder with webm/opus format
+      const mediaRecorder = new MediaRecorder(stream, {
+        mimeType: 'audio/webm;codecs=opus'
+      });
+      
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) {
+          audioChunksRef.current.push(e.data);
+        }
       };
-
-      source.connect(processor);
-      processor.connect(audioContext.destination);
-
+      
+      mediaRecorder.onerror = (e: Event) => {
+        console.error('[Voice] MediaRecorder error:', e);
+      };
+      
+      mediaRecorder.start(100); // Collect data every 100ms
+      mediaRecorderRef.current = mediaRecorder;
+      
+      // Use audioContextRef as flag that we're recording
+      audioContextRef.current = {} as AudioContext;
+      
       setIsSpeechDetected(true);
 
-      // Ensure window stays visible after microphone access (getUserMedia may steal focus)
-      setTimeout(() => {
-        window.electronAPI.setAutoHideSuppressed(true);
-        window.electronAPI.show();
-      }, 150);
+      // Restore window visibility
+      console.log('[Voice] Restoring window visibility...');
+      window.electronAPI.setAutoHideSuppressed(true);
+      window.electronAPI.show();
+      console.log('[Voice] Recording started successfully with MediaRecorder');
     } catch (err) {
       console.error('Failed to start whisper.cpp recording:', err);
       setVoiceError('Failed to access microphone for whisper.cpp transcription.');
@@ -592,104 +622,63 @@ export function CommandPalette() {
       setIsSpeechDetected(false);
       setIsTranscribing(true);
 
-      // Disconnect/close audio graph.
-      if (audioProcessorRef.current) {
-        try {
-          audioProcessorRef.current.disconnect();
-        } catch {}
-        audioProcessorRef.current = null;
+      console.log('[Voice] Stopping MediaRecorder...');
+      
+      const mediaRecorder = mediaRecorderRef.current;
+      if (!mediaRecorder || mediaRecorder.state === 'inactive') {
+        throw new Error('No active recording');
       }
-      if (audioContextRef.current) {
-        try {
-          await audioContextRef.current.close();
-        } catch {}
-        audioContextRef.current = null;
-      }
+      
+      // Wait for the final data
+      await new Promise<void>((resolve) => {
+        mediaRecorder.onstop = () => resolve();
+        mediaRecorder.stop();
+      });
+      
+      console.log('[Voice] Got', audioChunksRef.current.length, 'audio chunks');
+      
+      // Combine all chunks into a single blob
+      const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm;codecs=opus' });
+      console.log('[Voice] Audio blob size:', audioBlob.size, 'bytes');
+      
+      // Clear our recording state
+      mediaRecorderRef.current = null;
+      audioContextRef.current = null;
+      audioChunksRef.current = [];
 
-      // Merge samples and encode PCM16 WAV.
-      const chunks = audioSamplesRef.current;
-      const totalLength = chunks.reduce((sum, c) => sum + c.length, 0);
-      const merged = new Float32Array(totalLength);
-      let offset = 0;
-      for (const c of chunks) {
-        merged.set(c, offset);
-        offset += c.length;
-      }
-
-      const encodeWavPcm16 = (samples: Float32Array, sampleRate: number): ArrayBuffer => {
-        const numChannels = 1;
-        const bitsPerSample = 16;
-        const blockAlign = numChannels * (bitsPerSample / 8);
-        const byteRate = sampleRate * blockAlign;
-        const dataSize = samples.length * (bitsPerSample / 8);
-        const buffer = new ArrayBuffer(44 + dataSize);
-        const view = new DataView(buffer);
-
-        let p = 0;
-        const writeStr = (s: string) => {
-          for (let i = 0; i < s.length; i++) view.setUint8(p++, s.charCodeAt(i));
-        };
-
-        writeStr('RIFF');
-        view.setUint32(p, 36 + dataSize, true); p += 4;
-        writeStr('WAVE');
-        writeStr('fmt ');
-        view.setUint32(p, 16, true); p += 4; // PCM
-        view.setUint16(p, 1, true); p += 2;  // format
-        view.setUint16(p, numChannels, true); p += 2;
-        view.setUint32(p, sampleRate, true); p += 4;
-        view.setUint32(p, byteRate, true); p += 4;
-        view.setUint16(p, blockAlign, true); p += 2;
-        view.setUint16(p, bitsPerSample, true); p += 2;
-        writeStr('data');
-        view.setUint32(p, dataSize, true); p += 4;
-
-        for (let i = 0; i < samples.length; i++) {
-          let s = samples[i];
-          s = Math.max(-1, Math.min(1, s));
-          view.setInt16(p, s < 0 ? s * 0x8000 : s * 0x7fff, true);
-          p += 2;
-        }
-
-        return buffer;
-      };
-
-      const audio = encodeWavPcm16(merged, audioSampleRateRef.current || 16000);
+      // Convert blob to ArrayBuffer and send for transcription
+      const arrayBuffer = await audioBlob.arrayBuffer();
       const language = (voiceLanguage || 'en-US').split('-')[0];
 
+      console.log('[Voice] Sending audio for transcription...');
       const res = await window.electronAPI.voiceTranscribe({
-        audio,
-        mimeType: 'audio/wav',
+        audio: arrayBuffer,
+        mimeType: 'audio/webm',
         language,
       });
 
-        if (!res.success) {
-          setVoiceError(res.error || 'Whisper transcription failed.');
-          clearVoiceError();
-        } else if (res.transcript) {
-          insertTranscript(res.transcript);
-        }
-        if (voiceInputManagerActiveRef.current) {
-          window.electronAPI.voiceTest().catch(() => undefined);
-          voiceInputManagerActiveRef.current = false;
-        }
-        window.electronAPI.setAutoHideSuppressed(false);
-      } catch (err) {
-        console.error('Whisper transcription failed:', err);
-        setVoiceError('Whisper transcription failed.');
+      if (res.success && res.transcript) {
+        insertTranscript(res.transcript);
+      } else if (!res.success) {
+        setVoiceError(res.error || 'Whisper transcription failed.');
         clearVoiceError();
-        if (voiceInputManagerActiveRef.current) {
-          window.electronAPI.voiceTest().catch(() => undefined);
-          voiceInputManagerActiveRef.current = false;
-        }
-        window.electronAPI.setAutoHideSuppressed(false);
-      } finally {
-        setIsRecording(false);
-        setIsSpeechDetected(false);
-        setIsTranscribing(false);
-        audioSamplesRef.current = [];
-        cleanupMediaStream();
       }
+      voiceInputManagerActiveRef.current = false;
+      window.electronAPI.setAutoHideSuppressed(false);
+    } catch (err) {
+      console.error('Whisper transcription failed:', err);
+      setVoiceError('Whisper transcription failed.');
+      clearVoiceError();
+      voiceInputManagerActiveRef.current = false;
+      window.electronAPI.setAutoHideSuppressed(false);
+    } finally {
+      setIsRecording(false);
+      setIsSpeechDetected(false);
+      setIsTranscribing(false);
+      audioSamplesRef.current = [];
+      audioChunksRef.current = [];
+      cleanupMediaStream();
+    }
   }, [clearVoiceError, cleanupMediaStream, insertTranscript, voiceLanguage]);
 
   // Listen for voice events from main process

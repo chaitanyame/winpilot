@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Voice Recording</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      overflow: hidden;
+      background: transparent;
+      -webkit-app-region: drag;
+    }
+
+    .pill {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 16px;
+      background: rgba(30, 30, 30, 0.95);
+      backdrop-filter: blur(10px);
+      border-radius: 24px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .pill.listening {
+      background: rgba(59, 130, 246, 0.95);
+    }
+
+    .pill.transcribing {
+      background: rgba(234, 179, 8, 0.95);
+    }
+
+    .pill.error {
+      background: rgba(239, 68, 68, 0.95);
+    }
+
+    .pill.success {
+      background: rgba(34, 197, 94, 0.95);
+    }
+
+    .mic-icon {
+      width: 16px;
+      height: 16px;
+      fill: white;
+    }
+
+    .pill.listening .mic-icon {
+      animation: pulse 1.5s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% {
+        opacity: 1;
+        transform: scale(1);
+      }
+      50% {
+        opacity: 0.7;
+        transform: scale(1.1);
+      }
+    }
+
+    .spinner {
+      width: 16px;
+      height: 16px;
+      border: 2px solid rgba(255, 255, 255, 0.3);
+      border-top-color: white;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .text {
+      color: white;
+      font-size: 13px;
+      font-weight: 500;
+      user-select: none;
+      white-space: nowrap;
+    }
+
+    .checkmark {
+      width: 16px;
+      height: 16px;
+      fill: white;
+    }
+  </style>
+</head>
+<body>
+  <div class="pill" id="pill">
+    <svg class="mic-icon" id="mic-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+      <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
+      <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
+    </svg>
+    <div class="spinner" id="spinner" style="display: none;"></div>
+    <svg class="checkmark" id="checkmark" style="display: none;" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+      <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
+    </svg>
+    <span class="text" id="text">Listening...</span>
+  </div>
+
+  <script>
+    const pill = document.getElementById('pill');
+    const micIcon = document.getElementById('mic-icon');
+    const spinner = document.getElementById('spinner');
+    const checkmark = document.getElementById('checkmark');
+    const text = document.getElementById('text');
+
+    // IPC from main process
+    const { ipcRenderer } = require('electron');
+    
+    ipcRenderer.on('pill:setState', (event, data) => {
+      const { state, message } = data;
+      
+      // Reset classes
+      pill.className = 'pill';
+      micIcon.style.display = 'none';
+      spinner.style.display = 'none';
+      checkmark.style.display = 'none';
+      
+      switch (state) {
+        case 'listening':
+          pill.classList.add('listening');
+          micIcon.style.display = 'block';
+          text.textContent = message || 'Listening...';
+          break;
+        case 'transcribing':
+          pill.classList.add('transcribing');
+          spinner.style.display = 'block';
+          text.textContent = message || 'Transcribing...';
+          break;
+        case 'success':
+          pill.classList.add('success');
+          checkmark.style.display = 'block';
+          text.textContent = message || 'Done!';
+          break;
+        case 'error':
+          pill.classList.add('error');
+          micIcon.style.display = 'block';
+          text.textContent = message || 'Error';
+          break;
+      }
+    });
+  </script>
+</body>
+</html>

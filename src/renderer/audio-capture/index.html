@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Audio Capture</title>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; media-src *; connect-src *">
+</head>
+<body style="margin: 0; padding: 0; background: #000; color: #fff; font-family: sans-serif; padding: 10px;">
+  <div id="status">Ready</div>
+  <script>
+    // Audio capture helper - uses MediaRecorder API instead of deprecated ScriptProcessor
+    // This avoids crashes in the audio processing pipeline
+    
+    let mediaStream = null;
+    let mediaRecorder = null;
+    let audioChunks = [];
+    let sampleRate = 44100;
+    const statusEl = document.getElementById('status');
+    
+    function updateStatus(msg) {
+      console.log('[AudioCapture]', msg);
+      if (statusEl) statusEl.textContent = msg;
+    }
+    
+    // Listen for commands from main process
+    window.electronAPI?.onAudioCaptureStart?.(async () => {
+      updateStatus('Starting capture...');
+      try {
+        mediaStream = await navigator.mediaDevices.getUserMedia({ 
+          audio: {
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: false,
+            sampleRate: 16000  // Whisper prefers 16kHz
+          }
+        });
+        updateStatus('Got media stream');
+        
+        // Get actual sample rate from the track
+        const audioTrack = mediaStream.getAudioTracks()[0];
+        const settings = audioTrack.getSettings();
+        sampleRate = settings.sampleRate || 44100;
+        
+        // Use MediaRecorder API - more stable than ScriptProcessor
+        audioChunks = [];
+        mediaRecorder = new MediaRecorder(mediaStream, {
+          mimeType: 'audio/webm;codecs=opus'
+        });
+        
+        mediaRecorder.ondataavailable = (e) => {
+          if (e.data.size > 0) {
+            audioChunks.push(e.data);
+          }
+        };
+        
+        mediaRecorder.onerror = (e) => {
+          updateStatus('Recorder error: ' + e.error);
+          window.electronAPI?.audioCaptureError?.(e.error?.message || 'MediaRecorder error');
+        };
+        
+        mediaRecorder.start(100); // Collect data every 100ms
+        
+        updateStatus('Recording at ' + sampleRate + 'Hz');
+        window.electronAPI?.audioCaptureReady?.(sampleRate);
+      } catch (err) {
+        updateStatus('Failed: ' + err.message);
+        window.electronAPI?.audioCaptureError?.(err.message || String(err));
+      }
+    });
+    
+    window.electronAPI?.onAudioCaptureStop?.(async () => {
+      updateStatus('Stopping capture...');
+      try {
+        if (!mediaRecorder || mediaRecorder.state === 'inactive') {
+          throw new Error('No active recording');
+        }
+        
+        // Wait for the final data
+        await new Promise((resolve) => {
+          mediaRecorder.onstop = resolve;
+          mediaRecorder.stop();
+        });
+        
+        // Combine all chunks into a single blob
+        const audioBlob = new Blob(audioChunks, { type: 'audio/webm;codecs=opus' });
+        updateStatus('Got ' + audioChunks.length + ' chunks, ' + audioBlob.size + ' bytes');
+        
+        // Convert blob to ArrayBuffer
+        const arrayBuffer = await audioBlob.arrayBuffer();
+        const uint8Array = new Uint8Array(arrayBuffer);
+        
+        // Cleanup
+        if (mediaStream) {
+          mediaStream.getTracks().forEach(t => t.stop());
+          mediaStream = null;
+        }
+        mediaRecorder = null;
+        audioChunks = [];
+        
+        // Send the audio data as a Uint8Array (will be converted to WAV on the other side)
+        updateStatus('Sending audio data...');
+        window.electronAPI?.audioCaptureStoppedWithBlob?.(Array.from(uint8Array), sampleRate, 'audio/webm');
+      } catch (err) {
+        updateStatus('Stop failed: ' + err.message);
+        window.electronAPI?.audioCaptureError?.(err.message || String(err));
+      }
+    });
+    
+    updateStatus('Helper window ready');
+    window.electronAPI?.audioCaptureWindowReady?.();
+  </script>
+</body>
+</html>

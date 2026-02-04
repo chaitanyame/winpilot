@@ -14,7 +14,7 @@ import { IPC_CHANNELS, ScheduledTask, Timer, ActionLog, Recording, RecordingType
 import { MCP_IPC_CHANNELS, MCPServerConfig } from '../shared/mcp-types';
 import { getSettings, setSettings, getHistory, addToHistory, clearHistory, getMcpServers, addMcpServer, updateMcpServer, deleteMcpServer, toggleMcpServer, getScheduledTasks, addScheduledTask, updateScheduledTask, deleteScheduledTask, getTaskLogs } from './store';
 import { getAppSetting, setAppSetting, deleteAppSetting } from './database';
-import { hideCommandWindow, showCommandWindow, resizeCommandWindow, minimizeCommandWindow, maximizeCommandWindow, fitWindowToScreen, getCommandWindow, setAutoHideSuppressed } from './windows';
+import { hideCommandWindow, showCommandWindow, resizeCommandWindow, minimizeCommandWindow, maximizeCommandWindow, fitWindowToScreen, getCommandWindow, setAutoHideSuppressed, startAudioCapture, stopAudioCapture, handleAudioCaptureReady, handleAudioCaptureError, markAudioCaptureWindowReady } from './windows';
 import { screenSharePrivacyService } from './screen-share-privacy';
 import { InvisiwindWrapper } from '../platform/windows/invisiwind';
 import { updateHotkey, registerVoiceHotkey, unregisterVoiceHotkey } from './hotkeys';
@@ -95,8 +95,12 @@ async function transcribeWithOpenAI(audioBuffer: Buffer, language: string, setti
 
 // Whisper.cpp binary and model paths
 const WHISPER_DIR = () => path.join(app.getPath('userData'), 'whisper');
-const WHISPER_BIN = () => path.join(WHISPER_DIR(), 'main.exe');
+const WHISPER_BIN = () => path.join(WHISPER_DIR(), 'whisper-cli.exe');  // Updated from main.exe
 const WHISPER_MODELS_DIR = () => path.join(WHISPER_DIR(), 'models');
+
+// FFmpeg paths
+const FFMPEG_DIR = () => path.join(app.getPath('userData'), 'ffmpeg');
+const FFMPEG_BIN = () => path.join(FFMPEG_DIR(), 'ffmpeg.exe');
 
 // Model URLs from Hugging Face
 const MODEL_URLS: Record<string, string> = {
@@ -107,8 +111,11 @@ const MODEL_URLS: Record<string, string> = {
   'large': 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin',
 };
 
-// Whisper.cpp Windows binary URL (pre-built)
-const WHISPER_BIN_URL = 'https://github.com/ggerganov/whisper.cpp/releases/download/v1.7.4/whisper-bin-x64.zip';
+// Whisper.cpp Windows binary URL (pre-built) - repo moved to ggml-org
+const WHISPER_BIN_URL = 'https://github.com/ggml-org/whisper.cpp/releases/download/v1.8.3/whisper-bin-x64.zip';
+
+// FFmpeg static build URL (gyan.dev provides lightweight static builds)
+const FFMPEG_URL = 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip';
 
 // Download file helper with redirect support
 async function downloadFile(url: string, destPath: string): Promise<void> {
@@ -176,12 +183,28 @@ async function ensureWhisperBinary(): Promise<string> {
   // Clean up zip
   await fs.unlink(zipPath).catch(() => {});
 
-  // Find and move main.exe to expected location
-  const extractedDir = path.join(whisperDir, 'whisper-bin-x64');
-  const extractedBin = path.join(extractedDir, 'main.exe');
-
-  if (fsSync.existsSync(extractedBin)) {
-    await fs.copyFile(extractedBin, binPath);
+  // Find the Release folder (new structure in v1.8+)
+  const releaseDir = path.join(whisperDir, 'Release');
+  
+  // Log what we found for debugging
+  try {
+    const files = fsSync.existsSync(releaseDir) ? fsSync.readdirSync(releaseDir) : [];
+    console.log('Files in Release dir:', files);
+    
+    // Copy all necessary files from Release folder to whisper folder
+    if (fsSync.existsSync(releaseDir)) {
+      for (const file of files) {
+        const srcPath = path.join(releaseDir, file);
+        const destPath = path.join(whisperDir, file);
+        // Copy all .exe and .dll files
+        if (file.endsWith('.exe') || file.endsWith('.dll')) {
+          console.log(`Copying ${file}...`);
+          await fs.copyFile(srcPath, destPath);
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Error copying whisper files:', err);
   }
 
   if (!fsSync.existsSync(binPath)) {
@@ -217,6 +240,68 @@ async function ensureWhisperModel(modelSize: string): Promise<string> {
   return modelPath;
 }
 
+// Helper: Ensure FFmpeg binary is available
+async function ensureFFmpeg(): Promise<string> {
+  const ffmpegPath = FFMPEG_BIN();
+  
+  if (fsSync.existsSync(ffmpegPath)) {
+    return ffmpegPath;
+  }
+  
+  console.log('Downloading FFmpeg binary...');
+  
+  const ffmpegDir = FFMPEG_DIR();
+  await fs.mkdir(ffmpegDir, { recursive: true });
+  
+  const zipPath = path.join(ffmpegDir, 'ffmpeg.zip');
+  await downloadFile(FFMPEG_URL, zipPath);
+  
+  // Extract using PowerShell
+  await extractZip(zipPath, ffmpegDir);
+  
+  // Find ffmpeg.exe in the extracted folder (it's in a subfolder like ffmpeg-master-latest-win64-gpl/bin/)
+  const findFfmpeg = async (dir: string): Promise<string | null> => {
+    const entries = fsSync.readdirSync(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        const found = await findFfmpeg(fullPath);
+        if (found) return found;
+      } else if (entry.name === 'ffmpeg.exe') {
+        return fullPath;
+      }
+    }
+    return null;
+  };
+  
+  const foundExe = await findFfmpeg(ffmpegDir);
+  if (foundExe && foundExe !== ffmpegPath) {
+    console.log('Found ffmpeg.exe at:', foundExe);
+    await fs.copyFile(foundExe, ffmpegPath);
+  }
+  
+  // Cleanup zip
+  await fs.unlink(zipPath).catch(() => {});
+  
+  if (!fsSync.existsSync(ffmpegPath)) {
+    throw new Error('Failed to extract FFmpeg');
+  }
+  
+  console.log('FFmpeg installed at:', ffmpegPath);
+  return ffmpegPath;
+}
+
+// Helper: Convert WebM to WAV using FFmpeg
+async function convertWebmToWav(inputPath: string, outputPath: string): Promise<void> {
+  const ffmpegPath = await ensureFFmpeg();
+  
+  // Convert to 16kHz mono WAV (optimal for whisper)
+  const cmd = `"${ffmpegPath}" -y -i "${inputPath}" -ar 16000 -ac 1 -c:a pcm_s16le "${outputPath}"`;
+  console.log('Converting audio:', cmd);
+  
+  await execAsync(cmd, { timeout: 30000 });
+}
+
 // Helper: Transcribe with Local Whisper (whisper.cpp binary)
 async function transcribeWithLocalWhisper(audioBuffer: Buffer, language: string, settings: any): Promise<{ success: boolean; transcript?: string; error?: string }> {
   const modelSize = settings.voiceInput?.localWhisper?.modelSize || 'base';
@@ -226,15 +311,37 @@ async function transcribeWithLocalWhisper(audioBuffer: Buffer, language: string,
     const binPath = await ensureWhisperBinary();
     const modelPath = await ensureWhisperModel(modelSize);
 
-    // Write audio buffer to temp file
     const tempDir = app.getPath('temp');
-    const tempAudioPath = path.join(tempDir, `whisper-input-${Date.now()}.wav`);
-    await fs.writeFile(tempAudioPath, audioBuffer);
+    const timestamp = Date.now();
+    
+    // Check for WebM magic bytes (0x1A 0x45 0xDF 0xA3)
+    const isWebM = audioBuffer[0] === 0x1A && audioBuffer[1] === 0x45 && audioBuffer[2] === 0xDF && audioBuffer[3] === 0xA3;
+    
+    let wavPath: string;
+    let tempWebmPath: string | null = null;
+    
+    if (isWebM) {
+      console.log('Detected WebM audio format, converting to WAV...');
+      tempWebmPath = path.join(tempDir, `whisper-input-${timestamp}.webm`);
+      wavPath = path.join(tempDir, `whisper-input-${timestamp}.wav`);
+      
+      await fs.writeFile(tempWebmPath, audioBuffer);
+      console.log(`Wrote ${audioBuffer.length} bytes to ${tempWebmPath}`);
+      
+      // Convert WebM to WAV using FFmpeg
+      await convertWebmToWav(tempWebmPath, wavPath);
+      console.log('Converted to WAV:', wavPath);
+    } else {
+      // Assume it's already WAV
+      wavPath = path.join(tempDir, `whisper-input-${timestamp}.wav`);
+      await fs.writeFile(wavPath, audioBuffer);
+      console.log(`Wrote ${audioBuffer.length} bytes to ${wavPath}`);
+    }
 
     try {
       // Build command
       const langArg = language && language !== 'auto' ? `-l ${language}` : '';
-      const cmd = `"${binPath}" -m "${modelPath}" -f "${tempAudioPath}" ${langArg} -np -nt`;
+      const cmd = `"${binPath}" -m "${modelPath}" -f "${wavPath}" ${langArg} -np -nt`;
 
       console.log('Running whisper command:', cmd);
 
@@ -254,8 +361,11 @@ async function transcribeWithLocalWhisper(audioBuffer: Buffer, language: string,
 
       return { success: true, transcript };
     } finally {
-      // Clean up temp file
-      await fs.unlink(tempAudioPath).catch(() => {});
+      // Clean up temp files
+      await fs.unlink(wavPath).catch(() => {});
+      if (tempWebmPath) {
+        await fs.unlink(tempWebmPath).catch(() => {});
+      }
     }
   } catch (error: any) {
     console.error('Local Whisper transcription error:', error);
@@ -993,6 +1103,102 @@ export function setupIpcHandlers(): void {
   ipcMain.handle('voice:clearApiKey', () => {
     deleteAppSetting('openai_whisper_api_key');
     return { success: true };
+  });
+
+  // Voice-to-clipboard handlers
+  ipcMain.handle('voiceToClipboard:transcribe', async (_evt, payload: { audio: ArrayBuffer; mimeType: string; language?: string }) => {
+    try {
+      const settings = getSettings();
+      if (!settings.voiceInput?.enabled) {
+        // Import dynamically to avoid circular dependency
+        const { voiceToClipboardManager } = await import('./voice-to-clipboard');
+        voiceToClipboardManager.handleTranscriptionError('Voice input is disabled in settings');
+        return { success: false, error: 'Voice input is disabled in settings.' };
+      }
+
+      const provider = settings.voiceInput.provider;
+      const audioBuffer = Buffer.from(payload.audio);
+      const language = payload.language?.trim() || 'en';
+
+      // Route to appropriate provider
+      let result;
+      if (provider === 'local_whisper') {
+        result = await transcribeWithLocalWhisper(audioBuffer, language, settings);
+      } else if (provider === 'openai_whisper') {
+        result = await transcribeWithOpenAI(audioBuffer, language, settings);
+      } else {
+        result = { success: false, error: `Unknown provider: ${provider}` };
+      }
+
+      // Import dynamically to avoid circular dependency
+      const { voiceToClipboardManager } = await import('./voice-to-clipboard');
+      
+      if (result.success && result.transcript) {
+        await voiceToClipboardManager.handleTranscriptionComplete(result.transcript);
+      } else {
+        await voiceToClipboardManager.handleTranscriptionError(result.error || 'Transcription failed');
+      }
+
+      return result;
+    } catch (error: any) {
+      const { voiceToClipboardManager } = await import('./voice-to-clipboard');
+      await voiceToClipboardManager.handleTranscriptionError(error?.message || String(error));
+      return { success: false, error: error?.message || String(error) };
+    }
+  });
+
+  ipcMain.handle('voiceToClipboard:isRecording', async () => {
+    const { voiceToClipboardManager } = await import('./voice-to-clipboard');
+    return voiceToClipboardManager.getIsRecording();
+  });
+
+  // Audio capture helper window handlers
+  ipcMain.on('audioCapture:windowReady', () => {
+    console.log('[IPC] Audio capture window ready');
+    markAudioCaptureWindowReady();
+  });
+
+  ipcMain.on('audioCapture:ready', (_evt: Electron.IpcMainEvent, sampleRate: number) => {
+    console.log('[IPC] Audio capture ready, sample rate:', sampleRate);
+    handleAudioCaptureReady(sampleRate);
+  });
+
+  ipcMain.on('audioCapture:stopped', (_evt: Electron.IpcMainEvent, samples: number[][], sampleRate: number) => {
+    console.log('[IPC] Audio capture stopped, chunks:', samples.length, 'rate:', sampleRate);
+    // Forward to the main command window for transcription
+    const commandWindow = getCommandWindow();
+    if (commandWindow && !commandWindow.isDestroyed()) {
+      commandWindow.webContents.send('audioCapture:data', { samples, sampleRate });
+    }
+  });
+
+  ipcMain.on('audioCapture:error', (_evt: Electron.IpcMainEvent, error: string) => {
+    console.error('[IPC] Audio capture error:', error);
+    handleAudioCaptureError(error);
+  });
+
+  // Start audio capture via helper window (called from main renderer)
+  ipcMain.handle('audioCapture:startCapture', async () => {
+    console.log('[IPC] Starting audio capture via helper window');
+    try {
+      const sampleRate = await startAudioCapture();
+      return { success: true, sampleRate };
+    } catch (error: any) {
+      console.error('[IPC] Failed to start audio capture:', error);
+      return { success: false, error: error?.message || String(error) };
+    }
+  });
+
+  // Stop audio capture and get samples (called from main renderer)
+  ipcMain.handle('audioCapture:stopCapture', async () => {
+    console.log('[IPC] Stopping audio capture');
+    try {
+      const result = await stopAudioCapture();
+      return { success: true, ...result };
+    } catch (error: any) {
+      console.error('[IPC] Failed to stop audio capture:', error);
+      return { success: false, error: error?.message || String(error) };
+    }
   });
 
   // Action logs export (renderer keeps logs in-memory; this just persists them to disk)

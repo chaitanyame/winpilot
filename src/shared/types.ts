@@ -221,6 +221,8 @@ export interface Settings {
     };
     language: string;
     showVisualFeedback: boolean;
+    /** Auto-paste transcription after voice-to-clipboard (Ctrl+Shift+W) */
+    autoPasteOnTranscribe?: boolean;
   };
   recording: {
     /** Output folder for recordings. Empty string means app directory. */

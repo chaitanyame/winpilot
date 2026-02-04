@@ -5,6 +5,7 @@ import { showCommandWindow, toggleClipboardHistoryWindow, toggleVoiceRecordingWi
 import { getSettings } from './store';
 import { voiceInputManager } from './voice-input';
 import { contextCaptureService } from './context-capture';
+import { voiceToClipboardManager } from './voice-to-clipboard';
 
 let registeredHotkey: string | null = null;
 let registeredVoiceHotkey: string | null = null;
@@ -14,6 +15,7 @@ let registeredVoiceCommandHotkey: string | null = null;
 let registeredAudioRecordingHotkey: string | null = null;
 let registeredVideoRecordingHotkey: string | null = null;
 let registeredChatHotkey: string | null = null;
+let registeredVoiceToClipboardHotkey: string | null = null;
 
 /**
  * Register global hotkeys
@@ -308,6 +310,29 @@ export function registerFeatureHotkeys(): void {
   } catch (error) {
     console.error('Error registering chat panel hotkey:', error);
   }
+
+  // Voice-to-Clipboard Hotkey (Ctrl+Shift+W)
+  try {
+    const voiceToClipboardHotkey = 'CommandOrControl+Shift+W';
+    
+    if (registeredVoiceToClipboardHotkey) {
+      globalShortcut.unregister(registeredVoiceToClipboardHotkey);
+    }
+
+    globalShortcut.register(voiceToClipboardHotkey, () => {
+      console.log('Voice-to-clipboard hotkey triggered');
+      voiceToClipboardManager.toggleRecording().catch(err => {
+        console.error('Failed to toggle voice-to-clipboard:', err);
+      });
+    });
+
+    if (globalShortcut.isRegistered(voiceToClipboardHotkey)) {
+      registeredVoiceToClipboardHotkey = voiceToClipboardHotkey;
+      console.log('Voice-to-clipboard hotkey registered:', voiceToClipboardHotkey);
+    }
+  } catch (error) {
+    console.error('Error registering voice-to-clipboard hotkey:', error);
+  }
 }
 
 /**
@@ -337,5 +362,9 @@ export function unregisterFeatureHotkeys(): void {
   if (registeredChatHotkey) {
     globalShortcut.unregister(registeredChatHotkey);
     registeredChatHotkey = null;
+  }
+  if (registeredVoiceToClipboardHotkey) {
+    globalShortcut.unregister(registeredVoiceToClipboardHotkey);
+    registeredVoiceToClipboardHotkey = null;
   }
 }

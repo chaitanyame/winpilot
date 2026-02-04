@@ -53,6 +53,7 @@ export class ScreenShareDetector {
 
     if (isSharing !== this.isActive) {
       this.isActive = isSharing;
+      logger.copilot(`[ScreenShareDetector] Screen sharing status changed: ${isSharing ? 'ACTIVE' : 'INACTIVE'}`);
       this.listeners.forEach(listener => listener(isSharing));
     }
   }

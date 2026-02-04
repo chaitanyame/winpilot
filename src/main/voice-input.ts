@@ -11,6 +11,7 @@ import { getCommandWindow, setAutoHideSuppressed, showCommandWindow } from './wi
 class VoiceInputManager {
   private isRecording = false;
   private recordingStartTime = 0;
+  private windowRestoreInterval: NodeJS.Timeout | null = null;
 
   /**
    * Start recording audio
@@ -42,17 +43,11 @@ class VoiceInputManager {
       } catch (err) {
         console.warn('Failed to show window during voice recording:', err);
       }
-      // Ensure window is visible after a short delay (in case of race conditions)
-      setTimeout(() => {
-        if (window && !window.isDestroyed() && !window.isVisible()) {
-          console.log('Window became invisible during voice recording, re-showing...');
-          try {
-            showCommandWindow();
-          } catch (err) {
-            console.warn('Failed to re-show window:', err);
-          }
-        }
-      }, 100);
+      
+      // Start a polling loop to keep restoring the window
+      // This handles the case where getUserMedia causes focus loss
+      this.startWindowRestoreLoop();
+      
       // Send recording started event with safety check
       try {
         if (window.webContents && !window.webContents.isDestroyed()) {
@@ -75,6 +70,7 @@ class VoiceInputManager {
 
     console.log('Stopping voice recording...');
     this.isRecording = false;
+    this.stopWindowRestoreLoop();
     setAutoHideSuppressed(true);
 
     const duration = Date.now() - this.recordingStartTime;
@@ -151,7 +147,61 @@ class VoiceInputManager {
   reset(): void {
     this.isRecording = false;
     this.recordingStartTime = 0;
+    this.stopWindowRestoreLoop();
     setAutoHideSuppressed(false);
+  }
+
+  /**
+   * Start a polling loop that keeps trying to restore the window
+   * This handles the case where getUserMedia steals focus
+   * Only runs for the first 3 seconds after recording starts
+   */
+  private startWindowRestoreLoop(): void {
+    this.stopWindowRestoreLoop(); // Clear any existing loop
+    
+    let attempts = 0;
+    const maxAttempts = 6; // 3 seconds max (500ms interval)
+    
+    this.windowRestoreInterval = setInterval(() => {
+      attempts++;
+      
+      if (!this.isRecording || attempts >= maxAttempts) {
+        this.stopWindowRestoreLoop();
+        return;
+      }
+      
+      const window = getCommandWindow();
+      if (!window || window.isDestroyed()) {
+        this.stopWindowRestoreLoop();
+        return;
+      }
+      
+      // Only force restore if window is minimized or not visible
+      // Don't fight for focus - just ensure visibility
+      if (window.isMinimized() || !window.isVisible()) {
+        console.log(`[Voice] Window restore loop attempt ${attempts} - window hidden/minimized, restoring...`);
+        try {
+          window.setAlwaysOnTop(true, 'screen-saver');
+          if (window.isMinimized()) {
+            window.restore();
+          }
+          window.show();
+          window.moveTop();
+        } catch (err) {
+          console.warn('[Voice] Failed to restore window in loop:', err);
+        }
+      }
+    }, 500);
+  }
+
+  /**
+   * Stop the window restore polling loop
+   */
+  private stopWindowRestoreLoop(): void {
+    if (this.windowRestoreInterval) {
+      clearInterval(this.windowRestoreInterval);
+      this.windowRestoreInterval = null;
+    }
   }
 }
 

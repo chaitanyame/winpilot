@@ -174,6 +174,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   voiceSetApiKey: (apiKey: string) => ipcRenderer.invoke('voice:setApiKey', apiKey),
   voiceClearApiKey: () => ipcRenderer.invoke('voice:clearApiKey'),
 
+  // Voice-to-clipboard API (Ctrl+Shift+W)
+  voiceToClipboardTranscribe: (params: { audio: ArrayBuffer; mimeType: string; language?: string }) =>
+    ipcRenderer.invoke('voiceToClipboard:transcribe', params),
+  voiceToClipboardIsRecording: () => ipcRenderer.invoke('voiceToClipboard:isRecording'),
+
   onVoiceRecordingStarted: (callback: () => void) => {
     const handler = () => callback();
     ipcRenderer.on('voice:recordingStarted', handler);
@@ -196,6 +201,38 @@ contextBridge.exposeInMainWorld('electronAPI', {
     const handler = (_: unknown, error: string) => callback(error);
     ipcRenderer.on('voice:error', handler);
     return () => ipcRenderer.removeListener('voice:error', handler);
+  },
+
+  // Audio capture helper window API (for getUserMedia workaround)
+  // Main renderer uses these to request audio capture
+  startAudioCapture: () => ipcRenderer.invoke('audioCapture:startCapture'),
+  stopAudioCapture: () => ipcRenderer.invoke('audioCapture:stopCapture'),
+  
+  // Audio capture helper window uses these to communicate back
+  onAudioCaptureStart: (callback: () => void) => {
+    const handler = () => callback();
+    ipcRenderer.on('audioCapture:start', handler);
+    return () => ipcRenderer.removeListener('audioCapture:start', handler);
+  },
+  onAudioCaptureStop: (callback: () => void) => {
+    const handler = () => callback();
+    ipcRenderer.on('audioCapture:stop', handler);
+    return () => ipcRenderer.removeListener('audioCapture:stop', handler);
+  },
+  audioCaptureWindowReady: () => ipcRenderer.send('audioCapture:windowReady'),
+  audioCaptureReady: (sampleRate: number) => ipcRenderer.send('audioCapture:ready', sampleRate),
+  audioCaptureStopped: (samples: Float32Array[], sampleRate: number) => {
+    // Convert Float32Arrays to regular arrays for IPC serialization
+    const serializedSamples = samples.map(arr => Array.from(arr));
+    ipcRenderer.send('audioCapture:stopped', serializedSamples, sampleRate);
+  },
+  audioCaptureError: (error: string) => ipcRenderer.send('audioCapture:error', error),
+  
+  // Listen for audio data from the audio capture helper window
+  onAudioCaptureData: (callback: (data: { samples: number[][]; sampleRate: number }) => void) => {
+    const handler = (_: unknown, data: { samples: number[][]; sampleRate: number }) => callback(data);
+    ipcRenderer.on('audioCapture:data', handler);
+    return () => ipcRenderer.removeListener('audioCapture:data', handler);
   },
 
   // Hotkey events
@@ -457,6 +494,14 @@ export interface ElectronAPI {
   voiceGetApiKeyStatus: () => Promise<{ hasKey: boolean }>;
   voiceSetApiKey: (apiKey: string) => Promise<{ success: boolean }>;
   voiceClearApiKey: () => Promise<{ success: boolean }>;
+
+  // Voice-to-clipboard API (Ctrl+Shift+W)
+  voiceToClipboardTranscribe: (params: { audio: ArrayBuffer; mimeType: string; language?: string }) => Promise<{ success: boolean; transcript?: string; error?: string }>;
+  voiceToClipboardIsRecording: () => Promise<boolean>;
+
+  // Audio capture helper window API
+  startAudioCapture: () => Promise<{ success: boolean; sampleRate?: number; error?: string }>;
+  stopAudioCapture: () => Promise<{ success: boolean; samples?: number[][]; sampleRate?: number; error?: string }>;
 
   // Hotkey event listeners
   onHotkeyClipboardHistory: (callback: () => void) => () => void;

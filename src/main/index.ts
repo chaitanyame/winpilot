@@ -1,6 +1,6 @@
 // Electron Main Process Entry Point
 
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, session } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { createTray, destroyTray } from './tray';
@@ -20,6 +20,7 @@ import { screenSharePrivacyService } from './screen-share-privacy';
 import { screenShareDetector } from './screen-share-detector';
 import { getSettings } from './store';
 import { hideCommandWindow } from './windows';
+import { voiceInputManager } from './voice-input';
 
 // In development, use a separate userData directory to avoid conflicts
 if (!app.isPackaged) {
@@ -46,15 +47,28 @@ if (!app.isPackaged) {
 
   app.setPath('userData', devUserData);
 
-  // Disable GPU to avoid cache permission issues
-  app.disableHardwareAcceleration();
-
   // Disable all caching in development to avoid permission issues
   app.commandLine.appendSwitch('disable-http-cache');
   app.commandLine.appendSwitch('disable-gpu-shader-disk-cache');
   app.commandLine.appendSwitch('disk-cache-size', '1');
   app.commandLine.appendSwitch('media-cache-size', '1');
   app.commandLine.appendSwitch('disable-application-cache');
+}
+
+// CRITICAL: Disable hardware acceleration to fix getUserMedia crash with transparent windows
+// This affects both dev and production builds on Windows
+// The crash occurs because of how Chromium handles media capture with GPU-accelerated transparent windows
+app.disableHardwareAcceleration();
+
+// Add flags to fix getUserMedia crash with transparent windows on Windows
+// These need to be set before app is ready
+app.commandLine.appendSwitch('enable-features', 'SharedArrayBuffer');
+app.commandLine.appendSwitch('disable-features', 'HardwareMediaKeyHandling');
+// Use software rendering for transparency to avoid GPU-related crashes
+if (process.platform === 'win32') {
+  app.commandLine.appendSwitch('disable-gpu-compositing');
+  app.commandLine.appendSwitch('disable-gpu');
+  app.commandLine.appendSwitch('disable-software-rasterizer');
 }
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling
@@ -89,6 +103,31 @@ async function initApp() {
   initDatabase();
   screenSharePrivacyService.init();
 
+  // Setup media permissions - CRITICAL for getUserMedia to work without crashes
+  session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
+    // Allow all media permissions (media covers both microphone and camera)
+    if (permission === 'media') {
+      console.log('[Permissions] Granting media permission:', permission);
+      callback(true);
+      return;
+    }
+    // Allow other common permissions
+    if (permission === 'notifications' || permission === 'clipboard-read' || permission === 'clipboard-sanitized-write') {
+      callback(true);
+      return;
+    }
+    console.log('[Permissions] Denying permission:', permission);
+    callback(false);
+  });
+
+  session.defaultSession.setPermissionCheckHandler((_webContents, permission, _requestingOrigin) => {
+    // Always allow media permissions
+    if (permission === 'media') {
+      return true;
+    }
+    return true; // Allow other permissions by default
+  });
+
   // Refresh installed apps cache (skip if last run < 6 hours)
   await ensureInstalledAppsCache();
 
@@ -97,10 +136,19 @@ async function initApp() {
 
   screenShareDetector.start();
   screenShareDetector.onChange((active) => {
+    console.log('[ScreenShareDetector] onChange fired, active:', active);
     if (!active) return;
     const settings = getSettings();
     if (settings.screenSharePrivacy?.autoHideOnShare) {
-      hideCommandWindow(true);
+      const isRecording = voiceInputManager.getIsRecording();
+      console.log('[ScreenShareDetector] Voice recording status:', isRecording);
+      // Don't auto-hide if voice recording is active
+      if (!isRecording) {
+        console.log('[ScreenShareDetector] Auto-hiding window due to screen share detection');
+        hideCommandWindow(true);
+      } else {
+        console.log('[ScreenShareDetector] Skipping auto-hide because voice recording is active');
+      }
     }
   });
 
