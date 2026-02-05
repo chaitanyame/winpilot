@@ -369,6 +369,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   recordingOpen: (filePath: string) => ipcRenderer.invoke(IPC_CHANNELS.RECORDING_OPEN, filePath),
   recordingOpenFolder: (filePath: string) => ipcRenderer.invoke(IPC_CHANNELS.RECORDING_OPEN_FOLDER, filePath),
   recordingStop: (idOrType?: string) => ipcRenderer.invoke(IPC_CHANNELS.RECORDING_STOP, idOrType),
+  recordingListAudioDevices: () => ipcRenderer.invoke(IPC_CHANNELS.RECORDING_LIST_AUDIO_DEVICES),
+  recordingListVideoDevices: () => ipcRenderer.invoke(IPC_CHANNELS.RECORDING_LIST_VIDEO_DEVICES),
   onRecordingProgress: (callback: (recording: Recording) => void) => {
     const handler = (_: unknown, recording: Recording) => callback(recording);
     ipcRenderer.on(IPC_CHANNELS.RECORDING_PROGRESS, handler);
@@ -569,6 +571,8 @@ export interface ElectronAPI {
   recordingOpen: (filePath: string) => Promise<{ success: boolean; error?: string }>;
   recordingOpenFolder: (filePath: string) => Promise<{ success: boolean }>;
   recordingStop: (idOrType?: string) => Promise<{ success: boolean; recording?: Recording; error?: string }>;
+  recordingListAudioDevices: () => Promise<{ success: boolean; devices: import('../shared/types').AudioDevice[]; error?: string }>;
+  recordingListVideoDevices: () => Promise<{ success: boolean; devices: import('../shared/types').VideoDevice[]; error?: string }>;
   onRecordingProgress: (callback: (recording: Recording) => void) => () => void;
   onRecordingUpdated: (callback: (recording: Recording) => void) => () => void;
   subscribeToRecordings: () => void;

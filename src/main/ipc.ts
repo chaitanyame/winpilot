@@ -1556,6 +1556,25 @@ export function setupIpcHandlers(): void {
     }
   });
 
+  // Recording device listing
+  ipcMain.handle(IPC_CHANNELS.RECORDING_LIST_AUDIO_DEVICES, async () => {
+    try {
+      const devices = await recordingManager.listAudioDevices();
+      return { success: true, devices };
+    } catch (error) {
+      return { success: false, devices: [], error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  ipcMain.handle(IPC_CHANNELS.RECORDING_LIST_VIDEO_DEVICES, async () => {
+    try {
+      const devices = await recordingManager.listVideoDevices();
+      return { success: true, devices };
+    } catch (error) {
+      return { success: false, devices: [], error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
   // Subscribe to recording events
   ipcMain.on(IPC_CHANNELS.RECORDING_SUBSCRIBE, (event: Electron.IpcMainEvent) => {
     const progressHandler = (recording: Recording) => {

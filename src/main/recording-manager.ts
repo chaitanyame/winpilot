@@ -16,7 +16,9 @@ import {
   RecordingStatus,
   RecordingType,
   AudioSource,
-  RecordingRegion
+  RecordingRegion,
+  AudioDevice,
+  VideoDevice
 } from '../shared/types';
 import { getFFmpegPath, isFFmpegAvailable, validateFFmpeg } from '../utils/ffmpeg-path';
 import { getSettings } from './store';
@@ -34,16 +36,6 @@ interface RecordingOptions {
   filename?: string;
   format?: 'mp4' | 'mp3' | 'wav' | 'aac';
   outputPath?: string;
-}
-
-interface AudioDevice {
-  name: string;
-  type: 'input' | 'output';
-}
-
-interface VideoDevice {
-  name: string;
-  type: 'webcam' | 'screen';
 }
 
 class RecordingManager extends EventEmitter {
@@ -775,4 +767,4 @@ class RecordingManager extends EventEmitter {
 export const recordingManager = new RecordingManager();
 
 // Export types for use elsewhere
-export type { RecordingOptions, AudioDevice, VideoDevice };
+export type { RecordingOptions };

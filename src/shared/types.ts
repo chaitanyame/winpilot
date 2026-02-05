@@ -337,6 +337,8 @@ export const IPC_CHANNELS = {
   RECORDING_SUBSCRIBE: 'recording:subscribe',
   RECORDING_UPDATED: 'recording:updated',
   RECORDING_PROGRESS: 'recording:progress',
+  RECORDING_LIST_AUDIO_DEVICES: 'recording:listAudioDevices',
+  RECORDING_LIST_VIDEO_DEVICES: 'recording:listVideoDevices',
 
   // Screen share privacy
   SCREEN_SHARE_PRIVACY_LIST_WINDOWS: 'screen-share-privacy:list-windows',
@@ -583,4 +585,15 @@ export interface RecordingRegion {
   y: number;
   width: number;
   height: number;
+}
+
+// Recording Devices
+export interface AudioDevice {
+  name: string;
+  type: 'input' | 'output';
+}
+
+export interface VideoDevice {
+  name: string;
+  type: 'webcam' | 'screen';
 }
