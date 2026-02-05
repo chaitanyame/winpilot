@@ -157,6 +157,13 @@ export function getSettings(): Settings {
     needsUpdate = true;
   }
 
+  // Migrate recording settings for new device preferences
+  if (settings.recording && (settings.recording.preferredAudioDevice === undefined || settings.recording.preferredVideoDevice === undefined)) {
+    settings.recording.preferredAudioDevice = settings.recording.preferredAudioDevice ?? DEFAULT_SETTINGS.recording.preferredAudioDevice;
+    settings.recording.preferredVideoDevice = settings.recording.preferredVideoDevice ?? DEFAULT_SETTINGS.recording.preferredVideoDevice;
+    needsUpdate = true;
+  }
+
   // Add hotkeys section if missing
   if (!settings.hotkeys) {
     settings.hotkeys = DEFAULT_SETTINGS.hotkeys;

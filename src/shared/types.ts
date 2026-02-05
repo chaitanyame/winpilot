@@ -227,6 +227,10 @@ export interface Settings {
   recording: {
     /** Output folder for recordings. Empty string means app directory. */
     outputPath: string;
+    /** Preferred audio input device name for recordings */
+    preferredAudioDevice?: string;
+    /** Preferred video input device name for recordings */
+    preferredVideoDevice?: string;
   };
   hotkeys: {
     /** Hotkey to open clipboard history (default: Ctrl+Shift+H) */

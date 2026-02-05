@@ -12,6 +12,9 @@ export function SettingsPanel({ isOpen, onClose }: Props) {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [activeTab, setActiveTab] = useState<'general' | 'ai' | 'voice' | 'recording' | 'hotkeys' | 'permissions' | 'safety' | 'privacy' | 'context'>('general');
   const [appPath, setAppPath] = useState<string>('');
+  const [audioDevices, setAudioDevices] = useState<import('../../shared/types').AudioDevice[]>([]);
+  const [videoDevices, setVideoDevices] = useState<import('../../shared/types').VideoDevice[]>([]);
+  const [devicesLoading, setDevicesLoading] = useState(false);
 
 
   const themeOptions: Array<{ id: ThemeId; name: string; description: string; swatches: string[] }> = [
@@ -66,6 +69,12 @@ export function SettingsPanel({ isOpen, onClose }: Props) {
     }
   }, [isOpen]);
 
+  useEffect(() => {
+    if (isOpen && activeTab === 'recording') {
+      loadDevices();
+    }
+  }, [isOpen, activeTab]);
+
   const loadSettings = async () => {
     try {
       const data = await window.electronAPI.getSettings() as Settings;
@@ -81,6 +90,27 @@ export function SettingsPanel({ isOpen, onClose }: Props) {
       setAppPath(path);
     } catch (err) {
       console.error('Failed to get app path:', err);
+    }
+  };
+
+  const loadDevices = async () => {
+    setDevicesLoading(true);
+    try {
+      const [audioResult, videoResult] = await Promise.all([
+        window.electronAPI.recordingListAudioDevices(),
+        window.electronAPI.recordingListVideoDevices(),
+      ]);
+      
+      if (audioResult.success && audioResult.devices) {
+        setAudioDevices(audioResult.devices);
+      }
+      if (videoResult.success && videoResult.devices) {
+        setVideoDevices(videoResult.devices);
+      }
+    } catch (err) {
+      console.error('Failed to load devices:', err);
+    } finally {
+      setDevicesLoading(false);
     }
   };
 
@@ -663,6 +693,96 @@ export function SettingsPanel({ isOpen, onClose }: Props) {
                 >
                   Reset to Default Location
                 </button>
+              </div>
+
+              {/* Audio Device Selection */}
+              <div>
+                <label className="block text-sm font-medium text-dark-700 dark:text-dark-300 mb-2">
+                  <Mic className="w-4 h-4 inline mr-2" />
+                  Preferred Audio Device
+                </label>
+                <div className="flex gap-2">
+                  <select
+                    value={settings.recording?.preferredAudioDevice || ''}
+                    onChange={(e) => updateSettings({
+                      recording: {
+                        ...settings.recording,
+                        preferredAudioDevice: e.target.value || undefined
+                      }
+                    })}
+                    disabled={devicesLoading}
+                    className="flex-1 px-4 py-2 rounded-lg border border-dark-200 dark:border-dark-600
+                             bg-dark-50 dark:bg-dark-700 text-dark-600 dark:text-dark-400
+                             disabled:opacity-50"
+                  >
+                    <option value="">Auto-detect (first available)</option>
+                    {audioDevices.map((device) => (
+                      <option key={device.name} value={device.name}>
+                        {device.name}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={loadDevices}
+                    disabled={devicesLoading}
+                    className="px-4 py-2 bg-dark-200 hover:bg-dark-300 dark:bg-dark-700 dark:hover:bg-dark-600
+                             text-dark-700 dark:text-dark-300 rounded-lg transition-colors
+                             disabled:opacity-50 disabled:cursor-not-allowed"
+                    title="Refresh device list"
+                  >
+                    {devicesLoading ? '...' : '↻'}
+                  </button>
+                </div>
+                <p className="text-xs text-dark-500 mt-1">
+                  {audioDevices.length === 0 && !devicesLoading
+                    ? 'No audio devices found. Make sure FFmpeg is installed.'
+                    : 'Select microphone or system audio device for recording'}
+                </p>
+              </div>
+
+              {/* Video Device Selection */}
+              <div>
+                <label className="block text-sm font-medium text-dark-700 dark:text-dark-300 mb-2">
+                  <Video className="w-4 h-4 inline mr-2" />
+                  Preferred Video Device (Webcam)
+                </label>
+                <div className="flex gap-2">
+                  <select
+                    value={settings.recording?.preferredVideoDevice || ''}
+                    onChange={(e) => updateSettings({
+                      recording: {
+                        ...settings.recording,
+                        preferredVideoDevice: e.target.value || undefined
+                      }
+                    })}
+                    disabled={devicesLoading}
+                    className="flex-1 px-4 py-2 rounded-lg border border-dark-200 dark:border-dark-600
+                             bg-dark-50 dark:bg-dark-700 text-dark-600 dark:text-dark-400
+                             disabled:opacity-50"
+                  >
+                    <option value="">Auto-detect (first available)</option>
+                    {videoDevices.map((device) => (
+                      <option key={device.name} value={device.name}>
+                        {device.name}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={loadDevices}
+                    disabled={devicesLoading}
+                    className="px-4 py-2 bg-dark-200 hover:bg-dark-300 dark:bg-dark-700 dark:hover:bg-dark-600
+                             text-dark-700 dark:text-dark-300 rounded-lg transition-colors
+                             disabled:opacity-50 disabled:cursor-not-allowed"
+                    title="Refresh device list"
+                  >
+                    {devicesLoading ? '...' : '↻'}
+                  </button>
+                </div>
+                <p className="text-xs text-dark-500 mt-1">
+                  {videoDevices.length === 0 && !devicesLoading
+                    ? 'No video devices found. Make sure FFmpeg is installed and webcam is connected.'
+                    : 'Select webcam device for video recording'}
+                </p>
               </div>
 
               <div className="p-3 bg-primary-50 dark:bg-primary-900/20 rounded-lg">

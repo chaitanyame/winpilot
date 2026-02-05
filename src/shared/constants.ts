@@ -91,6 +91,8 @@ export const DEFAULT_SETTINGS = {
   },
   recording: {
     outputPath: '', // Empty means app directory (resources/recordings)
+    preferredAudioDevice: undefined, // Auto-detect first available device
+    preferredVideoDevice: undefined, // Auto-detect first available device
   },
   hotkeys: {
     clipboardHistory: 'CommandOrControl+Shift+H',
