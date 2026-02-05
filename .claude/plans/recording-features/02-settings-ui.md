@@ -4,19 +4,20 @@
 Add device selection dropdowns in Settings > Recording tab so users can choose preferred audio/video devices.
 
 ## Status
-- [ ] Not started
+- [x] Completed
 
 ## Dependencies
 - 01-device-discovery.md
 
 ## Tasks
-- [ ] Add to Settings type: `recording.preferredAudioDevice`, `recording.preferredVideoDevice`
-- [ ] Add default values in `src/main/store.ts`
-- [ ] In SettingsPanel Recording tab, fetch devices on mount
-- [ ] Render dropdown for audio device selection
-- [ ] Render dropdown for video device selection  
-- [ ] Save selected devices to settings
-- [ ] Show "Refresh devices" button
+- [x] Add to Settings type: `recording.preferredAudioDevice`, `recording.preferredVideoDevice`
+- [x] Add default values in `src/shared/constants.ts` (undefined = auto-detect)
+- [x] Add migration logic in `src/main/store.ts`
+- [x] In SettingsPanel Recording tab, fetch devices on mount
+- [x] Render dropdown for audio device selection
+- [x] Render dropdown for video device selection  
+- [x] Save selected devices to settings
+- [x] Show "Refresh devices" button
 
 ## Implementation Notes
 - Use existing Recording tab in SettingsPanel

@@ -562,8 +562,7 @@ export enum RecordingType {
 export enum AudioSource {
   NONE = 'none',
   SYSTEM = 'system',
-  MICROPHONE = 'microphone',
-  BOTH = 'both'
+  MICROPHONE = 'microphone'
 }
 
 // Recording interface

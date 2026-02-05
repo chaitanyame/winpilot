@@ -2489,10 +2489,10 @@ export const screenshotAnnotateTool = defineTool('screenshot_annotate', {
 // ============================================================================
 
 export const screenRecordStartTool = defineTool('screen_record_start', {
-  description: 'Start recording the screen. Optionally capture audio from system, microphone, or both. Can record full screen or a specific region.',
+  description: 'Start recording the screen. Optionally capture audio from system or microphone. Can record full screen or a specific region.',
   parameters: p({
-    audioSource: z.enum(['none', 'system', 'microphone', 'both']).optional()
-      .describe('Audio source: none, system (desktop audio), microphone, or both'),
+    audioSource: z.enum(['none', 'system', 'microphone']).optional()
+      .describe('Audio source: none, system (desktop audio), or microphone'),
     fps: z.number().optional().describe('Frames per second (default: 30, options: 15, 30, 60)'),
     region: z.object({
       x: z.number().describe('X offset of the capture region'),

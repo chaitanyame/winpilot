@@ -126,7 +126,7 @@ class RecordingManager extends EventEmitter {
     this.ensureOutputDirectory(outputPath);
 
     // Build FFmpeg command
-    const args = this.buildScreenRecordingArgs(audioSource, fps, options.region, fullPath);
+    const args = await this.buildScreenRecordingArgs(audioSource, fps, options.region, fullPath);
 
     const recording: Recording = {
       id,
@@ -186,7 +186,7 @@ class RecordingManager extends EventEmitter {
     this.ensureOutputDirectory(outputPath);
 
     // Build FFmpeg command for audio
-    const args = this.buildAudioRecordingArgs(audioSource, format, fullPath);
+    const args = await this.buildAudioRecordingArgs(audioSource, format, fullPath);
 
     const recording: Recording = {
       id,
@@ -243,7 +243,7 @@ class RecordingManager extends EventEmitter {
     this.ensureOutputDirectory(outputPath);
 
     // Build FFmpeg command for webcam
-    const args = this.buildWebcamRecordingArgs(audioSource, fullPath);
+    const args = await this.buildWebcamRecordingArgs(audioSource, fullPath);
 
     const recording: Recording = {
       id,
@@ -516,12 +516,12 @@ class RecordingManager extends EventEmitter {
   /**
    * Build FFmpeg arguments for screen recording
    */
-  private buildScreenRecordingArgs(
+  private async buildScreenRecordingArgs(
     audioSource: AudioSource,
     fps: number,
     region: RecordingRegion | undefined,
     outputPath: string
-  ): string[] {
+  ): Promise<string[]> {
     const args: string[] = [];
 
     // Video input (gdigrab for screen capture)
@@ -539,7 +539,7 @@ class RecordingManager extends EventEmitter {
 
     // Audio input based on source
     if (audioSource !== AudioSource.NONE) {
-      const audioDevice = this.getAudioInputDevice(audioSource);
+      const audioDevice = await this.getAudioInputDevice(audioSource);
       if (audioDevice) {
         args.push('-f', 'dshow');
         args.push('-i', `audio=${audioDevice}`);
@@ -567,15 +567,15 @@ class RecordingManager extends EventEmitter {
   /**
    * Build FFmpeg arguments for audio recording
    */
-  private buildAudioRecordingArgs(
+  private async buildAudioRecordingArgs(
     audioSource: AudioSource,
     format: string,
     outputPath: string
-  ): string[] {
+  ): Promise<string[]> {
     const args: string[] = [];
 
     // Audio input
-    const audioDevice = this.getAudioInputDevice(audioSource);
+    const audioDevice = await this.getAudioInputDevice(audioSource);
     if (!audioDevice) {
       throw new Error('No audio device available for the specified source');
     }
@@ -610,18 +610,23 @@ class RecordingManager extends EventEmitter {
   /**
    * Build FFmpeg arguments for webcam recording
    */
-  private buildWebcamRecordingArgs(
+  private async buildWebcamRecordingArgs(
     audioSource: AudioSource,
     outputPath: string
-  ): string[] {
+  ): Promise<string[]> {
     const args: string[] = [];
 
     // Use default video device
     args.push('-f', 'dshow');
 
-    // Build input string with video and optional audio
-    const videoDevice = 'video=Integrated Camera'; // Will be replaced with actual device discovery
-    const audioDevice = this.getAudioInputDevice(audioSource);
+    const settings = await getSettings();
+    
+    // Use user's preferred video device if set, otherwise use default
+    const videoDevice = settings.recording?.preferredVideoDevice 
+      ? `video=${settings.recording.preferredVideoDevice}`
+      : 'video=Integrated Camera';
+    
+    const audioDevice = await this.getAudioInputDevice(audioSource);
 
     if (audioSource !== AudioSource.NONE && audioDevice) {
       args.push('-i', `${videoDevice}:audio=${audioDevice}`);
@@ -646,21 +651,26 @@ class RecordingManager extends EventEmitter {
   }
 
   /**
-   * Get audio input device name based on source type
+   * Get audio input device name based on source type and user settings
    */
-  private getAudioInputDevice(source: AudioSource): string | null {
-    // These are common Windows audio device names
-    // In production, this should be replaced with actual device discovery
+  private async getAudioInputDevice(source: AudioSource): Promise<string | null> {
+    if (source === AudioSource.NONE) {
+      return null;
+    }
+
+    const settings = await getSettings();
+    
+    // If user has selected a preferred device, use it
+    if (settings.recording?.preferredAudioDevice) {
+      return settings.recording.preferredAudioDevice;
+    }
+
+    // Otherwise, use defaults based on source type
     switch (source) {
       case AudioSource.SYSTEM:
         return 'Stereo Mix';
       case AudioSource.MICROPHONE:
         return 'Microphone';
-      case AudioSource.BOTH:
-        // FFmpeg can only use one audio input directly
-        // For both, we'd need complex audio mixing which is not implemented yet
-        return 'Stereo Mix';
-      case AudioSource.NONE:
       default:
         return null;
     }
