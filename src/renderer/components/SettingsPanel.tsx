@@ -15,6 +15,7 @@ export function SettingsPanel({ isOpen, onClose }: Props) {
   const [audioDevices, setAudioDevices] = useState<import('../../shared/types').AudioDevice[]>([]);
   const [videoDevices, setVideoDevices] = useState<import('../../shared/types').VideoDevice[]>([]);
   const [devicesLoading, setDevicesLoading] = useState(false);
+  const [ffmpegStatus, setFfmpegStatus] = useState<{ available: boolean; path: string | null; error?: string } | null>(null);
 
 
   const themeOptions: Array<{ id: ThemeId; name: string; description: string; swatches: string[] }> = [
@@ -72,6 +73,7 @@ export function SettingsPanel({ isOpen, onClose }: Props) {
   useEffect(() => {
     if (isOpen && activeTab === 'recording') {
       loadDevices();
+      checkFfmpegStatus();
     }
   }, [isOpen, activeTab]);
 
@@ -111,6 +113,15 @@ export function SettingsPanel({ isOpen, onClose }: Props) {
       console.error('Failed to load devices:', err);
     } finally {
       setDevicesLoading(false);
+    }
+  };
+
+  const checkFfmpegStatus = async () => {
+    try {
+      const status = await window.electronAPI.recordingCheckFfmpeg();
+      setFfmpegStatus(status);
+    } catch (err) {
+      console.error('Failed to check FFmpeg status:', err);
     }
   };
 
@@ -638,6 +649,55 @@ export function SettingsPanel({ isOpen, onClose }: Props) {
 
           {activeTab === 'recording' && (
             <div className="space-y-6">
+              {/* FFmpeg Status */}
+              <div>
+                <label className="block text-sm font-medium text-dark-700 dark:text-dark-300 mb-2">
+                  <Video className="w-4 h-4 inline mr-2" />
+                  FFmpeg Status
+                </label>
+                {ffmpegStatus ? (
+                  <div className={`p-3 rounded-lg ${ffmpegStatus.available 
+                    ? 'bg-green-50 dark:bg-green-900/20' 
+                    : 'bg-red-50 dark:bg-red-900/20'}`}>
+                    <p className={`text-sm ${ffmpegStatus.available 
+                      ? 'text-green-700 dark:text-green-300' 
+                      : 'text-red-700 dark:text-red-300'}`}>
+                      {ffmpegStatus.available ? (
+                        <>
+                          <Check className="w-4 h-4 inline mr-2" />
+                          FFmpeg is installed and ready
+                          {ffmpegStatus.path && (
+                            <span className="block text-xs mt-1 opacity-75">{ffmpegStatus.path}</span>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          ⚠️ FFmpeg not found
+                          <span className="block text-xs mt-1">
+                            Recording features require FFmpeg. Download from{' '}
+                            <a 
+                              href="https://ffmpeg.org/download.html" 
+                              className="underline hover:opacity-75"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                window.electronAPI.openExternal('https://ffmpeg.org/download.html');
+                              }}
+                            >
+                              ffmpeg.org
+                            </a>
+                            {' '}and place in resources/ffmpeg/ folder.
+                          </span>
+                        </>
+                      )}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="p-3 bg-dark-100 dark:bg-dark-700 rounded-lg">
+                    <p className="text-sm text-dark-500">Checking FFmpeg status...</p>
+                  </div>
+                )}
+              </div>
+
               <div>
                 <label className="block text-sm font-medium text-dark-700 dark:text-dark-300 mb-2">
                   <FolderOpen className="w-4 h-4 inline mr-2" />

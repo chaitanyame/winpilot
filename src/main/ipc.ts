@@ -30,6 +30,7 @@ import { contextCaptureService } from './context-capture';
 import { IntentRouter } from '../intent/router';
 import { clipboardMonitor } from './clipboard-monitor';
 import { recordingManager } from './recording-manager';
+import { validateFFmpeg } from '../utils/ffmpeg-path';
 
 // Initialize intent router
 const intentRouter = new IntentRouter();
@@ -1573,6 +1574,16 @@ export function setupIpcHandlers(): void {
     } catch (error) {
       return { success: false, devices: [], error: error instanceof Error ? error.message : String(error) };
     }
+  });
+
+  // Check FFmpeg status
+  ipcMain.handle(IPC_CHANNELS.RECORDING_CHECK_FFMPEG, () => {
+    const validation = validateFFmpeg();
+    return {
+      available: validation.available,
+      path: validation.path,
+      error: validation.error
+    };
   });
 
   // Subscribe to recording events

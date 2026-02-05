@@ -4,17 +4,17 @@
 Update RecordingManager to use user-selected devices instead of hardcoded names, and remove non-functional "both" audio option.
 
 ## Status
-- [ ] Not started
+- [x] Completed
 
 ## Dependencies
 - 01-device-discovery.md
 
 ## Tasks
-- [ ] Modify `getAudioInputDevice()` to read from settings first, fall back to defaults
-- [ ] Modify `buildWebcamRecordingArgs()` to use selected video device
-- [ ] Remove `AudioSource.BOTH` option from tools (or document it just uses system audio)
-- [ ] Update tool schema in `src/tools/index.ts` to remove "both" from enum
-- [ ] Add validation: if selected device not found, return clear error
+- [x] Modify `getAudioInputDevice()` to read from settings first, fall back to defaults
+- [x] Modify `buildWebcamRecordingArgs()` to use selected video device
+- [x] Remove `AudioSource.BOTH` option from types enum
+- [x] Update tool schema in `src/tools/index.ts` to remove "both" from enum
+- [x] Make build methods async to support settings lookup
 
 ## Implementation Notes
 - Current hardcoded values: "Stereo Mix", "Microphone", "Integrated Camera"

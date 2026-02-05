@@ -343,6 +343,7 @@ export const IPC_CHANNELS = {
   RECORDING_PROGRESS: 'recording:progress',
   RECORDING_LIST_AUDIO_DEVICES: 'recording:listAudioDevices',
   RECORDING_LIST_VIDEO_DEVICES: 'recording:listVideoDevices',
+  RECORDING_CHECK_FFMPEG: 'recording:checkFfmpeg',
 
   // Screen share privacy
   SCREEN_SHARE_PRIVACY_LIST_WINDOWS: 'screen-share-privacy:list-windows',

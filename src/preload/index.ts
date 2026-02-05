@@ -371,6 +371,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   recordingStop: (idOrType?: string) => ipcRenderer.invoke(IPC_CHANNELS.RECORDING_STOP, idOrType),
   recordingListAudioDevices: () => ipcRenderer.invoke(IPC_CHANNELS.RECORDING_LIST_AUDIO_DEVICES),
   recordingListVideoDevices: () => ipcRenderer.invoke(IPC_CHANNELS.RECORDING_LIST_VIDEO_DEVICES),
+  recordingCheckFfmpeg: () => ipcRenderer.invoke(IPC_CHANNELS.RECORDING_CHECK_FFMPEG),
   onRecordingProgress: (callback: (recording: Recording) => void) => {
     const handler = (_: unknown, recording: Recording) => callback(recording);
     ipcRenderer.on(IPC_CHANNELS.RECORDING_PROGRESS, handler);
@@ -573,6 +574,7 @@ export interface ElectronAPI {
   recordingStop: (idOrType?: string) => Promise<{ success: boolean; recording?: Recording; error?: string }>;
   recordingListAudioDevices: () => Promise<{ success: boolean; devices: import('../shared/types').AudioDevice[]; error?: string }>;
   recordingListVideoDevices: () => Promise<{ success: boolean; devices: import('../shared/types').VideoDevice[]; error?: string }>;
+  recordingCheckFfmpeg: () => Promise<{ available: boolean; path: string | null; error?: string }>;
   onRecordingProgress: (callback: (recording: Recording) => void) => () => void;
   onRecordingUpdated: (callback: (recording: Recording) => void) => () => void;
   subscribeToRecordings: () => void;
