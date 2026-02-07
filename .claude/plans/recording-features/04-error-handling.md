@@ -4,14 +4,14 @@
 Improve error messages for recording failures across tools, IPC, and UI.
 
 ## Status
-- [ ] Not started
+- [x] Partially completed (FFmpeg status check done)
 
 ## Dependencies
 - 01-device-discovery.md
 
 ## Tasks
-- [ ] Add FFmpeg availability check on app startup, store status
-- [ ] Show FFmpeg status in Settings > Recording (installed/missing with install link)
+- [x] Add FFmpeg availability check, expose via IPC
+- [x] Show FFmpeg status in Settings > Recording (installed/missing with install link)
 - [ ] Improve tool error messages: "FFmpeg not found. Install from https://ffmpeg.org"
 - [ ] Add device validation before recording starts
 - [ ] Surface recording errors in RecordingsPanel (not just console)

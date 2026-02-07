@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { motion } from 'framer-motion';
-import { Send, X, History, Square, Monitor, Plug, Trash2, Settings as SettingsIcon, Clock, Mic, MicOff, Volume2, Brain, Minus, Maximize2, ScrollText, Copy, Video, Loader2, Sparkles, ChevronRight, ChevronLeft, Shield } from 'lucide-react';
+import { Send, X, History, Square, Monitor, Plug, Trash2, Settings as SettingsIcon, Clock, Mic, MicOff, Volume2, Brain, Minus, Maximize2, ScrollText, Copy, Video, Loader2, Sparkles, ChevronRight, ChevronLeft, Shield, FileText } from 'lucide-react';
 import { MessageStream } from './MessageStream';
 import { MCPServersPanel } from './MCPServersPanel';
 import { SettingsPanel } from './SettingsPanel';
@@ -9,6 +9,7 @@ import { ActionLogsPanel } from './ActionLogsPanel';
 import { ClipboardHistoryPanel } from './ClipboardHistoryPanel';
 import { RecordingsPanel } from './RecordingsPanel';
 import { ScreenSharePrivacyPanel } from './ScreenSharePrivacyPanel';
+import { NotesTodosPanel } from './NotesTodosPanel';
 import { useCopilot } from '../hooks/useCopilot';
 import { ConfirmationDialog } from './ConfirmationDialog';
 import type { PermissionRequest, PermissionResponse, ActionLog, Settings, ActiveWindowContext } from '../../shared/types';
@@ -96,6 +97,17 @@ const TOOL_DESCRIPTIONS: Record<string, string> = {
   web_search: 'Searched the web',
   troubleshoot_start: 'Started troubleshooting',
   troubleshoot_propose_fix: 'Proposed fix',
+  notes_create: 'Created a note',
+  notes_list: 'Listed notes',
+  notes_get: 'Retrieved note',
+  notes_update: 'Updated note',
+  notes_search: 'Searched notes',
+  notes_delete: 'Deleted note',
+  notes_delete_all: 'Deleted all notes',
+  todos_create: 'Created todo',
+  todos_list: 'Listed todos',
+  todos_complete: 'Completed todo',
+  todos_delete: 'Deleted todo',
 };
 
 const PROMPT_TEMPLATES: PromptTemplate[] = [
@@ -145,6 +157,7 @@ export function CommandPalette() {
   const [showLogsPanel, setShowLogsPanel] = useState(false);
   const [showClipboardPanel, setShowClipboardPanel] = useState(false);
   const [showRecordingsPanel, setShowRecordingsPanel] = useState(false);
+  const [showNotesPanel, setShowNotesPanel] = useState(false);
   const [showScreenSharePrivacyPanel, setShowScreenSharePrivacyPanel] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [sidebarExpanded, setSidebarExpanded] = useState(false);
@@ -1116,6 +1129,16 @@ export function CommandPalette() {
             </div>
           )}
           <button
+            onClick={() => setShowNotesPanel(true)}
+            className={`p-2 rounded-lg transition-colors flex items-center gap-3
+                       text-[color:var(--app-text-muted)] hover:text-[color:var(--app-text)]
+                       hover:bg-[color:var(--app-surface)] ${sidebarExpanded ? 'w-full' : ''}`}
+            title="Notes & Todos"
+          >
+            <FileText className="w-4 h-4 flex-shrink-0" />
+            {sidebarExpanded && <span className="text-sm">Notes & Todos</span>}
+          </button>
+          <button
             onClick={() => setShowClipboardPanel(true)}
             className={`p-2 rounded-lg transition-colors flex items-center gap-3
                        text-[color:var(--app-text-muted)] hover:text-[color:var(--app-text)]
@@ -1432,6 +1455,11 @@ export function CommandPalette() {
       <RecordingsPanel
         isOpen={showRecordingsPanel}
         onClose={() => setShowRecordingsPanel(false)}
+      />
+
+      <NotesTodosPanel
+        isOpen={showNotesPanel}
+        onClose={() => setShowNotesPanel(false)}
       />
 
       <ScreenSharePrivacyPanel

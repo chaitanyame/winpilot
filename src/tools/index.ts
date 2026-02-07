@@ -33,6 +33,21 @@ import {
   RecordingType,
   AudioSource
 } from '../shared/types';
+import {
+  createNote,
+  getNote,
+  listNotes,
+  updateNote,
+  deleteNote,
+  deleteAllNotes,
+  searchNotes
+} from '../main/notes';
+import {
+  createTodo,
+  listTodos,
+  completeTodo,
+  deleteTodo
+} from '../main/todos';
 
 const adapter = getUnifiedAdapter();
 const invisiwind = new InvisiwindWrapper();
@@ -2686,6 +2701,156 @@ function formatFileSize(bytes: number): string {
 }
 
 // ============================================================================
+// Notes Tools
+// ============================================================================
+
+const createNoteTool = defineTool({
+  name: 'notes_create',
+  description: 'Create a new note with a title and optional content',
+  parameters: z.object({
+    title: p(z.string(), 'Title of the note'),
+    content: p(z.string().optional(), 'Content/body of the note'),
+  }),
+  handler: async ({ title, content }) => {
+    const note = createNote(title, content);
+    return `Created note "${note.title}" (ID: ${note.id})`;
+  },
+});
+
+const listNotesTool = defineTool({
+  name: 'notes_list',
+  description: 'List all notes, optionally limited to a count',
+  parameters: z.object({
+    limit: p(z.number().optional(), 'Max notes to return (default 20)'),
+  }),
+  handler: async ({ limit }) => {
+    const notes = listNotes(limit || 20);
+    if (notes.length === 0) return 'No notes found.';
+    return notes.map(n => `- [${n.id}] ${n.title} (${new Date(n.updated_at * 1000).toLocaleDateString()})`).join('\n');
+  },
+});
+
+const getNoteTool = defineTool({
+  name: 'notes_get',
+  description: 'Get a note by ID',
+  parameters: z.object({
+    id: p(z.string(), 'Note ID'),
+  }),
+  handler: async ({ id }) => {
+    const note = getNote(id);
+    if (!note) return `Note ${id} not found.`;
+    return `Title: ${note.title}\nContent: ${note.content}\nCreated: ${new Date(note.created_at * 1000).toLocaleString()}\nUpdated: ${new Date(note.updated_at * 1000).toLocaleString()}`;
+  },
+});
+
+const updateNoteTool = defineTool({
+  name: 'notes_update',
+  description: 'Update a note title and/or content',
+  parameters: z.object({
+    id: p(z.string(), 'Note ID'),
+    title: p(z.string().optional(), 'New title'),
+    content: p(z.string().optional(), 'New content'),
+  }),
+  handler: async ({ id, title, content }) => {
+    const note = updateNote(id, title, content);
+    if (!note) return `Note ${id} not found.`;
+    return `Updated note "${note.title}"`;
+  },
+});
+
+const searchNotesTool = defineTool({
+  name: 'notes_search',
+  description: 'Search notes by title or content',
+  parameters: z.object({
+    query: p(z.string(), 'Search query'),
+    limit: p(z.number().optional(), 'Max results (default 10)'),
+  }),
+  handler: async ({ query, limit }) => {
+    const notes = searchNotes(query, limit || 10);
+    if (notes.length === 0) return `No notes matching "${query}".`;
+    return notes.map(n => `- [${n.id}] ${n.title}`).join('\n');
+  },
+});
+
+const deleteNoteTool = defineTool({
+  name: 'notes_delete',
+  description: 'Delete a note by ID',
+  parameters: z.object({
+    id: p(z.string(), 'Note ID'),
+  }),
+  handler: async ({ id }) => {
+    const success = deleteNote(id);
+    return success ? `Deleted note ${id}.` : `Note ${id} not found.`;
+  },
+});
+
+const deleteAllNotesTool = defineTool({
+  name: 'notes_delete_all',
+  description: 'Delete all notes. Requires user confirmation.',
+  parameters: z.object({}),
+  handler: async () => {
+    const permitted = await requestPermissionForTool('notes_delete_all', 'Delete ALL notes permanently', {}, ['This action cannot be undone', 'All notes will be permanently deleted']);
+    if (!permitted) return 'User denied permission to delete all notes.';
+    const count = deleteAllNotes();
+    return `Deleted ${count} notes.`;
+  },
+});
+
+// ============================================================================
+// Todo Tools
+// ============================================================================
+
+const createTodoTool = defineTool({
+  name: 'todos_create',
+  description: 'Create a new todo item',
+  parameters: z.object({
+    text: p(z.string(), 'Todo text'),
+  }),
+  handler: async ({ text }) => {
+    const todo = createTodo(text);
+    return `Created todo: "${todo.text}" (ID: ${todo.id})`;
+  },
+});
+
+const listTodosTool = defineTool({
+  name: 'todos_list',
+  description: 'List todos, optionally filtered by status',
+  parameters: z.object({
+    filter: p(z.enum(['all', 'active', 'completed']).optional(), 'Filter: all, active, or completed (default: all)'),
+  }),
+  handler: async ({ filter }) => {
+    const todos = listTodos(filter || 'all');
+    if (todos.length === 0) return `No ${filter || ''} todos found.`;
+    return todos.map(t => `- [${t.completed ? 'x' : ' '}] ${t.text} (${t.id})`).join('\n');
+  },
+});
+
+const completeTodoTool = defineTool({
+  name: 'todos_complete',
+  description: 'Mark a todo as completed',
+  parameters: z.object({
+    id: p(z.string(), 'Todo ID'),
+  }),
+  handler: async ({ id }) => {
+    const todo = completeTodo(id);
+    if (!todo) return `Todo ${id} not found.`;
+    return `Completed: "${todo.text}"`;
+  },
+});
+
+const deleteTodoTool = defineTool({
+  name: 'todos_delete',
+  description: 'Delete a todo item',
+  parameters: z.object({
+    id: p(z.string(), 'Todo ID'),
+  }),
+  handler: async ({ id }) => {
+    const success = deleteTodo(id);
+    return success ? `Deleted todo ${id}.` : `Todo ${id} not found.`;
+  },
+});
+
+// ============================================================================
 // Export all tools
 // ============================================================================
 
@@ -2796,4 +2961,17 @@ export const desktopCommanderTools = [
   screenRecordStatusTool,
   audioRecordStartTool,
   audioRecordStopTool,
+  // Notes
+  createNoteTool,
+  listNotesTool,
+  getNoteTool,
+  updateNoteTool,
+  searchNotesTool,
+  deleteNoteTool,
+  deleteAllNotesTool,
+  // Todos
+  createTodoTool,
+  listTodosTool,
+  completeTodoTool,
+  deleteTodoTool,
 ];

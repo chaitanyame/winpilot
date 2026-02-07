@@ -1625,4 +1625,62 @@ export function setupIpcHandlers(): void {
       recordingManager.off('recording-error', errorHandler);
     });
   });
+
+  // ============================================================================
+  // Notes IPC Handlers
+  // ============================================================================
+
+  ipcMain.handle(IPC_CHANNELS.NOTES_LIST, (_, limit?: number) => {
+    const { listNotes } = require('./notes');
+    return listNotes(limit);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.NOTES_GET, (_, id: string) => {
+    const { getNote } = require('./notes');
+    return getNote(id);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.NOTES_CREATE, (_, params: { title: string; content?: string }) => {
+    const { createNote } = require('./notes');
+    return createNote(params.title, params.content);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.NOTES_UPDATE, (_, params: { id: string; title?: string; content?: string }) => {
+    const { updateNote } = require('./notes');
+    return updateNote(params.id, params.title, params.content);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.NOTES_DELETE, (_, id: string) => {
+    const { deleteNote } = require('./notes');
+    return deleteNote(id);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.NOTES_SEARCH, (_, params: { query: string; limit?: number }) => {
+    const { searchNotes } = require('./notes');
+    return searchNotes(params.query, params.limit);
+  });
+
+  // ============================================================================
+  // Todos IPC Handlers
+  // ============================================================================
+
+  ipcMain.handle(IPC_CHANNELS.TODOS_LIST, (_, filter?: 'all' | 'active' | 'completed') => {
+    const { listTodos } = require('./todos');
+    return listTodos(filter);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.TODOS_CREATE, (_, text: string) => {
+    const { createTodo } = require('./todos');
+    return createTodo(text);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.TODOS_COMPLETE, (_, id: string) => {
+    const { completeTodo } = require('./todos');
+    return completeTodo(id);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.TODOS_DELETE, (_, id: string) => {
+    const { deleteTodo } = require('./todos');
+    return deleteTodo(id);
+  });
 }

@@ -164,6 +164,24 @@ export interface PermissionResponse {
 export type AppearanceMode = 'light' | 'dark' | 'system';
 export type ThemeId = 'twitter' | 'claude' | 'neo-brutalism' | 'retro-arcade' | 'aurora' | 'business';
 
+// Notes
+export interface Note {
+  id: string;
+  title: string;
+  content: string;
+  created_at: number;
+  updated_at: number;
+}
+
+// Todos
+export interface Todo {
+  id: string;
+  text: string;
+  completed: boolean;
+  created_at: number;
+  updated_at: number;
+}
+
 // Settings
 export interface Settings {
   hotkey: string;
@@ -356,6 +374,20 @@ export const IPC_CHANNELS = {
   // Context Awareness
   CONTEXT_GET: 'context:get',
   CONTEXT_CLEAR: 'context:clear',
+
+  // Notes
+  NOTES_LIST: 'notes:list',
+  NOTES_GET: 'notes:get',
+  NOTES_CREATE: 'notes:create',
+  NOTES_UPDATE: 'notes:update',
+  NOTES_DELETE: 'notes:delete',
+  NOTES_SEARCH: 'notes:search',
+
+  // Todos
+  TODOS_LIST: 'todos:list',
+  TODOS_CREATE: 'todos:create',
+  TODOS_COMPLETE: 'todos:complete',
+  TODOS_DELETE: 'todos:delete',
 } as const;
 
 export interface HiddenWindow {
