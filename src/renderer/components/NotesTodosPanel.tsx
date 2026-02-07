@@ -9,7 +9,7 @@ interface Props {
   variant?: 'modal' | 'sidebar';
 }
 
-export function NotesTodosPanel({ isOpen, onClose, variant = 'modal' }: Props) {
+export function NotesTodosPanel({ isOpen, onClose, variant: _variant = 'modal' }: Props) {
   const [activeTab, setActiveTab] = useState<'notes' | 'todos'>('notes');
 
   if (!isOpen) return null;

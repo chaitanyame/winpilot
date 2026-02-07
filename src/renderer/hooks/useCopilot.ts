@@ -9,6 +9,7 @@ interface UseCopilotReturn {
   sendMessage: (content: string) => Promise<void>;
   cancelMessage: () => void;
   clearMessages: () => Promise<void>;
+  addMessage: (message: Omit<Message, 'id' | 'timestamp'>) => void;
 }
 
 export function useCopilot(): UseCopilotReturn {
@@ -131,6 +132,18 @@ export function useCopilot(): UseCopilotReturn {
     }
   }, [clearResponseTimeout]);
 
+  const addMessage = useCallback((message: Omit<Message, 'id' | 'timestamp'>) => {
+    const fullMessage: Message = {
+      ...message,
+      id: generateId(),
+      timestamp: new Date(),
+    };
+    setMessages((prev) => {
+      const updated = [...prev, fullMessage];
+      return updated.length > 50 ? updated.slice(-50) : updated;
+    });
+  }, []);
+
   return {
     messages,
     isLoading,
@@ -138,5 +151,6 @@ export function useCopilot(): UseCopilotReturn {
     sendMessage,
     cancelMessage,
     clearMessages,
+    addMessage,
   };
 }

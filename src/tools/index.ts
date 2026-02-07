@@ -2262,49 +2262,7 @@ export const mediaPauseTool = defineTool('media_pause', {
   }
 });
 
-export const mediaPlayPauseTool = defineTool('media_play_pause', {
-  description: 'Toggle play/pause for media playback',
-  parameters: p({}),
-  handler: async () => {
-    const result = await adapter.mediaPlayPause();
-    return result.success
-      ? 'Media play/pause toggled'
-      : `Failed to toggle play/pause: ${result.error}`;
-  }
-});
-
-export const mediaNextTool = defineTool('media_next', {
-  description: 'Skip to the next track',
-  parameters: p({}),
-  handler: async () => {
-    const result = await adapter.mediaNext();
-    return result.success
-      ? 'Skipped to next track'
-      : `Failed to skip track: ${result.error}`;
-  }
-});
-
-export const mediaPreviousTool = defineTool('media_previous', {
-  description: 'Go back to the previous track',
-  parameters: p({}),
-  handler: async () => {
-    const result = await adapter.mediaPrevious();
-    return result.success
-      ? 'Went to previous track'
-      : `Failed to go to previous track: ${result.error}`;
-  }
-});
-
-export const mediaStopTool = defineTool('media_stop', {
-  description: 'Stop media playback completely',
-  parameters: p({}),
-  handler: async () => {
-    const result = await adapter.mediaStop();
-    return result.success
-      ? 'Media stopped'
-      : `Failed to stop media: ${result.error}`;
-  }
-});
+// Media control tools moved to line ~3000 (using WindowsMedia class directly)
 
 // ============================================================================
 // Browser Automation Tools
@@ -2727,12 +2685,11 @@ function formatFileSize(bytes: number): string {
 // Notes Tools
 // ============================================================================
 
-const createNoteTool = defineTool({
-  name: 'notes_create',
+const createNoteTool = defineTool('notes_create', {
   description: 'Create a new note with a title and optional content',
-  parameters: z.object({
-    title: p(z.string(), 'Title of the note'),
-    content: p(z.string().optional(), 'Content/body of the note'),
+  parameters: p({
+    title: z.string().describe('Title of the note'),
+    content: z.string().optional().describe('Content/body of the note'),
   }),
   handler: async ({ title, content }) => {
     const note = createNote(title, content);
@@ -2740,11 +2697,10 @@ const createNoteTool = defineTool({
   },
 });
 
-const listNotesTool = defineTool({
-  name: 'notes_list',
+const listNotesTool = defineTool('notes_list', {
   description: 'List all notes, optionally limited to a count',
-  parameters: z.object({
-    limit: p(z.number().optional(), 'Max notes to return (default 20)'),
+  parameters: p({
+    limit: z.number().optional().describe('Max notes to return (default 20)'),
   }),
   handler: async ({ limit }) => {
     const notes = listNotes(limit || 20);
@@ -2753,11 +2709,10 @@ const listNotesTool = defineTool({
   },
 });
 
-const getNoteTool = defineTool({
-  name: 'notes_get',
+const getNoteTool = defineTool('notes_get', {
   description: 'Get a note by ID',
-  parameters: z.object({
-    id: p(z.string(), 'Note ID'),
+  parameters: p({
+    id: z.string().describe('Note ID'),
   }),
   handler: async ({ id }) => {
     const note = getNote(id);
@@ -2766,13 +2721,12 @@ const getNoteTool = defineTool({
   },
 });
 
-const updateNoteTool = defineTool({
-  name: 'notes_update',
+const updateNoteTool = defineTool('notes_update', {
   description: 'Update a note title and/or content',
-  parameters: z.object({
-    id: p(z.string(), 'Note ID'),
-    title: p(z.string().optional(), 'New title'),
-    content: p(z.string().optional(), 'New content'),
+  parameters: p({
+    id: z.string().describe('Note ID'),
+    title: z.string().optional().describe('New title'),
+    content: z.string().optional().describe('New content'),
   }),
   handler: async ({ id, title, content }) => {
     const note = updateNote(id, title, content);
@@ -2781,12 +2735,11 @@ const updateNoteTool = defineTool({
   },
 });
 
-const searchNotesTool = defineTool({
-  name: 'notes_search',
+const searchNotesTool = defineTool('notes_search', {
   description: 'Search notes by title or content',
-  parameters: z.object({
-    query: p(z.string(), 'Search query'),
-    limit: p(z.number().optional(), 'Max results (default 10)'),
+  parameters: p({
+    query: z.string().describe('Search query'),
+    limit: z.number().optional().describe('Max results (default 10)'),
   }),
   handler: async ({ query, limit }) => {
     const notes = searchNotes(query, limit || 10);
@@ -2795,11 +2748,10 @@ const searchNotesTool = defineTool({
   },
 });
 
-const deleteNoteTool = defineTool({
-  name: 'notes_delete',
+const deleteNoteTool = defineTool('notes_delete', {
   description: 'Delete a note by ID',
-  parameters: z.object({
-    id: p(z.string(), 'Note ID'),
+  parameters: p({
+    id: z.string().describe('Note ID'),
   }),
   handler: async ({ id }) => {
     const success = deleteNote(id);
@@ -2807,12 +2759,11 @@ const deleteNoteTool = defineTool({
   },
 });
 
-const deleteAllNotesTool = defineTool({
-  name: 'notes_delete_all',
+const deleteAllNotesTool = defineTool('notes_delete_all', {
   description: 'Delete all notes. Requires user confirmation.',
-  parameters: z.object({}),
+  parameters: p({}),
   handler: async () => {
-    const permitted = await requestPermissionForTool('notes_delete_all', 'Delete ALL notes permanently', {}, ['This action cannot be undone', 'All notes will be permanently deleted']);
+    const permitted = await requestPermissionForTool('notes_delete_all', {}, ['Delete ALL notes permanently', 'This action cannot be undone']);
     if (!permitted) return 'User denied permission to delete all notes.';
     const count = deleteAllNotes();
     return `Deleted ${count} notes.`;
@@ -2823,11 +2774,10 @@ const deleteAllNotesTool = defineTool({
 // Todo Tools
 // ============================================================================
 
-const createTodoTool = defineTool({
-  name: 'todos_create',
+const createTodoTool = defineTool('todos_create', {
   description: 'Create a new todo item',
-  parameters: z.object({
-    text: p(z.string(), 'Todo text'),
+  parameters: p({
+    text: z.string().describe('Todo text'),
   }),
   handler: async ({ text }) => {
     const todo = createTodo(text);
@@ -2835,11 +2785,10 @@ const createTodoTool = defineTool({
   },
 });
 
-const listTodosTool = defineTool({
-  name: 'todos_list',
+const listTodosTool = defineTool('todos_list', {
   description: 'List todos, optionally filtered by status',
-  parameters: z.object({
-    filter: p(z.enum(['all', 'active', 'completed']).optional(), 'Filter: all, active, or completed (default: all)'),
+  parameters: p({
+    filter: z.enum(['all', 'active', 'completed']).optional().describe('Filter: all, active, or completed (default: all)'),
   }),
   handler: async ({ filter }) => {
     const todos = listTodos(filter || 'all');
@@ -2848,11 +2797,10 @@ const listTodosTool = defineTool({
   },
 });
 
-const completeTodoTool = defineTool({
-  name: 'todos_complete',
+const completeTodoTool = defineTool('todos_complete', {
   description: 'Mark a todo as completed',
-  parameters: z.object({
-    id: p(z.string(), 'Todo ID'),
+  parameters: p({
+    id: z.string().describe('Todo ID'),
   }),
   handler: async ({ id }) => {
     const todo = completeTodo(id);
@@ -2861,11 +2809,10 @@ const completeTodoTool = defineTool({
   },
 });
 
-const deleteTodoTool = defineTool({
-  name: 'todos_delete',
+const deleteTodoTool = defineTool('todos_delete', {
   description: 'Delete a todo item',
-  parameters: z.object({
-    id: p(z.string(), 'Todo ID'),
+  parameters: p({
+    id: z.string().describe('Todo ID'),
   }),
   handler: async ({ id }) => {
     const success = deleteTodo(id);
@@ -2877,12 +2824,11 @@ const deleteTodoTool = defineTool({
 // URL Fetch Tool
 // ============================================================================
 
-const fetchUrlTool = defineTool({
-  name: 'web_fetch_url',
+const fetchUrlTool = defineTool('web_fetch_url', {
   description: 'Fetch a web page and return its text content. Use this to look up information from URLs.',
-  parameters: z.object({
-    url: p(z.string(), 'The URL to fetch'),
-    max_length: p(z.number().optional(), 'Max characters to return (default 2000)'),
+  parameters: p({
+    url: z.string().describe('The URL to fetch'),
+    max_length: z.number().optional().describe('Max characters to return (default 2000)'),
   }),
   handler: async ({ url, max_length }) => {
     const result = await fetchUrl(url, max_length);
@@ -2905,14 +2851,13 @@ const fetchUrlTool = defineTool({
 // Text-to-Speech Tools
 // ============================================================================
 
-const speakTextTool = defineTool({
-  name: 'speak_text',
+const speakTextTool = defineTool('speak_text', {
   description: 'Speak text aloud using system text-to-speech. Works offline, no API key needed.',
-  parameters: z.object({
-    text: p(z.string(), 'The text to speak aloud'),
-    voice: p(z.string().optional(), 'Voice name (use list_voices to see options)'),
-    rate: p(z.number().optional(), 'Speech rate from -10 (slowest) to 10 (fastest). Default 0.'),
-    volume: p(z.number().optional(), 'Volume 0-100. Default 100.'),
+  parameters: p({
+    text: z.string().describe('The text to speak aloud'),
+    voice: z.string().optional().describe('Voice name (use list_voices to see options)'),
+    rate: z.number().optional().describe('Speech rate from -10 (slowest) to 10 (fastest). Default 0.'),
+    volume: z.number().optional().describe('Volume 0-100. Default 100.'),
   }),
   handler: async ({ text, voice, rate, volume }) => {
     const options: TTSOptions = {};
@@ -2924,20 +2869,18 @@ const speakTextTool = defineTool({
   },
 });
 
-const stopSpeakingTool = defineTool({
-  name: 'stop_speaking',
+const stopSpeakingTool = defineTool('stop_speaking', {
   description: 'Stop any ongoing text-to-speech playback',
-  parameters: z.object({}),
+  parameters: p({}),
   handler: async () => {
     await stopSpeaking();
     return 'Speech stopped.';
   },
 });
 
-const listVoicesTool = defineTool({
-  name: 'list_voices',
+const listVoicesTool = defineTool('list_voices', {
   description: 'List available text-to-speech voices on this system',
-  parameters: z.object({}),
+  parameters: p({}),
   handler: async () => {
     const voices = await listVoices();
     if (voices.length === 0) return 'No TTS voices found.';
@@ -2949,25 +2892,23 @@ const listVoicesTool = defineTool({
 // Utility Tools (Weather, Unit Converter)
 // ============================================================================
 
-const getWeatherTool = defineTool({
-  name: 'weather_get',
+const getWeatherTool = defineTool('weather_get', {
   description: 'Get current weather and forecast for a location',
-  parameters: z.object({
-    location: p(z.string(), 'City name, e.g. "London", "New York", "Tokyo"'),
-    detailed: p(z.boolean().optional(), 'Show 3-day forecast (default: brief current conditions)'),
+  parameters: p({
+    location: z.string().describe('City name, e.g. "London", "New York", "Tokyo"'),
+    detailed: z.boolean().optional().describe('Show 3-day forecast (default: brief current conditions)'),
   }),
   handler: async ({ location, detailed }) => {
     return await fetchWeather(location, detailed || false);
   },
 });
 
-const convertUnitTool = defineTool({
-  name: 'convert_unit',
+const convertUnitTool = defineTool('convert_unit', {
   description: 'Convert between units of measurement (length, weight, temperature, volume, area, speed)',
-  parameters: z.object({
-    value: p(z.number(), 'The numeric value to convert'),
-    from: p(z.string(), 'Source unit (e.g. "km", "lb", "celsius", "gallon")'),
-    to: p(z.string(), 'Target unit (e.g. "miles", "kg", "fahrenheit", "liter")'),
+  parameters: p({
+    value: z.number().describe('The numeric value to convert'),
+    from: z.string().describe('Source unit (e.g. "km", "lb", "celsius", "gallon")'),
+    to: z.string().describe('Target unit (e.g. "miles", "kg", "fahrenheit", "liter")'),
   }),
   handler: async ({ value, from, to }) => {
     const result = convertUnit(value, from, to);
@@ -2980,10 +2921,9 @@ const convertUnitTool = defineTool({
 // Music/Media Control Tools
 // ============================================================================
 
-const mediaPlayPauseTool = defineTool({
-  name: 'media_play_pause',
+export const mediaPlayPauseTool = defineTool('media_play_pause', {
   description: 'Toggle play/pause on the current media player (Spotify, browser music, etc.)',
-  parameters: z.object({}),
+  parameters: p({}),
   handler: async () => {
     const success = await windowsMedia.playPause();
     if (!success) return 'Failed to send play/pause command.';
@@ -2995,10 +2935,9 @@ const mediaPlayPauseTool = defineTool({
   },
 });
 
-const mediaNextTool = defineTool({
-  name: 'media_next_track',
+export const mediaNextTool = defineTool('media_next_track', {
   description: 'Skip to the next track',
-  parameters: z.object({}),
+  parameters: p({}),
   handler: async () => {
     const success = await windowsMedia.nextTrack();
     if (!success) return 'Failed to skip track.';
@@ -3008,10 +2947,9 @@ const mediaNextTool = defineTool({
   },
 });
 
-const mediaPreviousTool = defineTool({
-  name: 'media_previous_track',
+export const mediaPreviousTool = defineTool('media_previous_track', {
   description: 'Go to the previous track',
-  parameters: z.object({}),
+  parameters: p({}),
   handler: async () => {
     const success = await windowsMedia.previousTrack();
     if (!success) return 'Failed to go back.';
@@ -3021,10 +2959,9 @@ const mediaPreviousTool = defineTool({
   },
 });
 
-const mediaStatusTool = defineTool({
-  name: 'media_status',
+export const mediaStatusTool = defineTool('media_status', {
   description: 'Get current media playback status (track name, artist, play state)',
-  parameters: z.object({}),
+  parameters: p({}),
   handler: async () => {
     const status = await windowsMedia.getStatus();
     if (!status.title && !status.isPlaying) return 'No media is currently playing.';
@@ -3038,10 +2975,9 @@ const mediaStatusTool = defineTool({
   },
 });
 
-const mediaStopTool = defineTool({
-  name: 'media_stop',
+export const mediaStopTool = defineTool('media_stop', {
   description: 'Stop media playback',
-  parameters: z.object({}),
+  parameters: p({}),
   handler: async () => {
     const success = await windowsMedia.stop();
     return success ? 'Media stopped.' : 'Failed to stop media.';

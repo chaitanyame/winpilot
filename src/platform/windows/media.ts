@@ -51,9 +51,15 @@ async function getMediaStatus(): Promise<MediaStatus> {
 }
 
 export class WindowsMedia {
+  async play(): Promise<boolean> { return this.playPause(); }
+  async pause(): Promise<boolean> { return this.playPause(); }
   async playPause(): Promise<boolean> { return sendMediaKey('play_pause'); }
-  async nextTrack(): Promise<boolean> { return sendMediaKey('next'); }
-  async previousTrack(): Promise<boolean> { return sendMediaKey('previous'); }
+  async next(): Promise<boolean> { return sendMediaKey('next'); }
+  async nextTrack(): Promise<boolean> { return this.next(); }
+  async previous(): Promise<boolean> { return sendMediaKey('previous'); }
+  async previousTrack(): Promise<boolean> { return this.previous(); }
   async stop(): Promise<boolean> { return sendMediaKey('stop'); }
   async getStatus(): Promise<MediaStatus> { return getMediaStatus(); }
 }
+
+export const windowsMedia = new WindowsMedia();

@@ -198,6 +198,7 @@ export function CommandPalette() {
     sendMessage,
     cancelMessage,
     clearMessages,
+    addMessage,
   } = useCopilot();
 
   // Track action logs from tool calls - optimized to only process new tool calls
@@ -848,7 +849,7 @@ export function CommandPalette() {
       api: window.electronAPI,
       addSystemMessage: (content) => {
         if (content === '__CLEAR__') {
-          setMessages([]);
+          clearMessages();
         } else {
           addMessage({ role: 'assistant', content });
         }
@@ -873,7 +874,7 @@ export function CommandPalette() {
 
     await sendMessage(message);
     await loadHistory();
-  }, [input, isLoading, sendMessage, addMessage, setMessages, setShowSettings]);
+  }, [input, isLoading, sendMessage, addMessage, clearMessages, setShowSettings]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     // Handle slash command autocomplete

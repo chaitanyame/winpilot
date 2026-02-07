@@ -185,7 +185,7 @@ Provide ONLY the summary, no preamble.`;
     // Get summary from current session
     let summary = '';
     try {
-      const response = await this.session.sendAndWait(compactionPrompt);
+      const response = await this.session.sendAndWait({ prompt: compactionPrompt });
       summary = typeof response === 'string' ? response :
                 (response as { content?: string })?.content || 'Previous conversation context unavailable.';
     } catch {
