@@ -50,6 +50,8 @@ import {
 } from '../main/todos';
 import { fetchUrl } from '../main/url-fetch';
 import { speak, stopSpeaking, listVoices, type TTSOptions } from '../platform/windows/tts';
+import { fetchWeather } from '../main/weather';
+import { convertUnit } from '../main/unit-converter';
 
 const adapter = getUnifiedAdapter();
 const invisiwind = new InvisiwindWrapper();
@@ -2925,6 +2927,37 @@ const listVoicesTool = defineTool({
 });
 
 // ============================================================================
+// Utility Tools (Weather, Unit Converter)
+// ============================================================================
+
+const getWeatherTool = defineTool({
+  name: 'weather_get',
+  description: 'Get current weather and forecast for a location',
+  parameters: z.object({
+    location: p(z.string(), 'City name, e.g. "London", "New York", "Tokyo"'),
+    detailed: p(z.boolean().optional(), 'Show 3-day forecast (default: brief current conditions)'),
+  }),
+  handler: async ({ location, detailed }) => {
+    return await fetchWeather(location, detailed || false);
+  },
+});
+
+const convertUnitTool = defineTool({
+  name: 'convert_unit',
+  description: 'Convert between units of measurement (length, weight, temperature, volume, area, speed)',
+  parameters: z.object({
+    value: p(z.number(), 'The numeric value to convert'),
+    from: p(z.string(), 'Source unit (e.g. "km", "lb", "celsius", "gallon")'),
+    to: p(z.string(), 'Target unit (e.g. "miles", "kg", "fahrenheit", "liter")'),
+  }),
+  handler: async ({ value, from, to }) => {
+    const result = convertUnit(value, from, to);
+    if (result.error) return result.error;
+    return `${value} ${from} = ${result.value} ${to}`;
+  },
+});
+
+// ============================================================================
 // Export all tools
 // ============================================================================
 
@@ -3054,4 +3087,7 @@ export const desktopCommanderTools = [
   speakTextTool,
   stopSpeakingTool,
   listVoicesTool,
+  // Utilities
+  getWeatherTool,
+  convertUnitTool,
 ];

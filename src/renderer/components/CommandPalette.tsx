@@ -112,6 +112,8 @@ const TOOL_DESCRIPTIONS: Record<string, string> = {
   speak_text: 'Speaking text aloud',
   stop_speaking: 'Stopped speaking',
   list_voices: 'Listed available voices',
+  weather_get: 'Checked weather',
+  convert_unit: 'Converted units',
 };
 
 const PROMPT_TEMPLATES: PromptTemplate[] = [
