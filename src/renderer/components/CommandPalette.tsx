@@ -108,6 +108,7 @@ const TOOL_DESCRIPTIONS: Record<string, string> = {
   todos_list: 'Listed todos',
   todos_complete: 'Completed todo',
   todos_delete: 'Deleted todo',
+  web_fetch_url: 'Fetched web page',
 };
 
 const PROMPT_TEMPLATES: PromptTemplate[] = [

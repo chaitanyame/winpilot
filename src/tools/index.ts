@@ -48,6 +48,7 @@ import {
   completeTodo,
   deleteTodo
 } from '../main/todos';
+import { fetchUrl } from '../main/url-fetch';
 
 const adapter = getUnifiedAdapter();
 const invisiwind = new InvisiwindWrapper();
@@ -2851,6 +2852,34 @@ const deleteTodoTool = defineTool({
 });
 
 // ============================================================================
+// URL Fetch Tool
+// ============================================================================
+
+const fetchUrlTool = defineTool({
+  name: 'web_fetch_url',
+  description: 'Fetch a web page and return its text content. Use this to look up information from URLs.',
+  parameters: z.object({
+    url: p(z.string(), 'The URL to fetch'),
+    max_length: p(z.number().optional(), 'Max characters to return (default 2000)'),
+  }),
+  handler: async ({ url, max_length }) => {
+    const result = await fetchUrl(url, max_length);
+    if (!result.success) {
+      return `Failed to fetch ${url}: ${result.error}`;
+    }
+    const parts = [];
+    if (result.title) parts.push(`Title: ${result.title}`);
+    parts.push(`URL: ${result.url}`);
+    if (result.contentLength && result.contentLength > (max_length || 2000)) {
+      parts.push(`(Showing first ${max_length || 2000} of ${result.contentLength} characters)`);
+    }
+    parts.push('');
+    parts.push(result.content || '(No content)');
+    return parts.join('\n');
+  },
+});
+
+// ============================================================================
 // Export all tools
 // ============================================================================
 
@@ -2974,4 +3003,6 @@ export const desktopCommanderTools = [
   listTodosTool,
   completeTodoTool,
   deleteTodoTool,
+  // URL Fetch
+  fetchUrlTool,
 ];
