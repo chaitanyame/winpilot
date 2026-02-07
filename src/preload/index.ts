@@ -401,6 +401,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   todosCreate: (text: string) => ipcRenderer.invoke(IPC_CHANNELS.TODOS_CREATE, text),
   todosComplete: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.TODOS_COMPLETE, id),
   todosDelete: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.TODOS_DELETE, id),
+
+  // Copilot Session Compaction
+  copilotCompactSession: () => ipcRenderer.invoke(IPC_CHANNELS.COPILOT_COMPACT_SESSION),
 });
 
 // Type definitions for the exposed API
@@ -610,6 +613,9 @@ export interface ElectronAPI {
   todosCreate: (text: string) => Promise<import('../shared/types').Todo>;
   todosComplete: (id: string) => Promise<import('../shared/types').Todo | null>;
   todosDelete: (id: string) => Promise<boolean>;
+
+  // Copilot Session Compaction
+  copilotCompactSession: () => Promise<{ success: boolean; summary?: string; error?: string }>;
 }
 
 declare global {

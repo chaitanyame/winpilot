@@ -388,6 +388,9 @@ export const IPC_CHANNELS = {
   TODOS_CREATE: 'todos:create',
   TODOS_COMPLETE: 'todos:complete',
   TODOS_DELETE: 'todos:delete',
+
+  // Copilot Session Compaction
+  COPILOT_COMPACT_SESSION: 'copilot:compactSession',
 } as const;
 
 export interface HiddenWindow {

@@ -1683,4 +1683,17 @@ export function setupIpcHandlers(): void {
     const { deleteTodo } = require('./todos');
     return deleteTodo(id);
   });
+
+  // ============================================================================
+  // Copilot Session Compaction
+  // ============================================================================
+
+  ipcMain.handle('copilot:compactSession', async () => {
+    try {
+      const summary = await copilotController.compactSession();
+      return { success: true, summary };
+    } catch (error) {
+      return { success: false, error: (error as Error).message };
+    }
+  });
 }

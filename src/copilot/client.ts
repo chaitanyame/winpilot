@@ -104,6 +104,8 @@ export class CopilotController {
   private currentUserMessageTimestamp = 0;
   // Cleanup interval for stale tool executions
   private cleanupIntervalId: NodeJS.Timeout | null = null;
+  // Session compaction summary
+  private compactionSummary: string | null = null;
 
   constructor() {
     // Check Node.js version for Copilot CLI compatibility
@@ -142,6 +144,71 @@ export class CopilotController {
    */
   setActiveWebContents(contents: import('electron').WebContents | null): void {
     setActiveWebContents(contents);
+  }
+
+  /**
+   * Compact the current session by summarizing history and starting fresh.
+   * Returns the summary text.
+   */
+  async compactSession(): Promise<string> {
+    if (!this.session) {
+      throw new Error('No active session to compact');
+    }
+
+    logger.copilot('Compacting session...');
+
+    // Get recent messages for context
+    const { getActiveConversationId } = await import('../main/chat-history');
+    const { getMessages } = await import('../main/database');
+    const convId = getActiveConversationId();
+
+    let contextMessages: Array<{ role: string; content: string }> = [];
+    if (convId) {
+      const msgs = getMessages(convId);
+      // Take last 20 messages for summarization
+      const recentMsgs = msgs.slice(-20);
+      contextMessages = recentMsgs.map(m => ({ role: m.role, content: m.content }));
+    }
+
+    // Build compaction prompt
+    const compactionPrompt = `Please provide a concise summary of our conversation so far. Include:
+- Key topics discussed
+- Decisions made
+- Important context or preferences mentioned
+- Any pending tasks or follow-ups
+
+Conversation to summarize:
+${contextMessages.map(m => `${m.role}: ${m.content.substring(0, 500)}`).join('\n')}
+
+Provide ONLY the summary, no preamble.`;
+
+    // Get summary from current session
+    let summary = '';
+    try {
+      const response = await this.session.sendAndWait(compactionPrompt);
+      summary = typeof response === 'string' ? response :
+                (response as { content?: string })?.content || 'Previous conversation context unavailable.';
+    } catch {
+      // Fallback summary
+      summary = contextMessages
+        .filter(m => m.role === 'user')
+        .map(m => m.content.substring(0, 200))
+        .join('; ');
+      summary = `Previous topics: ${summary}`;
+    }
+
+    // Destroy old session
+    await this.session.destroy();
+    this.session = null;
+    this.isInitialized = false;
+
+    // Reinitialize with summary context
+    this.compactionSummary = summary;
+    await this.initialize();
+    this.compactionSummary = null;
+
+    logger.copilot('Session compacted', { summaryLength: summary.length });
+    return summary;
   }
 
   /**
@@ -977,7 +1044,9 @@ When user describes a problem (e.g., "WiFi disconnects", "computer is slow"):
 6. Execute only approved fixes, requesting permission for each sensitive operation
 7. Verify if issue is resolved, iterate if needed
 
-Always explain findings in plain language. Never execute risky fixes without explicit approval.`;
+Always explain findings in plain language. Never execute risky fixes without explicit approval.${
+      this.compactionSummary ? `\n\n## Previous Conversation Context\n${this.compactionSummary}` : ''
+    }`;
   }
 
   /**
