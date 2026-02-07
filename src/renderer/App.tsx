@@ -4,6 +4,7 @@ import { ChatPanel } from './components/ChatPanel';
 import { ClipboardHistoryPanel } from './components/ClipboardHistoryPanel';
 import { ToastContainer } from './components/ToastNotifications';
 import { TimerWidgets } from './components/TimerWidgets';
+import { OSDOverlay } from './components/OSDOverlay';
 import { useTheme } from './hooks/useTheme';
 
 function App() {
@@ -13,6 +14,7 @@ function App() {
   const hash = window.location.hash.replace('#', '');
   const isClipboardHistory = hash === 'clipboard-history';
   const isChatPanel = hash === 'chat-panel';
+  const isOSD = hash === 'osd';
   const isVoiceRecording = hash.startsWith('voice-recording');
   const isAudioRecording = hash === 'audio-recording';
   const isVideoRecording = hash === 'video-recording';
@@ -92,6 +94,10 @@ function App() {
         />
       </div>
     );
+  }
+
+  if (isOSD) {
+    return <OSDOverlay />;
   }
 
   // Default: Main command palette

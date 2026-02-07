@@ -115,6 +115,11 @@ const TOOL_DESCRIPTIONS: Record<string, string> = {
   list_voices: 'Listed available voices',
   weather_get: 'Checked weather',
   convert_unit: 'Converted units',
+  media_play_pause: 'Toggled media playback',
+  media_next_track: 'Skipped to next track',
+  media_previous_track: 'Went to previous track',
+  media_status: 'Checked media status',
+  media_stop: 'Stopped media playback',
 };
 
 const PROMPT_TEMPLATES: PromptTemplate[] = [

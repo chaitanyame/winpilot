@@ -404,6 +404,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Copilot Session Compaction
   copilotCompactSession: () => ipcRenderer.invoke(IPC_CHANNELS.COPILOT_COMPACT_SESSION),
+
+  // OSD (On-Screen Display) events
+  onOSDUpdate: (callback: (event: unknown, data: { type: string; value: number; label?: string }) => void) => {
+    ipcRenderer.on('osd:update', callback);
+    return () => ipcRenderer.removeListener('osd:update', callback);
+  },
+  onOSDHide: (callback: () => void) => {
+    const handler = () => callback();
+    ipcRenderer.on('osd:hide', handler);
+    return () => ipcRenderer.removeListener('osd:hide', handler);
+  },
 });
 
 // Type definitions for the exposed API
@@ -616,6 +627,10 @@ export interface ElectronAPI {
 
   // Copilot Session Compaction
   copilotCompactSession: () => Promise<{ success: boolean; summary?: string; error?: string }>;
+
+  // OSD (On-Screen Display)
+  onOSDUpdate?: (callback: (event: unknown, data: { type: string; value: number; label?: string }) => void) => () => void;
+  onOSDHide?: (callback: () => void) => () => void;
 }
 
 declare global {

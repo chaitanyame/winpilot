@@ -21,6 +21,7 @@ import { screenShareDetector } from './screen-share-detector';
 import { getSettings } from './store';
 import { hideCommandWindow } from './windows';
 import { voiceInputManager } from './voice-input';
+import { createOSDWindow, destroyOSDWindow } from './osd-window';
 
 // In development, use a separate userData directory to avoid conflicts
 if (!app.isPackaged) {
@@ -134,6 +135,9 @@ async function initApp() {
   // Create the command window (hidden initially)
   await createCommandWindow();
 
+  // Pre-warm OSD window for instant display
+  createOSDWindow();
+
   screenShareDetector.start();
   screenShareDetector.onChange((active) => {
     console.log('[ScreenShareDetector] onChange fired, active:', active);
@@ -216,6 +220,7 @@ app.on('activate', () => {
     closeDatabase();
     unregisterHotkeys();
     destroyTray();
+    destroyOSDWindow();
   });
 
 // Handle certificate errors (for development)

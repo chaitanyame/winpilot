@@ -600,3 +600,68 @@ html, body {
   background: rgba(16, 185, 129, 0.15);
   border-color: rgba(16, 185, 129, 0.3);
 }
+
+/* OSD (On-Screen Display) Overlay Styles */
+.osd-container {
+  width: 200px;
+  height: 200px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.3s ease, transform 0.3s ease;
+  -webkit-app-region: no-drag;
+}
+
+.osd-visible {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.osd-hidden {
+  opacity: 0;
+  transform: scale(0.9);
+}
+
+.osd-content {
+  width: 180px;
+  height: 180px;
+  background: rgba(0, 0, 0, 0.85);
+  backdrop-filter: blur(20px);
+  border-radius: 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: white;
+}
+
+.osd-icon {
+  opacity: 0.9;
+}
+
+.osd-bar {
+  display: flex;
+  gap: 2px;
+  padding: 0 16px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.osd-segment {
+  flex: 1;
+  height: 6px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.2);
+  transition: background 0.15s ease;
+}
+
+.osd-segment.filled {
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.osd-label {
+  font-size: 14px;
+  font-weight: 500;
+  opacity: 0.8;
+}

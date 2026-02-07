@@ -52,8 +52,11 @@ import { fetchUrl } from '../main/url-fetch';
 import { speak, stopSpeaking, listVoices, type TTSOptions } from '../platform/windows/tts';
 import { fetchWeather } from '../main/weather';
 import { convertUnit } from '../main/unit-converter';
+import { WindowsMedia } from '../platform/windows/media';
+import { showOSD } from '../main/osd-window';
 
 const adapter = getUnifiedAdapter();
+const windowsMedia = new WindowsMedia();
 const invisiwind = new InvisiwindWrapper();
 
 // Helper function to parse time strings like "3pm", "15:30", "2:30pm"
@@ -792,6 +795,16 @@ export const systemVolumeTool = defineTool('system_volume', {
     if (action === 'get') {
       return `Current volume: ${result.data?.level}%`;
     }
+
+    // Show OSD feedback for volume changes
+    if (action === 'set' && level !== undefined) {
+      showOSD({ type: 'volume', value: level });
+    } else if (action === 'mute') {
+      showOSD({ type: 'mute', value: 1 });
+    } else if (action === 'unmute') {
+      showOSD({ type: 'mute', value: 0 });
+    }
+
     return `Volume ${action === 'set' ? `set to ${level}%` : action === 'mute' ? 'muted' : 'unmuted'}`;
   }
 });
@@ -810,6 +823,12 @@ export const systemBrightnessTool = defineTool('system_brightness', {
     if (action === 'get') {
       return `Current brightness: ${result.data?.level}%`;
     }
+
+    // Show OSD feedback for brightness changes
+    if (action === 'set' && level !== undefined) {
+      showOSD({ type: 'brightness', value: level });
+    }
+
     return `Brightness set to ${level}%`;
   }
 });
@@ -2958,6 +2977,78 @@ const convertUnitTool = defineTool({
 });
 
 // ============================================================================
+// Music/Media Control Tools
+// ============================================================================
+
+const mediaPlayPauseTool = defineTool({
+  name: 'media_play_pause',
+  description: 'Toggle play/pause on the current media player (Spotify, browser music, etc.)',
+  parameters: z.object({}),
+  handler: async () => {
+    const success = await windowsMedia.playPause();
+    if (!success) return 'Failed to send play/pause command.';
+    await new Promise(r => setTimeout(r, 500));
+    const status = await windowsMedia.getStatus();
+    return status.title
+      ? `${status.isPlaying ? 'Playing' : 'Paused'}: ${status.title}${status.artist ? ` by ${status.artist}` : ''}`
+      : `Media ${status.isPlaying ? 'playing' : 'paused'}.`;
+  },
+});
+
+const mediaNextTool = defineTool({
+  name: 'media_next_track',
+  description: 'Skip to the next track',
+  parameters: z.object({}),
+  handler: async () => {
+    const success = await windowsMedia.nextTrack();
+    if (!success) return 'Failed to skip track.';
+    await new Promise(r => setTimeout(r, 1000));
+    const status = await windowsMedia.getStatus();
+    return status.title ? `Now playing: ${status.title}${status.artist ? ` by ${status.artist}` : ''}` : 'Skipped to next track.';
+  },
+});
+
+const mediaPreviousTool = defineTool({
+  name: 'media_previous_track',
+  description: 'Go to the previous track',
+  parameters: z.object({}),
+  handler: async () => {
+    const success = await windowsMedia.previousTrack();
+    if (!success) return 'Failed to go back.';
+    await new Promise(r => setTimeout(r, 1000));
+    const status = await windowsMedia.getStatus();
+    return status.title ? `Now playing: ${status.title}${status.artist ? ` by ${status.artist}` : ''}` : 'Went to previous track.';
+  },
+});
+
+const mediaStatusTool = defineTool({
+  name: 'media_status',
+  description: 'Get current media playback status (track name, artist, play state)',
+  parameters: z.object({}),
+  handler: async () => {
+    const status = await windowsMedia.getStatus();
+    if (!status.title && !status.isPlaying) return 'No media is currently playing.';
+    const parts = [];
+    parts.push(`Status: ${status.isPlaying ? 'Playing' : 'Paused'}`);
+    if (status.title) parts.push(`Title: ${status.title}`);
+    if (status.artist) parts.push(`Artist: ${status.artist}`);
+    if (status.album) parts.push(`Album: ${status.album}`);
+    if (status.app) parts.push(`App: ${status.app}`);
+    return parts.join('\n');
+  },
+});
+
+const mediaStopTool = defineTool({
+  name: 'media_stop',
+  description: 'Stop media playback',
+  parameters: z.object({}),
+  handler: async () => {
+    const success = await windowsMedia.stop();
+    return success ? 'Media stopped.' : 'Failed to stop media.';
+  },
+});
+
+// ============================================================================
 // Export all tools
 // ============================================================================
 
@@ -3090,4 +3181,10 @@ export const desktopCommanderTools = [
   // Utilities
   getWeatherTool,
   convertUnitTool,
+  // Media Control
+  mediaPlayPauseTool,
+  mediaNextTool,
+  mediaPreviousTool,
+  mediaStatusTool,
+  mediaStopTool,
 ];
