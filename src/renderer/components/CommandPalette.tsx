@@ -13,6 +13,7 @@ import { NotesTodosPanel } from './NotesTodosPanel';
 import { useCopilot } from '../hooks/useCopilot';
 import { ConfirmationDialog } from './ConfirmationDialog';
 import type { PermissionRequest, PermissionResponse, ActionLog, Settings, ActiveWindowContext } from '../../shared/types';
+import { executeSlashCommand, getSlashCommandSuggestions, type SlashCommand } from '../slash-commands';
 
 // Speech recognition error messages
 const SPEECH_ERROR_MESSAGES: Record<string, string> = {
@@ -157,6 +158,8 @@ export function CommandPalette() {
   const [input, setInput] = useState('');
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [showHistory, setShowHistory] = useState(false);
+  const [slashSuggestions, setSlashSuggestions] = useState<SlashCommand[]>([]);
+  const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(0);
   const [showMcpPanel, setShowMcpPanel] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showTasksPanel, setShowTasksPanel] = useState(false);
@@ -830,18 +833,69 @@ export function CommandPalette() {
 
   const handleSubmit = useCallback(async (e?: React.FormEvent) => {
     e?.preventDefault();
-    
+
     if (!input.trim() || isLoading) return;
 
     const message = input.trim();
+
+    // Check for slash commands first
+    const slashResult = await executeSlashCommand(message, {
+      api: window.electronAPI,
+      addSystemMessage: (content) => {
+        if (content === '__CLEAR__') {
+          setMessages([]);
+        } else {
+          addMessage({ role: 'assistant', content });
+        }
+      },
+      switchPanel: (panel) => {
+        if (panel === 'settings') setShowSettings(true);
+      },
+      conversationId: null,
+    });
+
+    if (slashResult) {
+      setInput('');
+      setSlashSuggestions([]);
+      if (slashResult.message && slashResult.message !== '__CLEAR__') {
+        addMessage({ role: 'assistant', content: slashResult.message });
+      }
+      return;
+    }
+
     setInput('');
     setShowHistory(false);
-    
+
     await sendMessage(message);
     await loadHistory();
-  }, [input, isLoading, sendMessage]);
+  }, [input, isLoading, sendMessage, addMessage, setMessages, setShowSettings]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    // Handle slash command autocomplete
+    if (slashSuggestions.length > 0) {
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        const selected = slashSuggestions[selectedSuggestionIndex];
+        setInput(`/${selected.name} `);
+        setSlashSuggestions([]);
+        return;
+      }
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setSelectedSuggestionIndex(i => Math.min(i + 1, slashSuggestions.length - 1));
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setSelectedSuggestionIndex(i => Math.max(i - 1, 0));
+        return;
+      }
+      if (e.key === 'Escape') {
+        setSlashSuggestions([]);
+        return;
+      }
+    }
+
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSubmit();
@@ -1313,10 +1367,42 @@ export function CommandPalette() {
       {/* Input */}
       <div className="p-5 border-t border-[color:var(--app-border)]">
         <form onSubmit={handleSubmit} className="relative">
+          {/* Slash Command Autocomplete */}
+          {slashSuggestions.length > 0 && (
+            <div className="absolute bottom-full left-0 right-0 mb-2 bg-[color:var(--app-surface-2)] border border-[color:var(--app-border)] rounded-lg shadow-lg max-h-48 overflow-y-auto z-50">
+              {slashSuggestions.map((cmd, i) => (
+                <div
+                  key={cmd.name}
+                  className={`px-3 py-2 cursor-pointer flex items-center gap-2 ${
+                    i === selectedSuggestionIndex ? 'bg-[color:var(--app-accent)]/10' : 'hover:bg-[color:var(--app-surface)]'
+                  }`}
+                  onClick={() => {
+                    setInput(`/${cmd.name} `);
+                    setSlashSuggestions([]);
+                    inputRef.current?.focus();
+                  }}
+                >
+                  <span className="font-mono font-semibold text-[color:var(--app-accent)]">/{cmd.name}</span>
+                  {cmd.args && <span className="text-[color:var(--app-text-muted)] text-sm">{cmd.args}</span>}
+                  <span className="ml-auto text-[color:var(--app-text-muted)] text-sm">{cmd.description}</span>
+                </div>
+              ))}
+            </div>
+          )}
           <textarea
             ref={inputRef}
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={(e) => {
+              const value = e.target.value;
+              setInput(value);
+              if (value.startsWith('/')) {
+                const suggestions = getSlashCommandSuggestions(value);
+                setSlashSuggestions(suggestions);
+                setSelectedSuggestionIndex(0);
+              } else {
+                setSlashSuggestions([]);
+              }
+            }}
             onKeyDown={handleKeyDown}
             placeholder="Type a message, use / for commands..."
             rows={1}
