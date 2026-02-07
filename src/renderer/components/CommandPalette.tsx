@@ -109,6 +109,9 @@ const TOOL_DESCRIPTIONS: Record<string, string> = {
   todos_complete: 'Completed todo',
   todos_delete: 'Deleted todo',
   web_fetch_url: 'Fetched web page',
+  speak_text: 'Speaking text aloud',
+  stop_speaking: 'Stopped speaking',
+  list_voices: 'Listed available voices',
 };
 
 const PROMPT_TEMPLATES: PromptTemplate[] = [

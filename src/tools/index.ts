@@ -49,6 +49,7 @@ import {
   deleteTodo
 } from '../main/todos';
 import { fetchUrl } from '../main/url-fetch';
+import { speak, stopSpeaking, listVoices, type TTSOptions } from '../platform/windows/tts';
 
 const adapter = getUnifiedAdapter();
 const invisiwind = new InvisiwindWrapper();
@@ -2880,6 +2881,50 @@ const fetchUrlTool = defineTool({
 });
 
 // ============================================================================
+// Text-to-Speech Tools
+// ============================================================================
+
+const speakTextTool = defineTool({
+  name: 'speak_text',
+  description: 'Speak text aloud using system text-to-speech. Works offline, no API key needed.',
+  parameters: z.object({
+    text: p(z.string(), 'The text to speak aloud'),
+    voice: p(z.string().optional(), 'Voice name (use list_voices to see options)'),
+    rate: p(z.number().optional(), 'Speech rate from -10 (slowest) to 10 (fastest). Default 0.'),
+    volume: p(z.number().optional(), 'Volume 0-100. Default 100.'),
+  }),
+  handler: async ({ text, voice, rate, volume }) => {
+    const options: TTSOptions = {};
+    if (voice) options.voice = voice;
+    if (rate !== undefined) options.rate = rate;
+    if (volume !== undefined) options.volume = volume;
+    const success = await speak(text, options);
+    return success ? `Spoke: "${text.substring(0, 100)}${text.length > 100 ? '...' : ''}"` : 'Failed to speak text.';
+  },
+});
+
+const stopSpeakingTool = defineTool({
+  name: 'stop_speaking',
+  description: 'Stop any ongoing text-to-speech playback',
+  parameters: z.object({}),
+  handler: async () => {
+    await stopSpeaking();
+    return 'Speech stopped.';
+  },
+});
+
+const listVoicesTool = defineTool({
+  name: 'list_voices',
+  description: 'List available text-to-speech voices on this system',
+  parameters: z.object({}),
+  handler: async () => {
+    const voices = await listVoices();
+    if (voices.length === 0) return 'No TTS voices found.';
+    return voices.map(v => `- ${v.name} (${v.culture}, ${v.gender})`).join('\n');
+  },
+});
+
+// ============================================================================
 // Export all tools
 // ============================================================================
 
@@ -3005,4 +3050,8 @@ export const desktopCommanderTools = [
   deleteTodoTool,
   // URL Fetch
   fetchUrlTool,
+  // Text-to-Speech
+  speakTextTool,
+  stopSpeakingTool,
+  listVoicesTool,
 ];
