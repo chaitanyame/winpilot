@@ -162,19 +162,12 @@ const ONBOARDING_PROMPTS = PROMPT_TEMPLATES.slice(0, 5);
 
 const getToolDescription = (toolName: string): string => TOOL_DESCRIPTIONS[toolName] || toolName;
 
+type PanelName = 'history' | 'mcp' | 'settings' | 'tasks' | 'logs' | 'clipboard' | 'recordings' | 'screenSharePrivacy' | 'notes' | 'onboarding' | null;
+
 export function CommandPalette() {
   const [input, setInput] = useState('');
   const [history, setHistory] = useState<HistoryItem[]>([]);
-  const [showHistory, setShowHistory] = useState(false);
-  const [showMcpPanel, setShowMcpPanel] = useState(false);
-  const [showSettings, setShowSettings] = useState(false);
-  const [showTasksPanel, setShowTasksPanel] = useState(false);
-  const [showLogsPanel, setShowLogsPanel] = useState(false);
-  const [showClipboardPanel, setShowClipboardPanel] = useState(false);
-  const [showRecordingsPanel, setShowRecordingsPanel] = useState(false);
-  const [showScreenSharePrivacyPanel, setShowScreenSharePrivacyPanel] = useState(false);
-  const [showNotesPanel, setShowNotesPanel] = useState(false);
-  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [activePanel, setActivePanel] = useState<PanelName>(null);
   const [slashSuggestions, setSlashSuggestions] = useState<SlashCommand[]>([]);
   const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(0);
   const [sidebarExpanded, setSidebarExpanded] = useState(false);
@@ -300,20 +293,11 @@ export function CommandPalette() {
   // Open specific panels when requested from tray/menu
   useEffect(() => {
     const unsubSettings = window.electronAPI.onOpenSettings(() => {
-      setShowSettings(true);
-      setShowHistory(false);
+      setActivePanel('settings');
     });
 
     const unsubHistory = window.electronAPI.onOpenHistory(() => {
-      setShowHistory(true);
-      setShowSettings(false);
-      setShowTasksPanel(false);
-      setShowMcpPanel(false);
-      setShowLogsPanel(false);
-      setShowClipboardPanel(false);
-      setShowRecordingsPanel(false);
-      setShowScreenSharePrivacyPanel(false);
-      setShowNotesPanel(false);
+      setActivePanel('history');
       void loadHistory();
       inputRef.current?.focus();
     });
@@ -376,7 +360,7 @@ export function CommandPalette() {
         if (loadedSettings) {
           setSettings(loadedSettings);
           if (!loadedSettings.ui?.onboardingSeen) {
-            setShowOnboarding(true);
+            setActivePanel('onboarding');
           }
           if (loadedSettings.voiceInput?.language) {
             setVoiceLanguage(loadedSettings.voiceInput.language);
@@ -404,7 +388,7 @@ export function CommandPalette() {
 
   const markOnboardingSeen = useCallback(async () => {
     if (!settings) {
-      setShowOnboarding(false);
+      setActivePanel(null);
       return;
     }
     const updatedSettings = {
@@ -420,14 +404,14 @@ export function CommandPalette() {
     } catch (err) {
       console.error('Failed to update onboarding state:', err);
     } finally {
-      setShowOnboarding(false);
+      setActivePanel(null);
     }
   }, [settings]);
 
   const applyTemplate = useCallback((template: PromptTemplate) => {
     setInput(template.prompt);
 
-    setShowHistory(false);
+    setActivePanel(null);
     inputRef.current?.focus();
   }, []);
 
@@ -859,9 +843,9 @@ export function CommandPalette() {
         api: window.electronAPI,
         addSystemMessage,
         switchPanel: (panel: string) => {
-          if (panel === 'settings') setShowSettings(true);
-          else if (panel === 'notes') setShowNotesPanel(true);
-          else if (panel === 'tasks') setShowTasksPanel(true);
+          if (panel === 'settings') setActivePanel('settings');
+          else if (panel === 'notes') setActivePanel('notes');
+          else if (panel === 'tasks') setActivePanel('tasks');
         },
         conversationId: null,
       };
@@ -882,7 +866,7 @@ export function CommandPalette() {
 
     const message = input.trim();
     setInput('');
-    setShowHistory(false);
+    setActivePanel(null);
     setSlashSuggestions([]);
 
     await sendMessage(message);
@@ -930,7 +914,7 @@ export function CommandPalette() {
 
   const handleHistorySelect = (item: HistoryItem) => {
     setInput(item.input);
-    setShowHistory(false);
+    setActivePanel(null);
     inputRef.current?.focus();
   };
 
@@ -1146,7 +1130,7 @@ export function CommandPalette() {
             </div>
           )}
           <button
-            onClick={() => setShowHistory(!showHistory)}
+            onClick={() => setActivePanel(activePanel === 'history' ? null : 'history')}
             className={`p-2 rounded-lg transition-colors flex items-center gap-3
                        text-[color:var(--app-text-muted)] hover:text-[color:var(--app-text)]
                        hover:bg-[color:var(--app-surface)] ${sidebarExpanded ? 'w-full' : ''}`}
@@ -1158,7 +1142,7 @@ export function CommandPalette() {
           <button
             onClick={() => {
               clearMessages();
-              setShowHistory(false);
+              setActivePanel(null);
             }}
             className={`p-2 rounded-lg transition-colors flex items-center gap-3
                        text-[color:var(--app-text-muted)] hover:text-[color:var(--app-text)]
@@ -1180,7 +1164,7 @@ export function CommandPalette() {
             </div>
           )}
           <button
-            onClick={() => setShowTasksPanel(true)}
+            onClick={() => setActivePanel('tasks')}
             className={`p-2 rounded-lg transition-colors flex items-center gap-3
                        text-[color:var(--app-text-muted)] hover:text-[color:var(--app-text)]
                        hover:bg-[color:var(--app-surface)] ${sidebarExpanded ? 'w-full' : ''}`}
@@ -1190,7 +1174,7 @@ export function CommandPalette() {
             {sidebarExpanded && <span className="text-sm">Scheduled Tasks</span>}
           </button>
           <button
-            onClick={() => setShowMcpPanel(true)}
+            onClick={() => setActivePanel('mcp')}
             className={`p-2 rounded-lg transition-colors flex items-center gap-3
                        text-[color:var(--app-text-muted)] hover:text-[color:var(--app-text)]
                        hover:bg-[color:var(--app-surface)] ${sidebarExpanded ? 'w-full' : ''}`}
@@ -1209,7 +1193,7 @@ export function CommandPalette() {
             </div>
           )}
           <button
-            onClick={() => setShowNotesPanel(true)}
+            onClick={() => setActivePanel('notes')}
             className={`p-2 rounded-lg transition-colors flex items-center gap-3
                        text-[color:var(--app-text-muted)] hover:text-[color:var(--app-text)]
                        hover:bg-[color:var(--app-surface)] ${sidebarExpanded ? 'w-full' : ''}`}
@@ -1219,7 +1203,7 @@ export function CommandPalette() {
             {sidebarExpanded && <span className="text-sm">Notes</span>}
           </button>
           <button
-            onClick={() => setShowClipboardPanel(true)}
+            onClick={() => setActivePanel('clipboard')}
             className={`p-2 rounded-lg transition-colors flex items-center gap-3
                        text-[color:var(--app-text-muted)] hover:text-[color:var(--app-text)]
                        hover:bg-[color:var(--app-surface)] ${sidebarExpanded ? 'w-full' : ''}`}
@@ -1229,7 +1213,7 @@ export function CommandPalette() {
             {sidebarExpanded && <span className="text-sm">Clipboard</span>}
           </button>
           <button
-            onClick={() => setShowRecordingsPanel(true)}
+            onClick={() => setActivePanel('recordings')}
             className={`p-2 rounded-lg transition-colors flex items-center gap-3
                        text-[color:var(--app-text-muted)] hover:text-[color:var(--app-text)]
                        hover:bg-[color:var(--app-surface)] ${sidebarExpanded ? 'w-full' : ''}`}
@@ -1239,7 +1223,7 @@ export function CommandPalette() {
             {sidebarExpanded && <span className="text-sm">Recordings</span>}
           </button>
           <button
-            onClick={() => setShowScreenSharePrivacyPanel(true)}
+            onClick={() => setActivePanel('screenSharePrivacy')}
             className={`p-2 rounded-lg transition-colors flex items-center gap-3
                        text-[color:var(--app-text-muted)] hover:text-[color:var(--app-text)]
                        hover:bg-[color:var(--app-surface)] ${sidebarExpanded ? 'w-full' : ''}`}
@@ -1249,7 +1233,7 @@ export function CommandPalette() {
             {sidebarExpanded && <span className="text-sm">Privacy</span>}
           </button>
           <button
-            onClick={() => setShowLogsPanel(true)}
+            onClick={() => setActivePanel('logs')}
             className={`p-2 rounded-lg transition-colors flex items-center gap-3
                        text-[color:var(--app-text-muted)] hover:text-[color:var(--app-text)]
                        hover:bg-[color:var(--app-surface)] ${sidebarExpanded ? 'w-full' : ''}`}
@@ -1266,7 +1250,7 @@ export function CommandPalette() {
 
           {/* App Section */}
           <button
-            onClick={() => setShowSettings(true)}
+            onClick={() => setActivePanel('settings')}
             className={`p-2 rounded-lg transition-colors flex items-center gap-3
                        text-[color:var(--app-text-muted)] hover:text-[color:var(--app-text)]
                        hover:bg-[color:var(--app-surface)] ${sidebarExpanded ? 'w-full' : ''}`}
@@ -1279,7 +1263,7 @@ export function CommandPalette() {
         {/* Conversation Panel - Unified Q&A */}
         <div className="flex-1 flex flex-col min-w-0">
           <div className="flex-1 min-h-0 flex flex-col">
-            {showOnboarding ? (
+            {activePanel === 'onboarding' ? (
               <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
                 <div className="w-full max-w-lg rounded-2xl bg-[color:var(--app-surface)] p-6 shadow-lg border border-[color:var(--app-border)]">
                   <div className="flex items-center justify-center gap-2 mb-3">
@@ -1317,7 +1301,7 @@ export function CommandPalette() {
                   </div>
                 </div>
               </div>
-            ) : messages.length === 0 && !showHistory ? (
+            ) : messages.length === 0 && activePanel !== 'history' ? (
               <div className="flex-1 overflow-y-auto p-6">
                 <div className="flex items-center gap-2 mb-4">
                   <Sparkles className="w-4 h-4 text-[color:var(--app-accent)]" />
@@ -1345,7 +1329,7 @@ export function CommandPalette() {
                   ))}
                 </div>
               </div>
-            ) : showHistory ? (
+            ) : activePanel === 'history' ? (
               <div className="flex-1 overflow-y-auto p-4">
                 <h3 className="text-sm font-medium text-[color:var(--app-text-muted)] mb-3">
                   Recent Commands
@@ -1540,45 +1524,45 @@ export function CommandPalette() {
 
       {/* Modal Panels */}
       <SettingsPanel
-        isOpen={showSettings}
-        onClose={() => setShowSettings(false)}
+        isOpen={activePanel === 'settings'}
+        onClose={() => setActivePanel(null)}
       />
 
       <MCPServersPanel
-        isOpen={showMcpPanel}
-        onClose={() => setShowMcpPanel(false)}
+        isOpen={activePanel === 'mcp'}
+        onClose={() => setActivePanel(null)}
       />
 
       <ScheduledTasksPanel
-        isOpen={showTasksPanel}
-        onClose={() => setShowTasksPanel(false)}
+        isOpen={activePanel === 'tasks'}
+        onClose={() => setActivePanel(null)}
       />
 
       <ActionLogsPanel
-        isOpen={showLogsPanel}
-        onClose={() => setShowLogsPanel(false)}
+        isOpen={activePanel === 'logs'}
+        onClose={() => setActivePanel(null)}
         logs={visibleActionLogs}
         onClearAll={() => setActionLogsClearedAt(Date.now())}
       />
 
       <ClipboardHistoryPanel
-        isOpen={showClipboardPanel}
-        onClose={() => setShowClipboardPanel(false)}
+        isOpen={activePanel === 'clipboard'}
+        onClose={() => setActivePanel(null)}
       />
 
       <RecordingsPanel
-        isOpen={showRecordingsPanel}
-        onClose={() => setShowRecordingsPanel(false)}
+        isOpen={activePanel === 'recordings'}
+        onClose={() => setActivePanel(null)}
       />
 
       <ScreenSharePrivacyPanel
-        isOpen={showScreenSharePrivacyPanel}
-        onClose={() => setShowScreenSharePrivacyPanel(false)}
+        isOpen={activePanel === 'screenSharePrivacy'}
+        onClose={() => setActivePanel(null)}
       />
 
       <NotesTodosPanel
-        isOpen={showNotesPanel}
-        onClose={() => setShowNotesPanel(false)}
+        isOpen={activePanel === 'notes'}
+        onClose={() => setActivePanel(null)}
       />
     </>
   );

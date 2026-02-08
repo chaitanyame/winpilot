@@ -35,39 +35,53 @@ export function useCopilot(): UseCopilotReturn {
     }, RESPONSE_TIMEOUT_MS);
   }, [clearResponseTimeout]);
 
+  // Batched stream rendering: accumulate chunks and flush at ~60fps via RAF
+  const rafIdRef = useRef<number | null>(null);
+  const pendingFlushRef = useRef(false);
+
+  const flushStreamToState = useCallback(() => {
+    pendingFlushRef.current = false;
+    rafIdRef.current = null;
+    const content = currentAssistantMessageRef.current;
+    setMessages((prev) => {
+      const lastMessage = prev[prev.length - 1];
+      if (lastMessage?.role === 'assistant') {
+        return [
+          ...prev.slice(0, -1),
+          { ...lastMessage, content },
+        ];
+      } else {
+        const assistantMessage: Message = {
+          id: generateId(),
+          role: 'assistant',
+          content,
+          timestamp: new Date(),
+        };
+        const newMessages = [...prev, assistantMessage];
+        return newMessages.length > 50 ? newMessages.slice(-50) : newMessages;
+      }
+    });
+  }, []);
+
   // Setup stream listeners
   useEffect(() => {
     const unsubscribeChunk = window.electronAPI.onStreamChunk((chunk: string) => {
       currentAssistantMessageRef.current += chunk;
       armResponseTimeout();
-      
-      setMessages((prev) => {
-        const lastMessage = prev[prev.length - 1];
-        if (lastMessage?.role === 'assistant') {
-          // Update existing assistant message
-          return [
-            ...prev.slice(0, -1),
-            { ...lastMessage, content: currentAssistantMessageRef.current },
-          ];
-        } else {
-          // Create new assistant message
-          const assistantMessage: Message = {
-            id: generateId(),
-            role: 'assistant',
-            content: currentAssistantMessageRef.current,
-            timestamp: new Date(),
-          };
-          const newMessages = [
-            ...prev,
-            assistantMessage,
-          ];
-          // Keep only last 50 messages
-          return newMessages.length > 50 ? newMessages.slice(-50) : newMessages;
-        }
-      });
+
+      // Schedule a state flush on next animation frame (batches rapid chunks)
+      if (!pendingFlushRef.current) {
+        pendingFlushRef.current = true;
+        rafIdRef.current = requestAnimationFrame(flushStreamToState);
+      }
     });
 
     const unsubscribeEnd = window.electronAPI.onStreamEnd((data) => {
+      // Flush any remaining batched content before ending
+      if (pendingFlushRef.current && rafIdRef.current !== null) {
+        cancelAnimationFrame(rafIdRef.current);
+        flushStreamToState();
+      }
       clearResponseTimeout();
       setIsLoading(false);
       currentAssistantMessageRef.current = '';
@@ -80,8 +94,11 @@ export function useCopilot(): UseCopilotReturn {
     return () => {
       unsubscribeChunk();
       unsubscribeEnd();
+      if (rafIdRef.current !== null) {
+        cancelAnimationFrame(rafIdRef.current);
+      }
     };
-  }, [armResponseTimeout, clearResponseTimeout]);
+  }, [armResponseTimeout, clearResponseTimeout, flushStreamToState]);
 
   const sendMessage = useCallback(async (content: string) => {
     if (!content.trim() || isLoading) return;
