@@ -783,10 +783,32 @@ export const appsSwitchTool = defineTool('apps_switch', {
 export const systemVolumeTool = defineTool('system_volume', {
   description: 'Get or set the system volume',
   parameters: p({
-    action: z.enum(['get', 'set', 'mute', 'unmute']).describe('Action to perform'),
-    level: z.number().min(0).max(100).optional().describe('Volume level (0-100)')
+    action: z.enum(['get', 'set', 'increase', 'decrease', 'mute', 'unmute']).describe('Action to perform'),
+    level: z.number().min(0).max(100).optional().describe('Volume level (0-100) for set, or delta for increase/decrease')
   }),
   handler: async ({ action, level }) => {
+    // Handle relative changes (increase/decrease)
+    if (action === 'increase' || action === 'decrease') {
+      const currentResult = await adapter.controlVolume({ action: 'get' });
+      if (!currentResult.success || currentResult.data?.level === undefined) {
+        return `Failed to get current volume: ${currentResult.error}`;
+      }
+      
+      const delta = level ?? 10; // Default: 10% change
+      const newLevel = action === 'increase' 
+        ? Math.min(100, currentResult.data.level + delta)
+        : Math.max(0, currentResult.data.level - delta);
+      
+      const result = await adapter.controlVolume({ action: 'set', level: newLevel });
+      if (!result.success) {
+        return `Failed to ${action} volume: ${result.error}`;
+      }
+      
+      showOSD({ type: 'volume', value: newLevel });
+      return `Volume ${action}d to ${newLevel}% (was ${currentResult.data.level}%)`;
+    }
+    
+    // Handle absolute operations (get/set/mute/unmute)
     const result = await adapter.controlVolume({ action, level });
     if (!result.success) {
       return `Failed to control volume: ${result.error}`;

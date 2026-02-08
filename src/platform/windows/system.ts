@@ -14,57 +14,66 @@ export class WindowsSystem implements ISystem {
 
   async volume(params: { action: 'get' | 'set' | 'mute' | 'unmute'; level?: number }): Promise<number | boolean> {
     try {
+      // Shared COM audio interface definition
+      const comDefinition = `
+        Add-Type -TypeDefinition @"
+        using System;
+        using System.Runtime.InteropServices;
+        [Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        interface IAudioEndpointVolume {
+            int _0(); int _1(); int _2(); int _3();
+            int SetMasterVolumeLevelScalar(float fLevel, System.Guid pguidEventContext);
+            int _5();
+            int GetMasterVolumeLevelScalar(out float pfLevel);
+            int SetMute(bool bMute, System.Guid pguidEventContext);
+            int GetMute(out bool pbMute);
+        }
+        [Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        interface IMMDevice { int Activate(ref System.Guid iid, int dwClsCtx, System.IntPtr pActivationParams, out IAudioEndpointVolume ppInterface); }
+        [Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        interface IMMDeviceEnumerator { int GetDefaultAudioEndpoint(int dataFlow, int role, out IMMDevice ppDevice); }
+        [ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")] class MMDeviceEnumerator { }
+        public class Audio {
+            static IAudioEndpointVolume Vol() {
+                var enumerator = new MMDeviceEnumerator() as IMMDeviceEnumerator;
+                IMMDevice dev; enumerator.GetDefaultAudioEndpoint(0, 1, out dev);
+                var volId = typeof(IAudioEndpointVolume).GUID;
+                IAudioEndpointVolume vol; dev.Activate(ref volId, 1, System.IntPtr.Zero, out vol);
+                return vol;
+            }
+            public static float GetVolume() { float v; Vol().GetMasterVolumeLevelScalar(out v); return v; }
+            public static void SetVolume(float level) { Vol().SetMasterVolumeLevelScalar(level, Guid.Empty); }
+            public static void SetMute(bool mute) { Vol().SetMute(mute, Guid.Empty); }
+            public static bool GetMute() { bool m; Vol().GetMute(out m); return m; }
+        }
+"@ -ErrorAction SilentlyContinue
+      `;
+
       switch (params.action) {
         case 'get': {
-          const script = `
-            Add-Type -TypeDefinition @"
-            using System.Runtime.InteropServices;
-            [Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-            interface IAudioEndpointVolume {
-                int _0(); int _1(); int _2(); int _3();
-                int SetMasterVolumeLevelScalar(float fLevel, System.Guid pguidEventContext);
-                int _5();
-                int GetMasterVolumeLevelScalar(out float pfLevel);
-                int SetMute(bool bMute, System.Guid pguidEventContext);
-                int GetMute(out bool pbMute);
-            }
-            [Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-            interface IMMDevice { int Activate(ref System.Guid iid, int dwClsCtx, System.IntPtr pActivationParams, out IAudioEndpointVolume ppInterface); }
-            [Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-            interface IMMDeviceEnumerator { int GetDefaultAudioEndpoint(int dataFlow, int role, out IMMDevice ppDevice); }
-            [ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")] class MMDeviceEnumerator { }
-            public class Audio {
-                static IAudioEndpointVolume Vol() {
-                    var enumerator = new MMDeviceEnumerator() as IMMDeviceEnumerator;
-                    IMMDevice dev; enumerator.GetDefaultAudioEndpoint(0, 1, out dev);
-                    var volId = typeof(IAudioEndpointVolume).GUID;
-                    IAudioEndpointVolume vol; dev.Activate(ref volId, 1, System.IntPtr.Zero, out vol);
-                    return vol;
-                }
-                public static float GetVolume() { float v; Vol().GetMasterVolumeLevelScalar(out v); return v; }
-            }
-"@
-            [int]([Audio]::GetVolume() * 100)
-          `;
-
+          const script = `${comDefinition}; [int]([Audio]::GetVolume() * 100)`;
           const { stdout } = await runPowerShell(script);
           return parseInt(stdout.trim(), 10);
         }
 
         case 'set': {
           if (params.level === undefined) return false;
-          
-          // Use nircmd for reliable volume control
-          await runPowerShell(`$obj = New-Object -ComObject WScript.Shell; $obj.SendKeys([char]173)`);
-          await runPowerShell(`(New-Object -ComObject WScript.Shell).SendKeys([char]175 * ${Math.round(params.level / 2)})`);
-          
-          return true;
+          const level = Math.max(0, Math.min(100, params.level)) / 100.0;
+          const script = `${comDefinition}; [Audio]::SetVolume(${level}); $true`;
+          const { stdout } = await runPowerShell(script);
+          return stdout.trim().toLowerCase() === 'true';
         }
 
-        case 'mute':
+        case 'mute': {
+          const script = `${comDefinition}; [Audio]::SetMute($true); $true`;
+          const { stdout } = await runPowerShell(script);
+          return stdout.trim().toLowerCase() === 'true';
+        }
+
         case 'unmute': {
-          await runPowerShell(`(New-Object -ComObject WScript.Shell).SendKeys([char]173)`);
-          return true;
+          const script = `${comDefinition}; [Audio]::SetMute($false); $true`;
+          const { stdout } = await runPowerShell(script);
+          return stdout.trim().toLowerCase() === 'true';
         }
 
         default:
