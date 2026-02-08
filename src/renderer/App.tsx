@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { CommandPalette } from './components/CommandPalette';
 import { ChatPanel } from './components/ChatPanel';
 import { ClipboardHistoryPanel } from './components/ClipboardHistoryPanel';
+import { OSDOverlay } from './components/OSDOverlay';
 import { ToastContainer } from './components/ToastNotifications';
 import { TimerWidgets } from './components/TimerWidgets';
 import { useTheme } from './hooks/useTheme';
@@ -13,6 +14,7 @@ function App() {
   const hash = window.location.hash.replace('#', '');
   const isClipboardHistory = hash === 'clipboard-history';
   const isChatPanel = hash === 'chat-panel';
+  const isOSD = hash === 'osd';
   const isVoiceRecording = hash.startsWith('voice-recording');
   const isAudioRecording = hash === 'audio-recording';
   const isVideoRecording = hash === 'video-recording';
@@ -34,6 +36,10 @@ function App() {
   }, []);
 
   // Render different content based on window type
+  if (isOSD) {
+    return <OSDOverlay />;
+  }
+
   if (isClipboardHistory) {
     return (
       <div className="app">

@@ -63,6 +63,7 @@ export const DEFAULT_SETTINGS = {
     maxTotalTimeMinutes: 15,
     iterationTimeoutSeconds: 120,
     model: 'gpt-5' as const, // Base GPT-5 model - fast and capable
+    autoCompactThreshold: 40,
   },
   notifications: {
     enabled: true,

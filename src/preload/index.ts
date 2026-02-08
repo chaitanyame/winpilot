@@ -384,6 +384,41 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Context Awareness API
   getActiveContext: () => ipcRenderer.invoke(IPC_CHANNELS.CONTEXT_GET),
   clearActiveContext: () => ipcRenderer.invoke(IPC_CHANNELS.CONTEXT_CLEAR),
+
+  // Notes API
+  notesList: (limit?: number) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_LIST, limit),
+  notesGet: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_GET, id),
+  notesCreate: (params: { title: string; content?: string }) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_CREATE, params),
+  notesUpdate: (params: { id: string; title?: string; content?: string }) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_UPDATE, params),
+  notesDelete: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_DELETE, id),
+  notesSearch: (params: { query: string; limit?: number }) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_SEARCH, params),
+
+  // Todos API
+  todosList: (filter?: 'all' | 'active' | 'completed') => ipcRenderer.invoke(IPC_CHANNELS.TODOS_LIST, filter),
+  todosCreate: (text: string) => ipcRenderer.invoke(IPC_CHANNELS.TODOS_CREATE, text),
+  todosComplete: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.TODOS_COMPLETE, id),
+  todosDelete: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.TODOS_DELETE, id),
+
+  // Session Compaction API
+  copilotCompactSession: () => ipcRenderer.invoke(IPC_CHANNELS.COPILOT_COMPACT_SESSION),
+
+  // OSD events (renderer listens)
+  onOSDUpdate: (callback: (data: { type: string; value: number; label?: string }) => void) => {
+    const handler = (_: unknown, data: { type: string; value: number; label?: string }) => callback(data);
+    ipcRenderer.on('osd:update', handler);
+    return () => ipcRenderer.removeListener('osd:update', handler);
+  },
+  onOSDHide: (callback: () => void) => {
+    const handler = () => callback();
+    ipcRenderer.on('osd:hide', handler);
+    return () => ipcRenderer.removeListener('osd:hide', handler);
+  },
+
+  // TTS API
+  ttsSpeakText: (params: { text: string; voice?: string; rate?: number; volume?: number }) =>
+    ipcRenderer.invoke(IPC_CHANNELS.TTS_SPEAK, params),
+  ttsStop: () => ipcRenderer.invoke(IPC_CHANNELS.TTS_STOP),
+  ttsListVoices: () => ipcRenderer.invoke(IPC_CHANNELS.TTS_LIST_VOICES),
 });
 
 // Type definitions for the exposed API
@@ -576,6 +611,32 @@ export interface ElectronAPI {
   // Context Awareness API
   getActiveContext: () => Promise<ActiveWindowContext | null>;
   clearActiveContext: () => Promise<void>;
+
+  // Notes API
+  notesList: (limit?: number) => Promise<import('../shared/types').Note[]>;
+  notesGet: (id: string) => Promise<import('../shared/types').Note | null>;
+  notesCreate: (params: { title: string; content?: string }) => Promise<import('../shared/types').Note>;
+  notesUpdate: (params: { id: string; title?: string; content?: string }) => Promise<import('../shared/types').Note | null>;
+  notesDelete: (id: string) => Promise<boolean>;
+  notesSearch: (params: { query: string; limit?: number }) => Promise<import('../shared/types').Note[]>;
+
+  // Todos API
+  todosList: (filter?: 'all' | 'active' | 'completed') => Promise<import('../shared/types').Todo[]>;
+  todosCreate: (text: string) => Promise<import('../shared/types').Todo>;
+  todosComplete: (id: string) => Promise<import('../shared/types').Todo | null>;
+  todosDelete: (id: string) => Promise<boolean>;
+
+  // Session Compaction API
+  copilotCompactSession: () => Promise<{ success: boolean; summary?: string; error?: string }>;
+
+  // OSD events
+  onOSDUpdate: (callback: (data: { type: string; value: number; label?: string }) => void) => () => void;
+  onOSDHide: (callback: () => void) => () => void;
+
+  // TTS API
+  ttsSpeakText: (params: { text: string; voice?: string; rate?: number; volume?: number }) => Promise<boolean>;
+  ttsStop: () => Promise<void>;
+  ttsListVoices: () => Promise<Array<{ name: string; culture: string; gender: string }>>;
 }
 
 declare global {

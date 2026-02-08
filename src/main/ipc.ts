@@ -30,6 +30,9 @@ import { contextCaptureService } from './context-capture';
 import { IntentRouter } from '../intent/router';
 import { clipboardMonitor } from './clipboard-monitor';
 import { recordingManager } from './recording-manager';
+import { createNote, getNote, listNotes, updateNote, deleteNote, searchNotes } from './notes';
+import { createTodo, listTodos, completeTodo, deleteTodo } from './todos';
+import { speak, stopSpeaking, listVoices } from '../platform/windows/tts';
 
 // Initialize intent router
 const intentRouter = new IntentRouter();
@@ -811,6 +814,9 @@ export function setupIpcHandlers(): void {
         toolName?: string;
         confidence?: number;
         tier?: number | string;
+        failedToolName?: string;
+        failedError?: string;
+        originalTier?: number;
       };
 
       if (intentRouterInitialized) {
@@ -841,13 +847,25 @@ export function setupIpcHandlers(): void {
 
       // Fall back to LLM for complex queries
       console.log('[IPC] Falling back to LLM', { reason: routeResult.reason });
+
+      // If a tool was attempted but failed, enrich the message with failure context
+      // so the LLM can reason about an alternative approach
+      let llmMessage = contextualMessage;
+      if (routeResult.failedToolName && routeResult.failedError) {
+        console.log('[IPC] Including tool failure context for LLM', {
+          failedTool: routeResult.failedToolName,
+          tier: routeResult.originalTier,
+        });
+        llmMessage = `[System: The tool "${routeResult.failedToolName}" was automatically attempted for this request but failed with: "${routeResult.failedError}". Please try an alternative approach or explain the issue to the user.]\n\nUser request: ${contextualMessage}`;
+      }
+
       console.log('[IPC] Starting sendMessageWithLoop generator...');
 
       // Ensure tool execution can request permissions from the active window.
       copilotController.setActiveWebContents(sender);
 
       // Use the AsyncGenerator pattern with agentic loop
-      for await (const streamEvent of copilotController.sendMessageWithLoop(contextualMessage)) {
+      for await (const streamEvent of copilotController.sendMessageWithLoop(llmMessage)) {
         // Check if sender is still valid before sending
         if (sender.isDestroyed()) {
           console.log('[IPC] Sender destroyed, stopping stream');
@@ -1554,6 +1572,71 @@ export function setupIpcHandlers(): void {
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Failed to stop recording' };
     }
+  });
+
+  // Notes handlers
+  ipcMain.handle(IPC_CHANNELS.NOTES_LIST, (_, limit?: number) => {
+    return listNotes(limit);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.NOTES_GET, (_, id: string) => {
+    return getNote(id);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.NOTES_CREATE, (_, params: { title: string; content?: string }) => {
+    return createNote(params.title, params.content);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.NOTES_UPDATE, (_, params: { id: string; title?: string; content?: string }) => {
+    return updateNote(params.id, params.title, params.content);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.NOTES_DELETE, (_, id: string) => {
+    return deleteNote(id);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.NOTES_SEARCH, (_, params: { query: string; limit?: number }) => {
+    return searchNotes(params.query, params.limit);
+  });
+
+  // Todos handlers
+  ipcMain.handle(IPC_CHANNELS.TODOS_LIST, (_, filter?: 'all' | 'active' | 'completed') => {
+    return listTodos(filter);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.TODOS_CREATE, (_, text: string) => {
+    return createTodo(text);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.TODOS_COMPLETE, (_, id: string) => {
+    return completeTodo(id);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.TODOS_DELETE, (_, id: string) => {
+    return deleteTodo(id);
+  });
+
+  // Session compaction handler
+  ipcMain.handle(IPC_CHANNELS.COPILOT_COMPACT_SESSION, async () => {
+    try {
+      const summary = await copilotController.compactSession();
+      return { success: true, summary };
+    } catch (error) {
+      return { success: false, error: (error as Error).message };
+    }
+  });
+
+  // TTS handlers
+  ipcMain.handle(IPC_CHANNELS.TTS_SPEAK, (_, params: { text: string; voice?: string; rate?: number; volume?: number }) => {
+    return speak(params.text, params);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.TTS_STOP, () => {
+    return stopSpeaking();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.TTS_LIST_VOICES, () => {
+    return listVoices();
   });
 
   // Subscribe to recording events

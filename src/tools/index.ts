@@ -33,6 +33,14 @@ import {
   RecordingType,
   AudioSource
 } from '../shared/types';
+import { createNote, getNote, listNotes, updateNote, deleteNote, deleteAllNotes, searchNotes } from '../main/notes';
+import { createTodo, listTodos, completeTodo, deleteTodo } from '../main/todos';
+import { fetchUrl } from '../main/url-fetch';
+import { speak, stopSpeaking, listVoices, type TTSOptions } from '../platform/windows/tts';
+import { fetchWeather } from '../main/weather';
+import { convertUnit } from '../main/unit-converter';
+import { getMediaStatus } from '../platform/windows/media-status';
+import { showOSD } from '../main/osd-window';
 
 const adapter = getUnifiedAdapter();
 const invisiwind = new InvisiwindWrapper();
@@ -773,6 +781,14 @@ export const systemVolumeTool = defineTool('system_volume', {
     if (action === 'get') {
       return `Current volume: ${result.data?.level}%`;
     }
+    // Show OSD feedback
+    if (action === 'set' && level !== undefined) {
+      showOSD({ type: 'volume', value: level });
+    } else if (action === 'mute') {
+      showOSD({ type: 'mute', value: 1 });
+    } else if (action === 'unmute') {
+      showOSD({ type: 'mute', value: 0 });
+    }
     return `Volume ${action === 'set' ? `set to ${level}%` : action === 'mute' ? 'muted' : 'unmuted'}`;
   }
 });
@@ -790,6 +806,10 @@ export const systemBrightnessTool = defineTool('system_brightness', {
     }
     if (action === 'get') {
       return `Current brightness: ${result.data?.level}%`;
+    }
+    // Show OSD feedback
+    if (action === 'set' && level !== undefined) {
+      showOSD({ type: 'brightness', value: level });
     }
     return `Brightness set to ${level}%`;
   }
@@ -2689,6 +2709,270 @@ function formatFileSize(bytes: number): string {
 // Export all tools
 // ============================================================================
 
+// ============================================================================
+// Notes Tools
+// ============================================================================
+
+export const notesCreateTool = defineTool('notes_create', {
+  description: 'Create a new note with a title and optional content',
+  parameters: p({
+    title: z.string().describe('Title of the note'),
+    content: z.string().optional().describe('Content/body of the note'),
+  }),
+  handler: async ({ title, content }: { title: string; content?: string }) => {
+    const note = createNote(title, content);
+    return `Created note "${note.title}" (ID: ${note.id})`;
+  },
+});
+
+export const notesListTool = defineTool('notes_list', {
+  description: 'List all notes, optionally limited to a count',
+  parameters: p({
+    limit: z.number().optional().describe('Max notes to return (default 20)'),
+  }),
+  handler: async ({ limit }: { limit?: number }) => {
+    const notes = listNotes(limit || 20);
+    if (notes.length === 0) return 'No notes found.';
+    return notes.map(n => `- [${n.id}] ${n.title} (${new Date(n.updated_at).toLocaleDateString()})`).join('\n');
+  },
+});
+
+export const notesGetTool = defineTool('notes_get', {
+  description: 'Get a note by ID',
+  parameters: p({
+    id: z.string().describe('Note ID'),
+  }),
+  handler: async ({ id }: { id: string }) => {
+    const note = getNote(id);
+    if (!note) return `Note ${id} not found.`;
+    return `Title: ${note.title}\nContent: ${note.content}\nCreated: ${new Date(note.created_at).toLocaleString()}\nUpdated: ${new Date(note.updated_at).toLocaleString()}`;
+  },
+});
+
+export const notesUpdateTool = defineTool('notes_update', {
+  description: 'Update a note title and/or content',
+  parameters: p({
+    id: z.string().describe('Note ID'),
+    title: z.string().optional().describe('New title'),
+    content: z.string().optional().describe('New content'),
+  }),
+  handler: async ({ id, title, content }: { id: string; title?: string; content?: string }) => {
+    const note = updateNote(id, title, content);
+    if (!note) return `Note ${id} not found.`;
+    return `Updated note "${note.title}"`;
+  },
+});
+
+export const notesSearchTool = defineTool('notes_search', {
+  description: 'Search notes by title or content',
+  parameters: p({
+    query: z.string().describe('Search query'),
+    limit: z.number().optional().describe('Max results (default 10)'),
+  }),
+  handler: async ({ query, limit }: { query: string; limit?: number }) => {
+    const notes = searchNotes(query, limit || 10);
+    if (notes.length === 0) return `No notes matching "${query}".`;
+    return notes.map(n => `- [${n.id}] ${n.title}`).join('\n');
+  },
+});
+
+export const notesDeleteTool = defineTool('notes_delete', {
+  description: 'Delete a note by ID',
+  parameters: p({
+    id: z.string().describe('Note ID'),
+  }),
+  handler: async ({ id }: { id: string }) => {
+    const success = deleteNote(id);
+    return success ? `Deleted note ${id}.` : `Note ${id} not found.`;
+  },
+});
+
+export const notesDeleteAllTool = defineTool('notes_delete_all', {
+  description: 'Delete all notes. Requires user confirmation.',
+  parameters: p({}),
+  handler: async () => {
+    const permitted = await requestPermissionForTool('notes_delete_all', {}, ['This action cannot be undone', 'All notes will be permanently deleted']);
+    if (!permitted) return 'User denied permission to delete all notes.';
+    const count = deleteAllNotes();
+    return `Deleted ${count} notes.`;
+  },
+});
+
+// ============================================================================
+// Todo Tools
+// ============================================================================
+
+export const todosCreateTool = defineTool('todos_create', {
+  description: 'Create a new todo item',
+  parameters: p({
+    text: z.string().describe('Todo text'),
+  }),
+  handler: async ({ text }: { text: string }) => {
+    const todo = createTodo(text);
+    return `Created todo: "${todo.text}" (ID: ${todo.id})`;
+  },
+});
+
+export const todosListTool = defineTool('todos_list', {
+  description: 'List todos, optionally filtered by status',
+  parameters: p({
+    filter: z.enum(['all', 'active', 'completed']).optional().describe('Filter: all, active, or completed (default: all)'),
+  }),
+  handler: async ({ filter }: { filter?: 'all' | 'active' | 'completed' }) => {
+    const todos = listTodos(filter || 'all');
+    if (todos.length === 0) return `No ${filter || ''} todos found.`;
+    return todos.map(t => `- [${t.completed ? 'x' : ' '}] ${t.text} (${t.id})`).join('\n');
+  },
+});
+
+export const todosCompleteTool = defineTool('todos_complete', {
+  description: 'Mark a todo as completed',
+  parameters: p({
+    id: z.string().describe('Todo ID'),
+  }),
+  handler: async ({ id }: { id: string }) => {
+    const todo = completeTodo(id);
+    if (!todo) return `Todo ${id} not found.`;
+    return `Completed: "${todo.text}"`;
+  },
+});
+
+export const todosDeleteTool = defineTool('todos_delete', {
+  description: 'Delete a todo item',
+  parameters: p({
+    id: z.string().describe('Todo ID'),
+  }),
+  handler: async ({ id }: { id: string }) => {
+    const success = deleteTodo(id);
+    return success ? `Deleted todo ${id}.` : `Todo ${id} not found.`;
+  },
+});
+
+// ============================================================================
+// URL Fetch Tool
+// ============================================================================
+
+export const webFetchUrlTool = defineTool('web_fetch_url', {
+  description: 'Fetch a web page and return its text content. Use this to look up information from URLs.',
+  parameters: p({
+    url: z.string().describe('The URL to fetch'),
+    max_length: z.number().optional().describe('Max characters to return (default 2000)'),
+  }),
+  handler: async ({ url, max_length }: { url: string; max_length?: number }) => {
+    const result = await fetchUrl(url, max_length);
+    if (!result.success) {
+      return `Failed to fetch ${url}: ${result.error}`;
+    }
+    const parts = [];
+    if (result.title) parts.push(`Title: ${result.title}`);
+    parts.push(`URL: ${result.url}`);
+    if (result.contentLength && result.contentLength > (max_length || 2000)) {
+      parts.push(`(Showing first ${max_length || 2000} of ${result.contentLength} characters)`);
+    }
+    parts.push('');
+    parts.push(result.content || '(No content)');
+    return parts.join('\n');
+  },
+});
+
+// ============================================================================
+// TTS Tools
+// ============================================================================
+
+export const speakTextTool = defineTool('speak_text', {
+  description: 'Speak text aloud using the system text-to-speech engine. Works offline, no API key needed.',
+  parameters: p({
+    text: z.string().describe('The text to speak aloud'),
+    voice: z.string().optional().describe('Voice name (e.g., "Microsoft David Desktop")'),
+    rate: z.number().optional().describe('Speech rate from -10 (slowest) to 10 (fastest). Default 0.'),
+    volume: z.number().optional().describe('Volume 0-100. Default 100.'),
+  }),
+  handler: async ({ text, voice, rate, volume }: { text: string; voice?: string; rate?: number; volume?: number }) => {
+    const options: TTSOptions = {};
+    if (voice) options.voice = voice;
+    if (rate !== undefined) options.rate = rate;
+    if (volume !== undefined) options.volume = volume;
+    const success = await speak(text, options);
+    return success
+      ? `Spoke: "${text.substring(0, 100)}${text.length > 100 ? '...' : ''}"`
+      : 'Failed to speak text. Check available voices with list_voices.';
+  },
+});
+
+export const stopSpeakingTool = defineTool('stop_speaking', {
+  description: 'Stop any ongoing text-to-speech playback',
+  parameters: p({}),
+  handler: async () => {
+    await stopSpeaking();
+    return 'Speech stopped.';
+  },
+});
+
+export const listVoicesTool = defineTool('list_voices', {
+  description: 'List available text-to-speech voices on this system',
+  parameters: p({}),
+  handler: async () => {
+    const voices = await listVoices();
+    if (voices.length === 0) return 'No TTS voices found on this system.';
+    return voices.map(v => `- ${v.name} (${v.culture}, ${v.gender})`).join('\n');
+  },
+});
+
+// ============================================================================
+// Weather Tool
+// ============================================================================
+
+export const weatherGetTool = defineTool('weather_get', {
+  description: 'Get current weather and forecast for a location',
+  parameters: p({
+    location: z.string().describe('City name, e.g. "London", "New York", "Tokyo"'),
+    detailed: z.boolean().optional().describe('Show 3-day forecast (default: brief current conditions)'),
+  }),
+  handler: async ({ location, detailed }: { location: string; detailed?: boolean }) => {
+    return await fetchWeather(location, detailed || false);
+  },
+});
+
+// ============================================================================
+// Unit Converter Tool
+// ============================================================================
+
+export const convertUnitTool = defineTool('convert_unit', {
+  description: 'Convert between units of measurement (length, weight, temperature, volume, area, speed)',
+  parameters: p({
+    value: z.number().describe('The numeric value to convert'),
+    from: z.string().describe('Source unit (e.g. "km", "lb", "celsius", "gallon")'),
+    to: z.string().describe('Target unit (e.g. "miles", "kg", "fahrenheit", "liter")'),
+  }),
+  handler: async ({ value, from, to }: { value: number; from: string; to: string }) => {
+    const result = convertUnit(value, from, to);
+    if (result.error) return result.error;
+    return `${value} ${from} = ${result.value} ${to}`;
+  },
+});
+
+// ============================================================================
+// Media Status Tool
+// ============================================================================
+
+export const mediaStatusTool = defineTool('media_status', {
+  description: 'Get current media playback status (track name, artist, play state)',
+  parameters: p({}),
+  handler: async () => {
+    const status = await getMediaStatus();
+    if (!status.title && !status.isPlaying) {
+      return 'No media is currently playing.';
+    }
+    const parts = [];
+    parts.push(`Status: ${status.isPlaying ? 'Playing' : 'Paused'}`);
+    if (status.title) parts.push(`Title: ${status.title}`);
+    if (status.artist) parts.push(`Artist: ${status.artist}`);
+    if (status.album) parts.push(`Album: ${status.album}`);
+    if (status.app) parts.push(`App: ${status.app}`);
+    return parts.join('\n');
+  },
+});
+
 export const desktopCommanderTools = [
   // Window Management
   windowListTool,
@@ -2796,4 +3080,29 @@ export const desktopCommanderTools = [
   screenRecordStatusTool,
   audioRecordStartTool,
   audioRecordStopTool,
+  // Notes
+  notesCreateTool,
+  notesListTool,
+  notesGetTool,
+  notesUpdateTool,
+  notesSearchTool,
+  notesDeleteTool,
+  notesDeleteAllTool,
+  // Todos
+  todosCreateTool,
+  todosListTool,
+  todosCompleteTool,
+  todosDeleteTool,
+  // URL Fetch
+  webFetchUrlTool,
+  // TTS
+  speakTextTool,
+  stopSpeakingTool,
+  listVoicesTool,
+  // Weather
+  weatherGetTool,
+  // Unit Converter
+  convertUnitTool,
+  // Media Status
+  mediaStatusTool,
 ];

@@ -108,6 +108,7 @@ export class WindowsSystem implements ISystem {
 
       const script = `
         Add-Type -AssemblyName System.Windows.Forms
+        Add-Type -AssemblyName System.Drawing
         $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
         $bitmap = New-Object System.Drawing.Bitmap($screen.Width, $screen.Height)
         $graphics = [System.Drawing.Graphics]::FromImage($bitmap)

@@ -21,6 +21,7 @@ import { screenShareDetector } from './screen-share-detector';
 import { getSettings } from './store';
 import { hideCommandWindow } from './windows';
 import { voiceInputManager } from './voice-input';
+import { createOSDWindow, destroyOSDWindow } from './osd-window';
 
 // In development, use a separate userData directory to avoid conflicts
 if (!app.isPackaged) {
@@ -183,6 +184,9 @@ async function initApp() {
     // It will be retried when the user sends their first message
   }
 
+  // Pre-warm OSD window for instant display
+  createOSDWindow();
+
   console.log('Desktop Commander initialized');
 }
 
@@ -213,6 +217,7 @@ app.on('activate', () => {
     clipboardMonitor.destroy();
     screenSharePrivacyService.clear();
     screenShareDetector.stop();
+    destroyOSDWindow();
     closeDatabase();
     unregisterHotkeys();
     destroyTray();

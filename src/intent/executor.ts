@@ -65,12 +65,23 @@ export class ToolExecutor {
       const result = await handler(params);
 
       const latency = Date.now() - startTime;
+      const response = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
+
+      // Detect soft failures: handlers that return error strings instead of throwing
+      if (typeof result === 'string' && this.isErrorResponse(result)) {
+        logger.copilot(`Tool returned error response: ${toolName}`, { response: result.substring(0, 100), latency: `${latency}ms` });
+        return {
+          success: false,
+          response,
+          error: result,
+        };
+      }
+
       logger.copilot(`Tool executed: ${toolName}`, { latency: `${latency}ms` });
 
-      // Return the result in the expected format
       return {
         success: true,
-        response: typeof result === 'string' ? result : JSON.stringify(result, null, 2),
+        response,
       };
     } catch (error) {
       const latency = Date.now() - startTime;
@@ -110,5 +121,22 @@ export class ToolExecutor {
     } else {
       return `Error: ${result.error || 'Unknown error'}`;
     }
+  }
+
+  /**
+   * Detect if a tool handler response indicates failure
+   * (handlers that return error strings instead of throwing)
+   */
+  private isErrorResponse(response: string): boolean {
+    const lower = response.toLowerCase();
+    const errorPrefixes = [
+      'failed to ',
+      'error:',
+      'error executing',
+      'could not ',
+      'unable to ',
+      'cannot ',
+    ];
+    return errorPrefixes.some(prefix => lower.startsWith(prefix));
   }
 }

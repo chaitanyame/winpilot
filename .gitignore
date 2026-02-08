@@ -20,3 +20,7 @@ resources/whisper/
 
 # Local agent metadata
 .claude/
+.omc/
+
+# Windows null device file
+nul

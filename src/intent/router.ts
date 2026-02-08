@@ -116,6 +116,9 @@ export class IntentRouter {
       return {
         handled: false,
         reason: `Execution failed: ${executionResult.error}`,
+        failedToolName: patternMatch.toolName,
+        failedError: executionResult.error || executionResult.response,
+        originalTier: 1,
       };
     }
 
@@ -171,6 +174,9 @@ export class IntentRouter {
       return {
         handled: false,
         reason: `Execution failed: ${executionResult.error}`,
+        failedToolName: mlResult.intent,
+        failedError: executionResult.error || executionResult.response,
+        originalTier: 2,
       };
     }
 
@@ -211,6 +217,9 @@ export class IntentRouter {
         return {
           handled: false,
           reason: `Execution failed: ${executionResult.error}`,
+          failedToolName: intent,
+          failedError: executionResult.error || executionResult.response,
+          originalTier: 2,
         };
       }
 

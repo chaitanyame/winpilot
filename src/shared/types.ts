@@ -349,6 +349,28 @@ export const IPC_CHANNELS = {
   // Context Awareness
   CONTEXT_GET: 'context:get',
   CONTEXT_CLEAR: 'context:clear',
+
+  // Notes
+  NOTES_LIST: 'notes:list',
+  NOTES_GET: 'notes:get',
+  NOTES_CREATE: 'notes:create',
+  NOTES_UPDATE: 'notes:update',
+  NOTES_DELETE: 'notes:delete',
+  NOTES_SEARCH: 'notes:search',
+
+  // Todos
+  TODOS_LIST: 'todos:list',
+  TODOS_CREATE: 'todos:create',
+  TODOS_COMPLETE: 'todos:complete',
+  TODOS_DELETE: 'todos:delete',
+
+  // Session Compaction
+  COPILOT_COMPACT_SESSION: 'copilot:compactSession',
+
+  // TTS
+  TTS_SPEAK: 'tts:speak',
+  TTS_STOP: 'tts:stop',
+  TTS_LIST_VOICES: 'tts:listVoices',
 } as const;
 
 export interface HiddenWindow {
@@ -405,6 +427,7 @@ export interface AgenticLoopConfig {
   maxTotalTimeMinutes: number;
   iterationTimeoutSeconds: number;
   model?: AIModel;
+  autoCompactThreshold: number;
 }
 
 // Tool execution record for agentic loop
@@ -583,4 +606,22 @@ export interface RecordingRegion {
   y: number;
   width: number;
   height: number;
+}
+
+// Notes
+export interface Note {
+  id: string;
+  title: string;
+  content: string;
+  created_at: number;
+  updated_at: number;
+}
+
+// Todos
+export interface Todo {
+  id: string;
+  text: string;
+  completed: boolean;
+  created_at: number;
+  updated_at: number;
 }

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Send, MessageSquare } from 'lucide-react';
 import { MessageStream } from './MessageStream';
+import { executeSlashCommand, getSlashCommandSuggestions, type SlashCommand } from '../slash-commands';
 import type { Message, ActionLog } from '../../shared/types';
 
 interface Props {
@@ -19,6 +20,8 @@ export function ChatPanel({ isOpen, onClose, variant = 'modal' }: Props) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const [actionLogs, setActionLogs] = useState<ActionLog[]>([]);
   const currentAssistantMessageRef = useRef<string>('');
+  const [slashSuggestions, setSlashSuggestions] = useState<SlashCommand[]>([]);
+  const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(0);
 
   // Auto-focus input when opened
   useEffect(() => {
@@ -98,6 +101,35 @@ export function ChatPanel({ isOpen, onClose, variant = 'modal' }: Props) {
   const handleSend = async () => {
     if (!input.trim() || isLoading) return;
 
+    // Check for slash commands first
+    if (input.trim().startsWith('/')) {
+      const slashContext = {
+        api: window.electronAPI,
+        addSystemMessage: (content: string) => {
+          setMessages(prev => [...prev, {
+            id: `sys-${Date.now()}`,
+            role: 'assistant' as const,
+            content,
+            timestamp: new Date(),
+          }]);
+        },
+        switchPanel: () => {},
+        conversationId: null,
+      };
+
+      const result = await executeSlashCommand(input, slashContext);
+      if (result) {
+        if (result.message === '__CLEAR__') {
+          setMessages([]);
+        } else if (result.message) {
+          slashContext.addSystemMessage(result.message);
+        }
+        setInput('');
+        setSlashSuggestions([]);
+        return;
+      }
+    }
+
     const userMessage: Message = {
       id: Date.now().toString(),
       role: 'user',
@@ -108,6 +140,7 @@ export function ChatPanel({ isOpen, onClose, variant = 'modal' }: Props) {
     setMessages(prev => [...prev, userMessage]);
     const messageToSend = input;
     setInput('');
+    setSlashSuggestions([]);
     setIsLoading(true);
     currentAssistantMessageRef.current = '';
 
@@ -160,18 +193,77 @@ export function ChatPanel({ isOpen, onClose, variant = 'modal' }: Props) {
 
             {/* Input */}
             <div className="p-4 border-t border-[color:var(--app-border)]">
-              <div className="flex gap-2">
+              <div className="relative flex gap-2">
+                {/* Slash command autocomplete */}
+                {slashSuggestions.length > 0 && (
+                  <div className="absolute bottom-full left-0 right-0 mb-1 rounded-lg border overflow-hidden z-50
+                                  bg-[color:var(--app-surface-2)] border-[color:var(--app-border)] shadow-lg max-h-[200px] overflow-y-auto">
+                    {slashSuggestions.map((cmd, i) => (
+                      <div
+                        key={cmd.name}
+                        className={`flex items-center gap-2 px-3 py-2 cursor-pointer text-sm transition-colors
+                          ${i === selectedSuggestionIndex
+                            ? 'bg-[color:var(--app-accent)]/10'
+                            : 'hover:bg-[color:var(--app-surface)]'}`}
+                        onClick={() => {
+                          setInput(`/${cmd.name} `);
+                          setSlashSuggestions([]);
+                          inputRef.current?.focus();
+                        }}
+                      >
+                        <span className="font-mono font-semibold text-[color:var(--app-text)]">/{cmd.name}</span>
+                        {cmd.args && <span className="font-mono text-xs text-[color:var(--app-text-muted)]">{cmd.args}</span>}
+                        <span className="ml-auto text-xs text-[color:var(--app-text-muted)]">{cmd.description}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 <textarea
                   ref={inputRef}
                   value={input}
-                  onChange={(e) => setInput(e.target.value)}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setInput(value);
+                    if (value.startsWith('/')) {
+                      const suggestions = getSlashCommandSuggestions(value);
+                      setSlashSuggestions(suggestions);
+                      setSelectedSuggestionIndex(0);
+                    } else {
+                      setSlashSuggestions([]);
+                    }
+                  }}
                   onKeyDown={(e) => {
+                    // Slash command autocomplete navigation
+                    if (slashSuggestions.length > 0) {
+                      if (e.key === 'Tab') {
+                        e.preventDefault();
+                        const selected = slashSuggestions[selectedSuggestionIndex];
+                        setInput(`/${selected.name} `);
+                        setSlashSuggestions([]);
+                        return;
+                      }
+                      if (e.key === 'ArrowDown') {
+                        e.preventDefault();
+                        setSelectedSuggestionIndex(i => Math.min(i + 1, slashSuggestions.length - 1));
+                        return;
+                      }
+                      if (e.key === 'ArrowUp') {
+                        e.preventDefault();
+                        setSelectedSuggestionIndex(i => Math.max(i - 1, 0));
+                        return;
+                      }
+                      if (e.key === 'Escape') {
+                        e.preventDefault();
+                        setSlashSuggestions([]);
+                        return;
+                      }
+                    }
                     if (e.key === 'Enter' && !e.shiftKey) {
                       e.preventDefault();
                       handleSend();
                     }
                   }}
-                  placeholder="Type a message... (Enter to send, Shift+Enter for new line)"
+                  placeholder="Type a message, use / for commands..."
                   className="flex-1 resize-none rounded-lg bg-[color:var(--app-surface-2)] text-[color:var(--app-text)]
                          placeholder-[color:var(--app-text-muted)] border border-[color:var(--app-border)]
                          focus:border-[color:var(--app-accent)] focus:ring-1 focus:ring-[color:var(--app-accent)]/20

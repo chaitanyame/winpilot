@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { motion } from 'framer-motion';
-import { Send, X, History, Square, Monitor, Plug, Trash2, Settings as SettingsIcon, Clock, Mic, MicOff, Volume2, Brain, Minus, Maximize2, ScrollText, Copy, Video, Loader2, Sparkles, ChevronRight, ChevronLeft, Shield } from 'lucide-react';
+import { Send, X, History, Square, Monitor, Plug, Trash2, Settings as SettingsIcon, Clock, Mic, MicOff, Volume2, Brain, Minus, Maximize2, ScrollText, Copy, Video, Loader2, Sparkles, ChevronRight, ChevronLeft, Shield, FileText } from 'lucide-react';
 import { MessageStream } from './MessageStream';
 import { MCPServersPanel } from './MCPServersPanel';
 import { SettingsPanel } from './SettingsPanel';
@@ -9,8 +9,10 @@ import { ActionLogsPanel } from './ActionLogsPanel';
 import { ClipboardHistoryPanel } from './ClipboardHistoryPanel';
 import { RecordingsPanel } from './RecordingsPanel';
 import { ScreenSharePrivacyPanel } from './ScreenSharePrivacyPanel';
+import { NotesTodosPanel } from './NotesTodosPanel';
 import { useCopilot } from '../hooks/useCopilot';
 import { ConfirmationDialog } from './ConfirmationDialog';
+import { executeSlashCommand, getSlashCommandSuggestions, type SlashCommand } from '../slash-commands';
 import type { PermissionRequest, PermissionResponse, ActionLog, Settings, ActiveWindowContext } from '../../shared/types';
 
 // Speech recognition error messages
@@ -96,6 +98,31 @@ const TOOL_DESCRIPTIONS: Record<string, string> = {
   web_search: 'Searched the web',
   troubleshoot_start: 'Started troubleshooting',
   troubleshoot_propose_fix: 'Proposed fix',
+  // Notes
+  notes_create: 'Created a note',
+  notes_list: 'Listed notes',
+  notes_get: 'Retrieved note',
+  notes_update: 'Updated note',
+  notes_search: 'Searched notes',
+  notes_delete: 'Deleted note',
+  notes_delete_all: 'Deleted all notes',
+  // Todos
+  todos_create: 'Created todo',
+  todos_list: 'Listed todos',
+  todos_complete: 'Completed todo',
+  todos_delete: 'Deleted todo',
+  // URL Fetch
+  web_fetch_url: 'Fetched web page',
+  // TTS
+  speak_text: 'Speaking text aloud',
+  stop_speaking: 'Stopped speaking',
+  list_voices: 'Listed available voices',
+  // Weather
+  weather_get: 'Checked weather',
+  // Unit Converter
+  convert_unit: 'Converted units',
+  // Media Status
+  media_status: 'Checked media status',
 };
 
 const PROMPT_TEMPLATES: PromptTemplate[] = [
@@ -146,7 +173,10 @@ export function CommandPalette() {
   const [showClipboardPanel, setShowClipboardPanel] = useState(false);
   const [showRecordingsPanel, setShowRecordingsPanel] = useState(false);
   const [showScreenSharePrivacyPanel, setShowScreenSharePrivacyPanel] = useState(false);
+  const [showNotesPanel, setShowNotesPanel] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
+  const [slashSuggestions, setSlashSuggestions] = useState<SlashCommand[]>([]);
+  const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(0);
   const [sidebarExpanded, setSidebarExpanded] = useState(false);
   const [permissionRequest, setPermissionRequest] = useState<PermissionRequest | null>(null);
   const [isRecording, setIsRecording] = useState(false);
@@ -283,6 +313,7 @@ export function CommandPalette() {
       setShowClipboardPanel(false);
       setShowRecordingsPanel(false);
       setShowScreenSharePrivacyPanel(false);
+      setShowNotesPanel(false);
       void loadHistory();
       inputRef.current?.focus();
     });
@@ -809,20 +840,82 @@ export function CommandPalette() {
     }
   };
 
+  const addSystemMessage = useCallback((content: string) => {
+    // Inject a system-style message via sendMessage with a markdown prefix
+    // Since we can't directly add to messages state (managed by useCopilot),
+    // we'll send it as a regular message that the AI won't process
+    // For slash commands, we just display the result in the input area or as a notification
+    console.log('[SlashCommand]', content);
+  }, []);
+
   const handleSubmit = useCallback(async (e?: React.FormEvent) => {
     e?.preventDefault();
-    
+
     if (!input.trim() || isLoading) return;
+
+    // Check for slash commands first
+    if (input.trim().startsWith('/')) {
+      const slashContext = {
+        api: window.electronAPI,
+        addSystemMessage,
+        switchPanel: (panel: string) => {
+          if (panel === 'settings') setShowSettings(true);
+          else if (panel === 'notes') setShowNotesPanel(true);
+          else if (panel === 'tasks') setShowTasksPanel(true);
+        },
+        conversationId: null,
+      };
+
+      const result = await executeSlashCommand(input, slashContext);
+      if (result) {
+        if (result.message === '__CLEAR__') {
+          clearMessages();
+        } else if (result.message) {
+          // Send the slash command result as a message for the user to see
+          await sendMessage(`/system ${result.message}`);
+        }
+        setInput('');
+        setSlashSuggestions([]);
+        return;
+      }
+    }
 
     const message = input.trim();
     setInput('');
     setShowHistory(false);
-    
+    setSlashSuggestions([]);
+
     await sendMessage(message);
     await loadHistory();
-  }, [input, isLoading, sendMessage]);
+  }, [input, isLoading, sendMessage, clearMessages, addSystemMessage]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    // Slash command autocomplete navigation
+    if (slashSuggestions.length > 0) {
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        const selected = slashSuggestions[selectedSuggestionIndex];
+        setInput(`/${selected.name} `);
+        setSlashSuggestions([]);
+        return;
+      }
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setSelectedSuggestionIndex(i => Math.min(i + 1, slashSuggestions.length - 1));
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setSelectedSuggestionIndex(i => Math.max(i - 1, 0));
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setSlashSuggestions([]);
+        return;
+      }
+    }
+
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSubmit();
@@ -1116,6 +1209,16 @@ export function CommandPalette() {
             </div>
           )}
           <button
+            onClick={() => setShowNotesPanel(true)}
+            className={`p-2 rounded-lg transition-colors flex items-center gap-3
+                       text-[color:var(--app-text-muted)] hover:text-[color:var(--app-text)]
+                       hover:bg-[color:var(--app-surface)] ${sidebarExpanded ? 'w-full' : ''}`}
+            title="Notes & Todos"
+          >
+            <FileText className="w-4 h-4 flex-shrink-0" />
+            {sidebarExpanded && <span className="text-sm">Notes</span>}
+          </button>
+          <button
             onClick={() => setShowClipboardPanel(true)}
             className={`p-2 rounded-lg transition-colors flex items-center gap-3
                        text-[color:var(--app-text-muted)] hover:text-[color:var(--app-text)]
@@ -1284,10 +1387,44 @@ export function CommandPalette() {
       {/* Input */}
       <div className="p-5 border-t border-[color:var(--app-border)]">
         <form onSubmit={handleSubmit} className="relative">
+          {/* Slash command autocomplete dropdown */}
+          {slashSuggestions.length > 0 && (
+            <div className="absolute bottom-full left-0 right-0 mb-1 rounded-lg border overflow-hidden z-50
+                            bg-[color:var(--app-surface-2)] border-[color:var(--app-border)] shadow-lg max-h-[200px] overflow-y-auto">
+              {slashSuggestions.map((cmd, i) => (
+                <div
+                  key={cmd.name}
+                  className={`flex items-center gap-2 px-3 py-2 cursor-pointer text-sm transition-colors
+                    ${i === selectedSuggestionIndex
+                      ? 'bg-[color:var(--app-accent)]/10'
+                      : 'hover:bg-[color:var(--app-surface)]'}`}
+                  onClick={() => {
+                    setInput(`/${cmd.name} `);
+                    setSlashSuggestions([]);
+                    inputRef.current?.focus();
+                  }}
+                >
+                  <span className="font-mono font-semibold text-[color:var(--app-text)]">/{cmd.name}</span>
+                  {cmd.args && <span className="font-mono text-xs text-[color:var(--app-text-muted)]">{cmd.args}</span>}
+                  <span className="ml-auto text-xs text-[color:var(--app-text-muted)]">{cmd.description}</span>
+                </div>
+              ))}
+            </div>
+          )}
           <textarea
             ref={inputRef}
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={(e) => {
+              const value = e.target.value;
+              setInput(value);
+              if (value.startsWith('/')) {
+                const suggestions = getSlashCommandSuggestions(value);
+                setSlashSuggestions(suggestions);
+                setSelectedSuggestionIndex(0);
+              } else {
+                setSlashSuggestions([]);
+              }
+            }}
             onKeyDown={handleKeyDown}
             placeholder="Type a message, use / for commands..."
             rows={1}
@@ -1437,6 +1574,11 @@ export function CommandPalette() {
       <ScreenSharePrivacyPanel
         isOpen={showScreenSharePrivacyPanel}
         onClose={() => setShowScreenSharePrivacyPanel(false)}
+      />
+
+      <NotesTodosPanel
+        isOpen={showNotesPanel}
+        onClose={() => setShowNotesPanel(false)}
       />
     </>
   );

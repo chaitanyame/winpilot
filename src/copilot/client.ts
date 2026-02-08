@@ -94,6 +94,8 @@ export class CopilotController {
   private isStreaming = false;
   private mcpServersChanged = false;
   private isSending = false;
+  // Session compaction
+  private compactionSummary: string | null = null;
   // Agentic loop state
   private currentTurnResults: import('../shared/types').ToolExecutionRecord[] = [];
   private currentAssistantResponse = '';
@@ -329,6 +331,26 @@ export class CopilotController {
       return;
     }
 
+    // Check if auto-compact is needed (before sending)
+    if (loopConfig.autoCompactThreshold && loopConfig.autoCompactThreshold > 0) {
+      try {
+        const { getActiveConversationId } = await import('../main/chat-history');
+        const { getMessages } = await import('../main/database');
+        const convId = getActiveConversationId();
+        if (convId) {
+          const msgCount = getMessages(convId).length;
+          if (msgCount >= loopConfig.autoCompactThreshold) {
+            logger.copilot('Auto-compact threshold reached', { msgCount, threshold: loopConfig.autoCompactThreshold });
+            yield { type: 'text' as const, content: '🔄 Auto-compacting long conversation...\n' };
+            await this.compactSession();
+            yield { type: 'text' as const, content: '✅ Context refreshed.\n\n' };
+          }
+        }
+      } catch (e) {
+        logger.copilot('Auto-compact check failed, continuing normally', e);
+      }
+    }
+
     logger.copilot('Starting agentic loop', { config: loopConfig });
 
     this.loopStartTime = Date.now();
@@ -465,12 +487,34 @@ export class CopilotController {
       });
 
     } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+
+      // Auto-compact on context overflow
+      if (errorMsg.includes('context_length') ||
+          errorMsg.includes('maximum context') ||
+          errorMsg.includes('token limit') ||
+          errorMsg.includes('too long')) {
+        logger.copilot('Context overflow detected, auto-compacting...');
+        yield { type: 'text' as const, content: '\n\n🔄 Session context full. Compacting...\n' };
+
+        try {
+          await this.compactSession();
+          yield { type: 'text' as const, content: '✅ Session compacted. Retrying your request...\n\n' };
+
+          // Retry the original message in the fresh session
+          yield* this.sendMessage(message);
+          return;
+        } catch {
+          yield { type: 'error' as const, error: 'Failed to compact session. Please start a new conversation.' };
+          return;
+        }
+      }
+
       logger.error('Copilot', 'Error in agentic loop', error);
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       yield {
         type: 'error',
-        error: errorMessage,
-        content: `❌ Error: ${errorMessage}`,
+        error: errorMsg,
+        content: `❌ Error: ${errorMsg}`,
       };
     }
   }
@@ -853,6 +897,72 @@ What should we do next?`;
   }
 
   /**
+   * Compact the current session by summarizing history and starting fresh.
+   */
+  async compactSession(): Promise<string> {
+    if (!this.session) {
+      throw new Error('No active session to compact');
+    }
+
+    logger.copilot('Compacting session...');
+
+    // Get recent messages for context
+    let contextMessages: Array<{ role: string; content: string }> = [];
+    try {
+      const { getActiveConversationId } = await import('../main/chat-history');
+      const { getMessages } = await import('../main/database');
+      const convId = getActiveConversationId();
+
+      if (convId) {
+        const msgs = getMessages(convId);
+        const recentMsgs = msgs.slice(-20);
+        contextMessages = recentMsgs.map(m => ({ role: m.role, content: m.content }));
+      }
+    } catch {
+      // Chat history may not be available
+    }
+
+    // Build compaction prompt
+    const compactionPrompt = `Please provide a concise summary of our conversation so far. Include:
+- Key topics discussed
+- Decisions made
+- Important context or preferences mentioned
+- Any pending tasks or follow-ups
+
+Conversation to summarize:
+${contextMessages.map(m => `${m.role}: ${m.content.substring(0, 500)}`).join('\n')}
+
+Provide ONLY the summary, no preamble.`;
+
+    // Get summary from current session
+    let summary = '';
+    try {
+      const response = await this.session.sendAndWait({ prompt: compactionPrompt });
+      summary = typeof response === 'string' ? response :
+                (response as { content?: string })?.content || 'Previous conversation context unavailable.';
+    } catch {
+      summary = contextMessages
+        .filter(m => m.role === 'user')
+        .map(m => m.content.substring(0, 200))
+        .join('; ');
+      summary = `Previous topics: ${summary}`;
+    }
+
+    // Destroy old session
+    await this.session.destroy();
+    this.session = null;
+    this.isInitialized = false;
+
+    // Reinitialize with summary context
+    this.compactionSummary = summary;
+    await this.initialize();
+    this.compactionSummary = null;
+
+    logger.copilot('Session compacted', { summaryLength: summary.length });
+    return summary;
+  }
+
+  /**
    * Cancel the current streaming operation
    */
   async cancel(): Promise<void> {
@@ -977,7 +1087,7 @@ When user describes a problem (e.g., "WiFi disconnects", "computer is slow"):
 6. Execute only approved fixes, requesting permission for each sensitive operation
 7. Verify if issue is resolved, iterate if needed
 
-Always explain findings in plain language. Never execute risky fixes without explicit approval.`;
+Always explain findings in plain language. Never execute risky fixes without explicit approval.${this.compactionSummary ? `\n\n## Previous Conversation Context\n${this.compactionSummary}` : ''}`;
   }
 
   /**

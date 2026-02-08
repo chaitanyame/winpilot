@@ -374,6 +374,33 @@ export function SettingsPanel({ isOpen, onClose }: Props) {
                 </div>
               </div>
 
+              {/* Auto-Compact Threshold */}
+              <div>
+                <label className="block text-sm font-medium text-dark-700 dark:text-dark-300 mb-2">
+                  Auto-Compact Threshold
+                </label>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    value={settings.agenticLoop?.autoCompactThreshold ?? 40}
+                    onChange={(e) => updateSettings({
+                      agenticLoop: {
+                        ...settings.agenticLoop,
+                        autoCompactThreshold: parseInt(e.target.value) || 0
+                      }
+                    })}
+                    className="w-24 px-3 py-2 rounded-lg border border-dark-200 dark:border-dark-600
+                             bg-white dark:bg-dark-700 text-dark-700 dark:text-dark-300"
+                  />
+                  <span className="text-sm text-dark-600 dark:text-dark-400">messages</span>
+                </div>
+                <p className="text-xs text-dark-500 mt-1">
+                  Automatically summarize and reset context when conversation gets long. Set to 0 to disable.
+                </p>
+              </div>
+
               {/* Model Info */}
               <div className="p-3 bg-primary-50 dark:bg-primary-900/20 rounded-lg">
                 <p className="text-xs text-primary-700 dark:text-primary-300">
