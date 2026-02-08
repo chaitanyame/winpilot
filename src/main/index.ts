@@ -22,6 +22,7 @@ import { getSettings } from './store';
 import { hideCommandWindow } from './windows';
 import { voiceInputManager } from './voice-input';
 import { createOSDWindow, destroyOSDWindow } from './osd-window';
+import { destroyPowerShellPool } from '../platform/windows/powershell-pool';
 
 // In development, use a separate userData directory to avoid conflicts
 if (!app.isPackaged) {
@@ -95,24 +96,20 @@ if (!gotTheLock) {
   });
 }
 
-// App initialization
+// App initialization — parallelized for fast window display
 async function initApp() {
-  // Initialize settings store
+  // ── Phase 1: Synchronous essentials (must complete before window) ──────
   initStore();
-
-  // Initialize SQLite database
   initDatabase();
   screenSharePrivacyService.init();
 
-  // Setup media permissions - CRITICAL for getUserMedia to work without crashes
+  // Setup media permissions
   session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
-    // Allow all media permissions (media covers both microphone and camera)
     if (permission === 'media') {
       console.log('[Permissions] Granting media permission:', permission);
       callback(true);
       return;
     }
-    // Allow other common permissions
     if (permission === 'notifications' || permission === 'clipboard-read' || permission === 'clipboard-sanitized-write') {
       callback(true);
       return;
@@ -122,19 +119,28 @@ async function initApp() {
   });
 
   session.defaultSession.setPermissionCheckHandler((_webContents, permission, _requestingOrigin) => {
-    // Always allow media permissions
     if (permission === 'media') {
       return true;
     }
-    return true; // Allow other permissions by default
+    return true;
   });
 
-  // Refresh installed apps cache (skip if last run < 6 hours)
-  await ensureInstalledAppsCache();
-
-  // Create the command window (hidden initially)
+  // ── Phase 2: Show window ASAP, then run everything else in parallel ────
+  setupIpcHandlers();
+  registerHotkeys();
+  createTray();
   await createCommandWindow();
 
+  // All remaining services are independent — run in parallel
+  const backgroundTasks = [
+    ensureInstalledAppsCache().catch(e => console.error('App cache init failed:', e)),
+    taskScheduler.init().catch(e => console.error('Task scheduler init failed:', e)),
+    copilotController.initialize()
+      .then(() => console.log('Copilot session pre-initialized'))
+      .catch(e => console.error('Copilot pre-init failed:', e)),
+  ];
+
+  // Non-async services start immediately (no await needed)
   screenShareDetector.start();
   screenShareDetector.onChange((active) => {
     console.log('[ScreenShareDetector] onChange fired, active:', active);
@@ -143,7 +149,6 @@ async function initApp() {
     if (settings.screenSharePrivacy?.autoHideOnShare) {
       const isRecording = voiceInputManager.getIsRecording();
       console.log('[ScreenShareDetector] Voice recording status:', isRecording);
-      // Don't auto-hide if voice recording is active
       if (!isRecording) {
         console.log('[ScreenShareDetector] Auto-hiding window due to screen share detection');
         hideCommandWindow(true);
@@ -153,19 +158,6 @@ async function initApp() {
     }
   });
 
-  // Create system tray
-  createTray();
-
-  // Register global hotkeys
-  registerHotkeys();
-
-  // Setup IPC handlers for tool communication
-  setupIpcHandlers();
-
-  // Initialize task scheduler
-  await taskScheduler.init();
-
-  // Start clipboard monitoring (event-driven on Windows; polling fallback)
   const usingEvents = clipboardWatcher.start();
   clipboardMonitor.startMonitoring(!usingEvents);
   if (usingEvents) {
@@ -174,18 +166,10 @@ async function initApp() {
     });
   }
 
-  // Pre-initialize the copilot session to reduce first-question latency
-  try {
-    await copilotController.initialize();
-    console.log('Copilot session pre-initialized');
-  } catch (error) {
-    console.error('Failed to pre-initialize copilot session:', error);
-    // Don't block app startup if copilot fails to initialize
-    // It will be retried when the user sends their first message
-  }
-
-  // Pre-warm OSD window for instant display
   createOSDWindow();
+
+  // Wait for all background tasks to settle
+  await Promise.all(backgroundTasks);
 
   console.log('Desktop Commander initialized');
 }
@@ -218,6 +202,7 @@ app.on('activate', () => {
     screenSharePrivacyService.clear();
     screenShareDetector.stop();
     destroyOSDWindow();
+    destroyPowerShellPool();
     closeDatabase();
     unregisterHotkeys();
     destroyTray();
