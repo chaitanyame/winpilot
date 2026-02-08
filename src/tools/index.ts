@@ -23,16 +23,12 @@ import {
 import {
   reminderManager
 } from '../main/reminders';
-import { InvisiwindWrapper } from '../platform/windows/invisiwind';
 import { screenSharePrivacyService } from '../main/screen-share-privacy';
-import {
-  recordingManager,
-  type RecordingOptions
-} from '../main/recording-manager';
 import {
   RecordingType,
   AudioSource
 } from '../shared/types';
+import type { RecordingOptions } from '../main/recording-manager';
 import { createNote, getNote, listNotes, updateNote, deleteNote, deleteAllNotes, searchNotes } from '../main/notes';
 import { createTodo, listTodos, completeTodo, deleteTodo } from '../main/todos';
 import { fetchUrl } from '../main/url-fetch';
@@ -43,7 +39,24 @@ import { getMediaStatus } from '../platform/windows/media-status';
 import { showOSD } from '../main/osd-window';
 
 const adapter = getUnifiedAdapter();
-const invisiwind = new InvisiwindWrapper();
+
+// Lazy-loaded heavy modules (deferred until first use)
+let _invisiwind: any = null;
+function getInvisiwind() {
+  if (!_invisiwind) {
+    const { InvisiwindWrapper } = require('../platform/windows/invisiwind');
+    _invisiwind = new InvisiwindWrapper();
+  }
+  return _invisiwind;
+}
+
+let _recordingManager: any = null;
+function getRecordingManager() {
+  if (!_recordingManager) {
+    _recordingManager = require('../main/recording-manager').recordingManager;
+  }
+  return _recordingManager;
+}
 
 // Helper function to parse time strings like "3pm", "15:30", "2:30pm"
 function parseTimeString(timeStr: string, dateStr?: string): Date {
@@ -313,12 +326,12 @@ export const windowHideFromSharingTool = defineTool('window_hide_from_sharing', 
       return 'Could not find a matching window. Please provide windowId, appName, or titleContains.';
     }
 
-    const availability = invisiwind.isAvailable();
+    const availability = getInvisiwind().isAvailable();
     if (!availability.available) {
       return `Invisiwind binaries are missing: ${availability.missing.join(', ')}`;
     }
 
-    const result = await invisiwind.hideWindowsByPid(target.processId);
+    const result = await getInvisiwind().hideWindowsByPid(target.processId);
     if (!result.success) {
       return `Failed to hide window: ${result.error}`;
     }
@@ -352,7 +365,7 @@ export const windowShowInSharingTool = defineTool('window_show_in_sharing', {
       return 'Cancelled: permission denied.';
     }
 
-    const availability = invisiwind.isAvailable();
+    const availability = getInvisiwind().isAvailable();
     if (!availability.available) {
       return `Invisiwind binaries are missing: ${availability.missing.join(', ')}`;
     }
@@ -360,7 +373,7 @@ export const windowShowInSharingTool = defineTool('window_show_in_sharing', {
     if (all) {
       const hidden = screenSharePrivacyService.listHiddenWindows();
       for (const entry of hidden) {
-        await invisiwind.unhideWindowsByPid(entry.pid);
+        await getInvisiwind().unhideWindowsByPid(entry.pid);
       }
       screenSharePrivacyService.clear();
       return 'All hidden windows are now visible in screen sharing.';
@@ -381,7 +394,7 @@ export const windowShowInSharingTool = defineTool('window_show_in_sharing', {
       return 'Could not find a matching window. Please provide windowId or appName.';
     }
 
-    const result = await invisiwind.unhideWindowsByPid(target.processId);
+    const result = await getInvisiwind().unhideWindowsByPid(target.processId);
     if (!result.success) {
       return `Failed to show window: ${result.error}`;
     }
@@ -425,7 +438,7 @@ export const windowHideAllSensitiveTool = defineTool('window_hide_all_sensitive'
       return 'Cancelled: permission denied.';
     }
 
-    const availability = invisiwind.isAvailable();
+    const availability = getInvisiwind().isAvailable();
     if (!availability.available) {
       return `Invisiwind binaries are missing: ${availability.missing.join(', ')}`;
     }
@@ -445,7 +458,7 @@ export const windowHideAllSensitiveTool = defineTool('window_hide_all_sensitive'
     const handledPids = new Set<number>();
     for (const target of targets) {
       if (handledPids.has(target.processId)) continue;
-      const result = await invisiwind.hideWindowsByPid(target.processId);
+      const result = await getInvisiwind().hideWindowsByPid(target.processId);
       if (result.success) {
         handledPids.add(target.processId);
         screenSharePrivacyService.addHiddenWindow({
@@ -2524,7 +2537,7 @@ export const screenRecordStartTool = defineTool('screen_record_start', {
   }),
   handler: async ({ audioSource, fps, region, filename }) => {
     // Check FFmpeg availability
-    const ffmpegStatus = recordingManager.getFFmpegStatus();
+    const ffmpegStatus = getRecordingManager().getFFmpegStatus();
     if (!ffmpegStatus.available) {
       return `Recording is not available: ${ffmpegStatus.error}`;
     }
@@ -2548,7 +2561,7 @@ export const screenRecordStartTool = defineTool('screen_record_start', {
         filename
       };
 
-      const recording = await recordingManager.startScreenRecording(options);
+      const recording = await getRecordingManager().startScreenRecording(options);
       return JSON.stringify({
         success: true,
         message: 'Screen recording started',
@@ -2569,7 +2582,7 @@ export const screenRecordStopTool = defineTool('screen_record_stop', {
   parameters: p({}),
   handler: async () => {
     try {
-      const recording = await recordingManager.stopRecording(RecordingType.SCREEN);
+      const recording = await getRecordingManager().stopRecording(RecordingType.SCREEN);
       if (!recording) {
         return 'No active screen recording to stop';
       }
@@ -2592,7 +2605,7 @@ export const screenRecordStatusTool = defineTool('screen_record_status', {
   description: 'Get the current status of screen recording (is recording active, duration, file size)',
   parameters: p({}),
   handler: async () => {
-    const ffmpegStatus = recordingManager.getFFmpegStatus();
+    const ffmpegStatus = getRecordingManager().getFFmpegStatus();
     if (!ffmpegStatus.available) {
       return JSON.stringify({
         ffmpegAvailable: false,
@@ -2601,7 +2614,7 @@ export const screenRecordStatusTool = defineTool('screen_record_status', {
       });
     }
 
-    const recording = recordingManager.getStatus(RecordingType.SCREEN);
+    const recording = getRecordingManager().getStatus(RecordingType.SCREEN);
     if (!recording) {
       return JSON.stringify({
         ffmpegAvailable: true,
@@ -2636,7 +2649,7 @@ export const audioRecordStartTool = defineTool('audio_record_start', {
   }),
   handler: async ({ source, format, filename }) => {
     // Check FFmpeg availability
-    const ffmpegStatus = recordingManager.getFFmpegStatus();
+    const ffmpegStatus = getRecordingManager().getFFmpegStatus();
     if (!ffmpegStatus.available) {
       return `Recording is not available: ${ffmpegStatus.error}`;
     }
@@ -2658,7 +2671,7 @@ export const audioRecordStartTool = defineTool('audio_record_start', {
         filename
       };
 
-      const recording = await recordingManager.startAudioRecording(options);
+      const recording = await getRecordingManager().startAudioRecording(options);
       return JSON.stringify({
         success: true,
         message: 'Audio recording started',
@@ -2677,7 +2690,7 @@ export const audioRecordStopTool = defineTool('audio_record_stop', {
   parameters: p({}),
   handler: async () => {
     try {
-      const recording = await recordingManager.stopRecording(RecordingType.AUDIO);
+      const recording = await getRecordingManager().stopRecording(RecordingType.AUDIO);
       if (!recording) {
         return 'No active audio recording to stop';
       }
