@@ -23,12 +23,17 @@ const beginMarker = (id: string) => `${MARKER_PREFIX}_BEGIN:${id}>>>`;
 const endMarker = (id: string) => `${MARKER_PREFIX}_END:${id}>>>`;
 const errMarker = (id: string) => `${MARKER_PREFIX}_ERR:${id}>>>`;
 
+// Safety limits
+const MAX_BUFFER_SIZE = 1024 * 1024; // 1 MB — truncate if exceeded
+const COMMANDS_BEFORE_RECYCLE = 200; // Recycle PS process to free accumulated memory
+
 class PowerShellPool {
   private process: ChildProcess | null = null;
   private pending: Map<string, PendingCommand> = new Map();
   private buffer = '';
   private startPromise: Promise<void> | null = null;
   private alive = false;
+  private commandCount = 0;
 
   private async ensureProcess(): Promise<void> {
     if (this.process && this.alive) {
@@ -66,6 +71,11 @@ class PowerShellPool {
 
       proc.stdout!.on('data', (data: string) => {
         this.buffer += data;
+        // Safety: truncate buffer if it grows too large (orphaned output)
+        if (this.buffer.length > MAX_BUFFER_SIZE) {
+          logger.platform('PowerShell pool buffer exceeded limit, truncating', { size: this.buffer.length });
+          this.buffer = this.buffer.substring(this.buffer.length - MAX_BUFFER_SIZE / 2);
+        }
         this.drainBuffer();
       });
 
@@ -134,6 +144,10 @@ class PowerShellPool {
    * Just pass the raw script — no escaping or wrapping needed.
    */
   async exec(script: string, options?: { timeout?: number }): Promise<{ stdout: string; stderr: string }> {
+    // Recycle process periodically to free accumulated PS memory (variables, assemblies)
+    if (this.commandCount >= COMMANDS_BEFORE_RECYCLE && this.pending.size === 0) {
+      this.recycleProcess();
+    }
     await this.ensureProcess();
 
     const id = randomUUID();
@@ -142,9 +156,13 @@ class PowerShellPool {
     const end = endMarker(id);
     const err = errMarker(id);
 
+    this.commandCount++;
+
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
+        // Clean orphaned markers from buffer to prevent unbounded growth
+        this.cleanOrphanedMarkers(id);
         reject(new Error(`PowerShell command timed out after ${timeout}ms`));
       }, timeout);
 
@@ -223,6 +241,40 @@ class PowerShellPool {
       cmd.reject(error);
     });
     this.pending.clear();
+  }
+
+  /** Remove orphaned markers from buffer when a command times out */
+  private cleanOrphanedMarkers(id: string): void {
+    const begin = beginMarker(id);
+    const end = endMarker(id);
+    const beginIdx = this.buffer.indexOf(begin);
+    const endIdx = this.buffer.indexOf(end);
+    if (beginIdx !== -1 && endIdx !== -1 && endIdx > beginIdx) {
+      this.buffer = this.buffer.substring(0, beginIdx) +
+        this.buffer.substring(endIdx + end.length).replace(/^\r?\n/, '');
+    } else if (beginIdx !== -1) {
+      // Only begin found — remove everything from begin onward (incomplete output)
+      this.buffer = this.buffer.substring(0, beginIdx);
+    }
+  }
+
+  /** Recycle the PowerShell process to free accumulated memory */
+  private recycleProcess(): void {
+    logger.platform('Recycling PowerShell pool process', { commands: this.commandCount });
+    if (this.process) {
+      try {
+        this.process.stdin!.write('exit\n');
+        this.process.stdin!.end();
+      } catch {
+        // ignore
+      }
+      const oldProc = this.process;
+      setTimeout(() => { if (!oldProc.killed) oldProc.kill(); }, 1000);
+    }
+    this.process = null;
+    this.alive = false;
+    this.buffer = '';
+    this.commandCount = 0;
   }
 
   /** Gracefully shut down the persistent PowerShell process. */

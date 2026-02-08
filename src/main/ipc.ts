@@ -1328,8 +1328,17 @@ export function setupIpcHandlers(): void {
     return timer;
   });
 
+  // Track active subscription handlers per sender to prevent listener accumulation
+  const timerSubs = new WeakMap<Electron.WebContents, Array<() => void>>();
+  const reminderSubs = new WeakMap<Electron.WebContents, Array<() => void>>();
+  const recordingSubs = new WeakMap<Electron.WebContents, Array<() => void>>();
+
   // Subscribe to timer updates
   ipcMain.on('timer:subscribe', (event: Electron.IpcMainEvent) => {
+    // Remove previous listeners from this sender
+    const prevCleanup = timerSubs.get(event.sender);
+    if (prevCleanup) prevCleanup.forEach(fn => fn());
+
     const timerTickHandler = (timer: Timer) => {
       if (!event.sender.isDestroyed()) {
         event.sender.send('timer:tick', timer);
@@ -1352,11 +1361,17 @@ export function setupIpcHandlers(): void {
     timerManager.on('timer-created', timerCreatedHandler);
     timerManager.on('timer-completed', timerCompletedHandler);
 
+    const cleanup = [
+      () => timerManager.off('timer-tick', timerTickHandler),
+      () => timerManager.off('timer-created', timerCreatedHandler),
+      () => timerManager.off('timer-completed', timerCompletedHandler),
+    ];
+    timerSubs.set(event.sender, cleanup);
+
     // Clean up on window close
     event.sender.on('destroyed', () => {
-      timerManager.off('timer-tick', timerTickHandler);
-      timerManager.off('timer-created', timerCreatedHandler);
-      timerManager.off('timer-completed', timerCompletedHandler);
+      cleanup.forEach(fn => fn());
+      timerSubs.delete(event.sender);
     });
   });
 
@@ -1383,6 +1398,10 @@ export function setupIpcHandlers(): void {
 
   // Subscribe to reminder events
   ipcMain.on('reminder:subscribe', (event: Electron.IpcMainEvent) => {
+    // Remove previous listeners from this sender
+    const prevCleanup = reminderSubs.get(event.sender);
+    if (prevCleanup) prevCleanup.forEach(fn => fn());
+
     const reminderCreatedHandler = (reminder: unknown) => {
       if (!event.sender.isDestroyed()) {
         event.sender.send('reminder:created', reminder);
@@ -1405,11 +1424,17 @@ export function setupIpcHandlers(): void {
     reminderManager.on('reminder-triggered', reminderTriggeredHandler);
     reminderManager.on('reminder-cancelled', reminderCancelledHandler);
 
+    const cleanup = [
+      () => reminderManager.off('reminder-created', reminderCreatedHandler),
+      () => reminderManager.off('reminder-triggered', reminderTriggeredHandler),
+      () => reminderManager.off('reminder-cancelled', reminderCancelledHandler),
+    ];
+    reminderSubs.set(event.sender, cleanup);
+
     // Clean up on window close
     event.sender.on('destroyed', () => {
-      reminderManager.off('reminder-created', reminderCreatedHandler);
-      reminderManager.off('reminder-triggered', reminderTriggeredHandler);
-      reminderManager.off('reminder-cancelled', reminderCancelledHandler);
+      cleanup.forEach(fn => fn());
+      reminderSubs.delete(event.sender);
     });
   });
 
@@ -1641,6 +1666,10 @@ export function setupIpcHandlers(): void {
 
   // Subscribe to recording events
   ipcMain.on(IPC_CHANNELS.RECORDING_SUBSCRIBE, (event: Electron.IpcMainEvent) => {
+    // Remove previous listeners from this sender
+    const prevCleanup = recordingSubs.get(event.sender);
+    if (prevCleanup) prevCleanup.forEach(fn => fn());
+
     const progressHandler = (recording: Recording) => {
       if (!event.sender.isDestroyed()) {
         event.sender.send(IPC_CHANNELS.RECORDING_PROGRESS, recording);
@@ -1670,12 +1699,18 @@ export function setupIpcHandlers(): void {
     recordingManager.on('recording-stopped', stoppedHandler);
     recordingManager.on('recording-error', errorHandler);
 
+    const cleanup = [
+      () => recordingManager.off('recording-progress', progressHandler),
+      () => recordingManager.off('recording-started', startedHandler),
+      () => recordingManager.off('recording-stopped', stoppedHandler),
+      () => recordingManager.off('recording-error', errorHandler),
+    ];
+    recordingSubs.set(event.sender, cleanup);
+
     // Clean up on window close
     event.sender.on('destroyed', () => {
-      recordingManager.off('recording-progress', progressHandler);
-      recordingManager.off('recording-started', startedHandler);
-      recordingManager.off('recording-stopped', stoppedHandler);
-      recordingManager.off('recording-error', errorHandler);
+      cleanup.forEach(fn => fn());
+      recordingSubs.delete(event.sender);
     });
   });
 }

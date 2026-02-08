@@ -24,6 +24,9 @@ export function ClipboardHistoryPanel({ isOpen, onClose, variant = 'modal' }: Pr
     if (isOpen) {
       loadEntries();
       setFocusedIndex(0);
+    } else {
+      // Free thumbnail memory when panel closes
+      setThumbnailCache({});
     }
   }, [isOpen]);
 
@@ -31,15 +34,11 @@ export function ClipboardHistoryPanel({ isOpen, onClose, variant = 'modal' }: Pr
     try {
       setIsLoading(true);
       const data = await window.electronAPI.clipboardHistoryGet();
-      console.log('[UI] Loaded entries:', data?.length, 'entries');
-      console.log('[UI] Entry types:', data?.map(e => e.type).join(', '));
       setEntries(data || []);
 
-      // Load thumbnails for image entries
-      const imageEntries = (data || []).filter((e): e is ImageClipboardEntry => e.type === 'image');
-      console.log('[UI] Found', imageEntries.length, 'image entries');
+      // Load thumbnails for image entries (cap at 20 to limit memory)
+      const imageEntries = (data || []).filter((e): e is ImageClipboardEntry => e.type === 'image').slice(0, 20);
       for (const entry of imageEntries) {
-        console.log('[UI] Image entry:', entry.id, 'thumbnailPath:', entry.thumbnailPath);
         if (!thumbnailCache[entry.thumbnailPath]) {
           loadThumbnail(entry.thumbnailPath);
         }
@@ -53,9 +52,7 @@ export function ClipboardHistoryPanel({ isOpen, onClose, variant = 'modal' }: Pr
 
   const loadThumbnail = async (thumbnailPath: string) => {
     try {
-      console.log('[UI] Loading thumbnail:', thumbnailPath);
       const dataUrl = await window.electronAPI.clipboardHistoryGetImage(thumbnailPath);
-      console.log('[UI] Got dataUrl:', dataUrl ? `${dataUrl.substring(0, 50)}... (${dataUrl.length} chars)` : 'null');
       if (dataUrl) {
         setThumbnailCache(prev => ({ ...prev, [thumbnailPath]: dataUrl }));
       }
