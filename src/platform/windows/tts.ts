@@ -1,9 +1,7 @@
 // Text-to-Speech using Windows System.Speech.Synthesis
 
+import { runPowerShell } from './powershell-pool';
 import { exec, ChildProcess } from 'child_process';
-import { promisify } from 'util';
-
-const execAsync = promisify(exec);
 
 export interface TTSOptions {
   voice?: string;
@@ -23,10 +21,7 @@ export async function listVoices(): Promise<TTSVoice[]> {
   const script = `Add-Type -AssemblyName System.Speech; $synth = New-Object System.Speech.Synthesis.SpeechSynthesizer; $voices = $synth.GetInstalledVoices() | ForEach-Object { @{ name = $_.VoiceInfo.Name; culture = $_.VoiceInfo.Culture.Name; gender = $_.VoiceInfo.Gender.ToString() } }; $synth.Dispose(); $voices | ConvertTo-Json -Compress`;
 
   try {
-    const { stdout } = await execAsync(
-      `powershell -NoProfile -Command "${script}"`,
-      { timeout: 10000 }
-    );
+    const { stdout } = await runPowerShell(script);
     const parsed = JSON.parse(stdout.trim());
     return Array.isArray(parsed) ? parsed : [parsed];
   } catch {

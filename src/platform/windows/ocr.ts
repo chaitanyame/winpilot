@@ -1,13 +1,10 @@
 // Windows OCR Implementation
 // Uses Windows.Media.Ocr API via PowerShell for text extraction
 
-import { exec } from 'child_process';
-import { promisify } from 'util';
+import { runPowerShell } from './powershell-pool';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
-
-const execAsync = promisify(exec);
 
 /**
  * Annotation types for screenshot markup
@@ -101,10 +98,7 @@ $ocrResult.Text
 `;
 
     try {
-      const { stdout } = await execAsync(
-        `powershell -NoProfile -ExecutionPolicy Bypass -Command "${script.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`,
-        { timeout: 30000, maxBuffer: 10 * 1024 * 1024 }
-      );
+      const { stdout } = await runPowerShell(script);
       return stdout.trim();
     } catch (error: any) {
       console.error('OCR extraction failed:', error);
@@ -131,10 +125,7 @@ Write-Output "OK"
 `;
 
     try {
-      const { stdout } = await execAsync(
-        `powershell -NoProfile -ExecutionPolicy Bypass -Command "${saveClipboardScript.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`,
-        { timeout: 10000 }
-      );
+      const { stdout } = await runPowerShell(saveClipboardScript);
 
       if (!stdout.includes('OK')) {
         throw new Error('No image found in clipboard');
@@ -184,10 +175,7 @@ Write-Output "OK"
 `;
 
     try {
-      const { stdout } = await execAsync(
-        `powershell -NoProfile -ExecutionPolicy Bypass -Command "${captureScript.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`,
-        { timeout: 60000 } // Longer timeout for user interaction
-      );
+      const { stdout } = await runPowerShell(captureScript);
 
       if (!stdout.includes('OK')) {
         throw new Error('Region capture cancelled or failed');
@@ -275,10 +263,7 @@ Write-Output '${outputPath.replace(/\\/g, '\\\\')}'
 `;
 
     try {
-      const { stdout } = await execAsync(
-        `powershell -NoProfile -ExecutionPolicy Bypass -Command "${script.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`,
-        { timeout: 30000 }
-      );
+      const { stdout } = await runPowerShell(script);
       return stdout.trim();
     } catch (error: any) {
       throw new Error(`Failed to annotate screenshot: ${error.message || error}`);

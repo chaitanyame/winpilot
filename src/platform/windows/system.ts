@@ -6,6 +6,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { ISystem } from '../index';
 import type { SystemInfoData } from '../../shared/types';
+import { runPowerShell } from './powershell-pool';
 
 const execAsync = promisify(exec);
 
@@ -46,7 +47,7 @@ export class WindowsSystem implements ISystem {
             [int]([Audio]::GetVolume() * 100)
           `;
 
-          const { stdout } = await execAsync(`powershell -NoProfile -Command "${script.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`);
+          const { stdout } = await runPowerShell(script);
           return parseInt(stdout.trim(), 10);
         }
 
@@ -54,15 +55,15 @@ export class WindowsSystem implements ISystem {
           if (params.level === undefined) return false;
           
           // Use nircmd for reliable volume control
-          await execAsync(`powershell -NoProfile -Command "$obj = New-Object -ComObject WScript.Shell; $obj.SendKeys([char]173)"`);
-          await execAsync(`powershell -NoProfile -Command "(New-Object -ComObject WScript.Shell).SendKeys([char]175 * ${Math.round(params.level / 2)})"`);
+          await runPowerShell(`$obj = New-Object -ComObject WScript.Shell; $obj.SendKeys([char]173)`);
+          await runPowerShell(`(New-Object -ComObject WScript.Shell).SendKeys([char]175 * ${Math.round(params.level / 2)})`);
           
           return true;
         }
 
         case 'mute':
         case 'unmute': {
-          await execAsync(`powershell -NoProfile -Command "(New-Object -ComObject WScript.Shell).SendKeys([char]173)"`);
+          await runPowerShell(`(New-Object -ComObject WScript.Shell).SendKeys([char]173)`);
           return true;
         }
 
@@ -79,14 +80,14 @@ export class WindowsSystem implements ISystem {
     try {
       if (params.action === 'get') {
         const script = `(Get-WmiObject -Namespace root/WMI -Class WmiMonitorBrightness).CurrentBrightness`;
-        const { stdout } = await execAsync(`powershell -NoProfile -Command "${script}"`);
+        const { stdout } = await runPowerShell(script);
         return parseInt(stdout.trim(), 10);
       }
 
       if (params.action === 'set' && params.level !== undefined) {
         const level = Math.max(0, Math.min(100, params.level));
         const script = `(Get-WmiObject -Namespace root/WMI -Class WmiMonitorBrightnessMethods).WmiSetBrightness(1, ${level})`;
-        await execAsync(`powershell -NoProfile -Command "${script}"`);
+        await runPowerShell(script);
         return true;
       }
 
@@ -104,7 +105,7 @@ export class WindowsSystem implements ISystem {
       const fullPath = path.join(savePath, filename);
 
       // Ensure directory exists
-      await execAsync(`powershell -NoProfile -Command "New-Item -ItemType Directory -Force -Path '${savePath}'"`);
+      await runPowerShell(`New-Item -ItemType Directory -Force -Path '${savePath}'`);
 
       const script = `
         Add-Type -AssemblyName System.Windows.Forms
@@ -119,7 +120,7 @@ export class WindowsSystem implements ISystem {
         Write-Output '${fullPath.replace(/\\/g, '\\\\')}'
       `;
 
-      await execAsync(`powershell -NoProfile -Command "${script.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`);
+      await runPowerShell(script);
       return fullPath;
     } catch (error) {
       console.error('Error taking screenshot:', error);
@@ -133,7 +134,7 @@ export class WindowsSystem implements ISystem {
       if (params.action === 'status') {
         const script = `(Get-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\CloudStore\\Store\\DefaultAccount\\Current\\default$windows.immersivecontrolcenter_cw5n1h2txyewy\\ApplicationPrivacy\\windows.immersivecontrolcenter_cw5n1h2txyewy!App\\SettingsHandlers_Notifications_FocusAssistSetting' -ErrorAction SilentlyContinue).Data`;
         try {
-          const { stdout } = await execAsync(`powershell -NoProfile -Command "${script}"`);
+          const { stdout } = await runPowerShell(script);
           return stdout.trim() !== '';
         } catch {
           return false;
@@ -225,7 +226,7 @@ export class WindowsSystem implements ISystem {
         } | ConvertTo-Json -Depth 10 -Compress
       `;
 
-      const { stdout } = await execAsync(`powershell -NoProfile -Command "${script.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`);
+      const { stdout } = await runPowerShell(script);
 
       const data = JSON.parse(stdout.trim());
 
@@ -275,11 +276,6 @@ export class WindowsSystem implements ISystem {
     try {
       console.log('[System] Simulating paste...');
       
-      // Write PowerShell script to temp file to avoid escaping issues
-      const os = await import('os');
-      const fs = await import('fs/promises');
-      const scriptPath = path.join(os.tmpdir(), `paste_script_${Date.now()}.ps1`);
-      
       const script = `Add-Type @"
 using System;
 using System.Runtime.InteropServices;
@@ -311,11 +307,7 @@ ${typeof targetHwnd === 'number' && targetHwnd > 0 ? `[KeySender]::SetForeground
 [KeySender]::SendCtrlV()
 `;
       
-      await fs.writeFile(scriptPath, script, 'utf-8');
-      await execAsync(`powershell -NoProfile -ExecutionPolicy Bypass -File "${scriptPath}"`);
-      
-      // Clean up temp file
-      await fs.unlink(scriptPath).catch(() => {});
+      await runPowerShell(script);
       
       console.log('[System] Paste command sent');
       return true;
@@ -327,10 +319,6 @@ ${typeof targetHwnd === 'number' && targetHwnd > 0 ? `[KeySender]::SetForeground
 
   async getForegroundWindowHandle(): Promise<number> {
     try {
-      const os = await import('os');
-      const fs = await import('fs/promises');
-      const scriptPath = path.join(os.tmpdir(), `get_hwnd_${Date.now()}.ps1`);
-      
       const script = `Add-Type @"
 using System;
 using System.Runtime.InteropServices;
@@ -342,9 +330,7 @@ public class Win32 {
 $hwnd = [Win32]::GetForegroundWindow()
 [int]$hwnd
 `;
-      await fs.writeFile(scriptPath, script, 'utf-8');
-      const { stdout } = await execAsync(`powershell -NoProfile -ExecutionPolicy Bypass -File "${scriptPath}"`);
-      await fs.unlink(scriptPath).catch(() => {});
+      const { stdout } = await runPowerShell(script);
       
       const handle = parseInt(stdout.trim(), 10);
       return Number.isNaN(handle) ? 0 : handle;
@@ -356,10 +342,6 @@ $hwnd = [Win32]::GetForegroundWindow()
 
   async setForegroundWindow(hwnd: number): Promise<boolean> {
     try {
-      const os = await import('os');
-      const fs = await import('fs/promises');
-      const scriptPath = path.join(os.tmpdir(), `set_hwnd_${Date.now()}.ps1`);
-
       const script = `Add-Type @"
 using System;
 using System.Runtime.InteropServices;
@@ -371,9 +353,7 @@ public class Win32 {
 "@
 [Win32]::SetForegroundWindow([IntPtr]${hwnd})
 `;
-      await fs.writeFile(scriptPath, script, 'utf-8');
-      await execAsync(`powershell -NoProfile -ExecutionPolicy Bypass -File "${scriptPath}"`);
-      await fs.unlink(scriptPath).catch(() => {});
+      await runPowerShell(script);
 
       console.log('[System] Foreground window set to:', hwnd);
       return true;
@@ -385,10 +365,6 @@ public class Win32 {
 
   async getActiveWindowInfo(): Promise<{ appName: string; windowTitle: string; processId: number } | null> {
     try {
-      const os = await import('os');
-      const fs = await import('fs/promises');
-      const scriptPath = path.join(os.tmpdir(), `get_active_window_${Date.now()}.ps1`);
-
       const script = `Add-Type @"
 using System;
 using System.Runtime.InteropServices;
@@ -442,9 +418,7 @@ if ($result -eq $null) {
 }
 `;
 
-      await fs.writeFile(scriptPath, script, 'utf-8');
-      const { stdout } = await execAsync(`powershell -NoProfile -ExecutionPolicy Bypass -File "${scriptPath}"`);
-      await fs.unlink(scriptPath).catch(() => {});
+      const { stdout } = await runPowerShell(script);
 
       const output = stdout.trim();
       if (!output || output === 'null') {
@@ -469,11 +443,6 @@ if ($result -eq $null) {
 
       // Save current clipboard content
       const originalClipboard = clipboard.readText();
-
-      // Write PowerShell script to simulate Ctrl+C
-      const os = await import('os');
-      const fs = await import('fs/promises');
-      const scriptPath = path.join(os.tmpdir(), `capture_text_${Date.now()}.ps1`);
 
       const script = `Add-Type @"
 using System;
@@ -500,14 +469,10 @@ public class KeySender {
 [KeySender]::SendCtrlC()
 `;
 
-      await fs.writeFile(scriptPath, script, 'utf-8');
-      await execAsync(`powershell -NoProfile -ExecutionPolicy Bypass -File "${scriptPath}"`);
+      await runPowerShell(script);
 
       // Wait for clipboard to update
       await new Promise(resolve => setTimeout(resolve, 150));
-
-      // Clean up temp file
-      await fs.unlink(scriptPath).catch(() => {});
 
       // Read new clipboard content
       const selectedText = clipboard.readText();

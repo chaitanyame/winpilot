@@ -3,6 +3,7 @@
 
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import { runPowerShell } from './powershell-pool';
 
 const execAsync = promisify(exec);
 
@@ -49,9 +50,7 @@ Add-Type -AssemblyName System.Windows.Forms
 `;
 
   try {
-    await execAsync(`powershell -NoProfile -ExecutionPolicy Bypass -Command "${script.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`, {
-      timeout: 5000,
-    });
+    await runPowerShell(script);
     // Small delay to allow the action to complete
     await new Promise(resolve => setTimeout(resolve, 100));
     return true;

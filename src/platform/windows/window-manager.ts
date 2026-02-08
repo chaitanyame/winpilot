@@ -1,16 +1,10 @@
 // Windows Window Manager Implementation
 
-import { exec } from 'child_process';
-import { promisify } from 'util';
 import { screen } from 'electron';
 import { IWindowManager } from '../index';
 import { WindowInfo } from '../../shared/types';
 import { WINDOW_LAYOUTS } from '../../shared/constants';
-import * as fs from 'fs';
-import * as path from 'path';
-import * as os from 'os';
-
-const execAsync = promisify(exec);
+import { runPowerShell } from './powershell-pool';
 
 /**
  * Escapes a string for safe use in PowerShell single-quoted strings.
@@ -145,56 +139,45 @@ public class WindowInfo {
 [WindowInfo]::GetWindows() | ConvertTo-Json -Compress
 `;
 
-      // Write script to temp file to preserve newlines (required for Add-Type here-string)
-      const tempFile = path.join(os.tmpdir(), `dc-windows-${Date.now()}.ps1`);
-      fs.writeFileSync(tempFile, script, 'utf8');
-      
-      try {
-        const { stdout } = await execAsync(`powershell -NoProfile -ExecutionPolicy Bypass -File "${tempFile}"`, {
-          maxBuffer: 10 * 1024 * 1024,
-        });
+      const { stdout } = await runPowerShell(script);
 
-        const parsed = JSON.parse(stdout || '[]');
-        const windowsArray = Array.isArray(parsed) ? parsed : [parsed];
+      const parsed = JSON.parse(stdout || '[]');
+      const windowsArray = Array.isArray(parsed) ? parsed : [parsed];
 
-        // Filter out our own app's windows (WinPilot / electron)
-        const filteredWindows = windowsArray.filter((w: any) => {
-          const title = (w.title || '').toLowerCase();
-          const app = (w.app || '').toLowerCase();
-          // Filter out our own window
-          if (title.includes('winpilot')) return false;
-          if (app === 'electron' || app === 'winpilot') return false;
-          return true;
-        });
+      // Filter out our own app's windows (WinPilot / electron)
+      const filteredWindows = windowsArray.filter((w: any) => {
+        const title = (w.title || '').toLowerCase();
+        const app = (w.app || '').toLowerCase();
+        // Filter out our own window
+        if (title.includes('winpilot')) return false;
+        if (app === 'electron' || app === 'winpilot') return false;
+        return true;
+      });
 
-        // Find the currently focused external window
-        const focusedExternal = filteredWindows.find((w: any) => w.isFocused);
-        if (focusedExternal) {
-          lastFocusedExternalWindowId = focusedExternal.id;
-        }
-
-        // Map results and mark the "active" window (last focused external, not Desktop Commander)
-        return filteredWindows.map((w: any) => ({
-          id: w.id,
-          title: w.title,
-          app: w.app,
-          processId: w.processId,
-          bounds: {
-            x: w.x,
-            y: w.y,
-            width: w.width,
-            height: w.height,
-          },
-          isMinimized: w.isMinimized,
-          isMaximized: w.isMaximized,
-          // Mark as focused if it's the last known focused external window
-          isFocused: w.id === lastFocusedExternalWindowId,
-          isHiddenFromCapture: Boolean(w.isHiddenFromCapture),
-        }));
-      } finally {
-        // Clean up temp file
-        try { fs.unlinkSync(tempFile); } catch { }
+      // Find the currently focused external window
+      const focusedExternal = filteredWindows.find((w: any) => w.isFocused);
+      if (focusedExternal) {
+        lastFocusedExternalWindowId = focusedExternal.id;
       }
+
+      // Map results and mark the "active" window (last focused external, not Desktop Commander)
+      return filteredWindows.map((w: any) => ({
+        id: w.id,
+        title: w.title,
+        app: w.app,
+        processId: w.processId,
+        bounds: {
+          x: w.x,
+          y: w.y,
+          width: w.width,
+          height: w.height,
+        },
+        isMinimized: w.isMinimized,
+        isMaximized: w.isMaximized,
+        // Mark as focused if it's the last known focused external window
+        isFocused: w.id === lastFocusedExternalWindowId,
+        isHiddenFromCapture: Boolean(w.isHiddenFromCapture),
+      }));
     } catch (error) {
       console.error('Error listing windows:', error);
       return [];
@@ -244,7 +227,7 @@ public class WindowInfo {
         [Win32]::SetForegroundWindow($handle)
       `;
 
-      await execAsync(`powershell -NoProfile -Command "${script.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`);
+      await runPowerShell(script);
       return true;
     } catch (error) {
       console.error('Error focusing window:', error);
@@ -303,17 +286,8 @@ $height = ${heightVal}
 [Win32Move]::MoveWindow($handle, $x, $y, $width, $height, $true)
 `;
 
-      // Write script to temp file to preserve newlines for Add-Type here-string
-      const scriptPath = path.join(os.tmpdir(), `move-window-${Date.now()}.ps1`);
-      fs.writeFileSync(scriptPath, script, 'utf8');
-      
-      try {
-        await execAsync(`powershell -NoProfile -ExecutionPolicy Bypass -File "${scriptPath}"`);
-        return true;
-      } finally {
-        // Clean up temp file
-        try { fs.unlinkSync(scriptPath); } catch {}
-      }
+      await runPowerShell(script);
+      return true;
     } catch (error) {
       console.error('Error moving window:', error);
       return false;
@@ -339,17 +313,11 @@ public class Win32Close {
 "@
 [Win32Close]::PostMessage([IntPtr]::new(${params.windowId}), 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)
 `;
-        const scriptPath = path.join(os.tmpdir(), `close-window-${Date.now()}.ps1`);
-        fs.writeFileSync(scriptPath, script, 'utf8');
-        try {
-          await execAsync(`powershell -NoProfile -ExecutionPolicy Bypass -File "${scriptPath}"`);
-        } finally {
-          try { fs.unlinkSync(scriptPath); } catch {}
-        }
+        await runPowerShell(script);
       } else if (params.appName) {
         // Sanitize appName to prevent command injection
         const safeAppName = escapePowerShellString(params.appName);
-        await execAsync(`powershell -NoProfile -Command "Stop-Process -Name '${safeAppName}' -ErrorAction SilentlyContinue"`);
+        await runPowerShell(`Stop-Process -Name '${safeAppName}' -ErrorAction SilentlyContinue`);
       }
       return true;
     } catch (error) {
@@ -377,13 +345,7 @@ public class Win32Minimize {
 "@
 [Win32Minimize]::ShowWindow([IntPtr]::new(${windowId}), 6)
 `;
-      const scriptPath = path.join(os.tmpdir(), `minimize-window-${Date.now()}.ps1`);
-      fs.writeFileSync(scriptPath, script, 'utf8');
-      try {
-        await execAsync(`powershell -NoProfile -ExecutionPolicy Bypass -File "${scriptPath}"`);
-      } finally {
-        try { fs.unlinkSync(scriptPath); } catch {}
-      }
+      await runPowerShell(script);
       return true;
     } catch (error) {
       console.error('Error minimizing window:', error);
@@ -410,13 +372,7 @@ public class Win32Maximize {
 "@
 [Win32Maximize]::ShowWindow([IntPtr]::new(${windowId}), 3)
 `;
-      const scriptPath = path.join(os.tmpdir(), `maximize-window-${Date.now()}.ps1`);
-      fs.writeFileSync(scriptPath, script, 'utf8');
-      try {
-        await execAsync(`powershell -NoProfile -ExecutionPolicy Bypass -File "${scriptPath}"`);
-      } finally {
-        try { fs.unlinkSync(scriptPath); } catch {}
-      }
+      await runPowerShell(script);
       return true;
     } catch (error) {
       console.error('Error maximizing window:', error);

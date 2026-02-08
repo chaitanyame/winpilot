@@ -5,6 +5,7 @@ import { promisify } from 'util';
 import { IApps } from '../index';
 import { AppInfo } from '../../shared/types';
 import { logger } from '../../utils/logger';
+import { runPowerShell } from './powershell-pool';
 
 const execAsync = promisify(exec);
 
@@ -65,7 +66,7 @@ export class WindowsApps implements IApps {
         } | ConvertTo-Json -Compress
       `;
 
-      const { stdout } = await execAsync(`powershell -NoProfile -Command "${script.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`);
+      const { stdout } = await runPowerShell(script);
       
       if (!stdout.trim()) return [];
 
@@ -109,9 +110,7 @@ export class WindowsApps implements IApps {
         $apps | Sort-Object { $_.name } -Unique | Select-Object -First 200 | ConvertTo-Json -Compress
       `;
 
-      const { stdout } = await execAsync(`powershell -NoProfile -Command "${script.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`, {
-        maxBuffer: 10 * 1024 * 1024,
-      });
+      const { stdout } = await runPowerShell(script);
 
       if (!stdout.trim()) return [];
 
@@ -191,7 +190,8 @@ export class WindowsApps implements IApps {
     try {
       const safeName = escapePowerShellString(params.name);
       const forceFlag = params.force ? '-Force' : '';
-      await execAsync(`powershell -NoProfile -Command "Stop-Process -Name '${safeName}' ${forceFlag} -ErrorAction SilentlyContinue"`);
+      const script = `Stop-Process -Name '${safeName}' ${forceFlag} -ErrorAction SilentlyContinue`;
+      await runPowerShell(script);
       return true;
     } catch (error) {
       console.error('Error quitting app:', error);
@@ -228,7 +228,7 @@ export class WindowsApps implements IApps {
         }
       `;
 
-      const { stdout } = await execAsync(`powershell -NoProfile -Command "${script.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`);
+      const { stdout } = await runPowerShell(script);
       return stdout.trim() === 'true';
     } catch (error) {
       console.error('Error switching to app:', error);
@@ -318,10 +318,7 @@ try {
 }
 `;
 
-      const { stdout, stderr } = await execAsync(
-        `powershell -NoProfile -ExecutionPolicy Bypass -Command "${script.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`,
-        { timeout: 60000 }
-      );
+      const { stdout, stderr } = await runPowerShell(script);
 
       logger.platform('createPowerPoint result', { stdout: stdout.trim(), stderr: stderr?.trim() });
       return stdout.trim() === 'SUCCESS';

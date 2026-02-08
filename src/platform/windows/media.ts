@@ -1,10 +1,7 @@
 // Windows Media Control Implementation
 // Uses system media keys via PowerShell for universal media control
 
-import { exec } from 'child_process';
-import { promisify } from 'util';
-
-const execAsync = promisify(exec);
+import { runPowerShell } from './powershell-pool';
 
 /**
  * Media Control Interface
@@ -47,9 +44,7 @@ public class MediaKeys {
 `;
 
   try {
-    await execAsync(`powershell -NoProfile -ExecutionPolicy Bypass -Command "${script.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`, {
-      timeout: 5000,
-    });
+    await runPowerShell(script);
     return true;
   } catch (error) {
     console.error('Failed to send media key:', error);

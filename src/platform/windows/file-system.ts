@@ -1,18 +1,16 @@
 // Windows File System Implementation
 
+import { runPowerShell } from './powershell-pool';
 import * as fs from 'fs';
 import * as fsPromises from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
 import { promisify } from 'util';
-import { exec } from 'child_process';
 import { shell } from 'electron';
 import { IFileSystem } from '../index';
 import { FileInfo, FileFilter } from '../../shared/types';
 import { getFileExtension } from '../../shared/utils';
 import { assertPathAllowed, assertPathsAllowed } from '../path-validator';
-
-const execAsync = promisify(exec);
 const readdir = promisify(fs.readdir);
 const stat = promisify(fs.stat);
 const rename = promisify(fs.rename);
@@ -156,10 +154,7 @@ export class WindowsFileSystem implements IFileSystem {
         } | ConvertTo-Json -Compress
       `;
 
-      const { stdout } = await execAsync(`powershell -NoProfile -Command "${script.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`, {
-        maxBuffer: 10 * 1024 * 1024,
-        timeout: 30000,
-      });
+      const { stdout } = await runPowerShell(script);
 
       if (!stdout.trim()) return [];
 

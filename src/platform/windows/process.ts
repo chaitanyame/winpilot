@@ -1,11 +1,8 @@
 // Windows Process Management Implementation
 
-import { exec } from 'child_process';
-import { promisify } from 'util';
 import { IProcess } from '../index';
 import { ProcessInfo } from '../../shared/types';
-
-const execAsync = promisify(exec);
+import { runPowerShell } from './powershell-pool';
 
 export class WindowsProcess implements IProcess {
 
@@ -27,9 +24,7 @@ export class WindowsProcess implements IProcess {
         } | ConvertTo-Json -Compress
       `;
 
-      const { stdout } = await execAsync(`powershell -NoProfile -Command "${script.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`, {
-        maxBuffer: 10 * 1024 * 1024,
-      });
+      const { stdout } = await runPowerShell(script);
 
       if (!stdout.trim()) return [];
 
@@ -71,7 +66,7 @@ export class WindowsProcess implements IProcess {
         return null;
       }
 
-      const { stdout } = await execAsync(`powershell -NoProfile -Command "${script.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`);
+      const { stdout } = await runPowerShell(script);
       
       if (!stdout.trim()) return null;
 
@@ -94,9 +89,9 @@ export class WindowsProcess implements IProcess {
       const forceFlag = params.force ? '-Force' : '';
 
       if (params.pid) {
-        await execAsync(`powershell -NoProfile -Command "Stop-Process -Id ${params.pid} ${forceFlag} -ErrorAction SilentlyContinue"`);
+        await runPowerShell(`Stop-Process -Id ${params.pid} ${forceFlag} -ErrorAction SilentlyContinue`);
       } else if (params.name) {
-        await execAsync(`powershell -NoProfile -Command "Stop-Process -Name '${params.name}' ${forceFlag} -ErrorAction SilentlyContinue"`);
+        await runPowerShell(`Stop-Process -Name '${params.name}' ${forceFlag} -ErrorAction SilentlyContinue`);
       } else {
         return false;
       }
@@ -124,7 +119,7 @@ export class WindowsProcess implements IProcess {
         } | ConvertTo-Json -Compress
       `;
 
-      const { stdout } = await execAsync(`powershell -NoProfile -Command "${script.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`);
+      const { stdout } = await runPowerShell(script);
 
       if (!stdout.trim()) return [];
 
