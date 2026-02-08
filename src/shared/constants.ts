@@ -160,75 +160,78 @@ const getHomePath = (): string => {
   return '';
 };
 
-export const DEFAULT_MCP_SERVERS: StoredMCPServer[] = [
-  {
-    id: 'mcp-default-filesystem',
-    config: {
-      name: 'File System Access',
-      type: 'local' as const,
-      command: 'npx',
-      args: ['-y', '@modelcontextprotocol/server-filesystem', getHomePath()],
-      tools: '*',
-      enabled: false,
-      description: 'Read and write files on your computer. No setup required.',
+// Function to generate default servers (returns fresh copy each time)
+export function getDefaultMcpServers(): StoredMCPServer[] {
+  return [
+    {
+      id: 'mcp-default-filesystem',
+      config: {
+        name: 'File System Access',
+        type: 'local' as const,
+        command: 'npx',
+        args: ['-y', '@modelcontextprotocol/server-filesystem', getHomePath()],
+        tools: '*',
+        enabled: false,
+        description: 'Read and write files on your computer. No setup required.',
+      },
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
     },
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-  },
-  {
-    id: 'mcp-default-memory',
-    config: {
-      name: 'Memory Storage',
-      type: 'local' as const,
-      command: 'npx',
-      args: ['-y', '@modelcontextprotocol/server-memory'],
-      tools: '*',
-      enabled: false,
-      description: 'Store and recall information across sessions. Perfect for taking notes.',
+    {
+      id: 'mcp-default-memory',
+      config: {
+        name: 'Memory Storage',
+        type: 'local' as const,
+        command: 'npx',
+        args: ['-y', '@modelcontextprotocol/server-memory'],
+        tools: '*',
+        enabled: false,
+        description: 'Store and recall information across sessions. Perfect for taking notes.',
+      },
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
     },
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-  },
-  {
-    id: 'mcp-default-puppeteer',
-    config: {
-      name: 'Browser Automation',
-      type: 'local' as const,
-      command: 'npx',
-      args: ['-y', '@modelcontextprotocol/server-puppeteer'],
-      tools: '*',
-      enabled: false,
-      description: 'Automate web browsers, take screenshots, and scrape websites.',
+    {
+      id: 'mcp-default-puppeteer',
+      config: {
+        name: 'Browser Automation',
+        type: 'local' as const,
+        command: 'npx',
+        args: ['-y', '@modelcontextprotocol/server-puppeteer'],
+        tools: '*',
+        enabled: false,
+        description: 'Automate web browsers, take screenshots, and scrape websites.',
+      },
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
     },
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-  },
-  {
-    id: 'mcp-default-fetch',
-    config: {
-      name: 'HTTP Requests',
-      type: 'local' as const,
-      command: 'npx',
-      args: ['-y', '@modelcontextprotocol/server-fetch'],
-      tools: '*',
-      enabled: false,
-      description: 'Make HTTP requests and fetch web content. No API key needed.',
+    {
+      id: 'mcp-default-fetch',
+      config: {
+        name: 'HTTP Requests',
+        type: 'local' as const,
+        command: 'npx',
+        args: ['-y', '@modelcontextprotocol/server-fetch'],
+        tools: '*',
+        enabled: false,
+        description: 'Make HTTP requests and fetch web content. No API key needed.',
+      },
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
     },
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-  },
-  {
-    id: 'mcp-default-windows-mcp',
-    config: {
-      name: 'Windows Automation (UI)',
-      type: 'local' as const,
-      command: 'uvx',
-      args: ['windows-mcp'],
-      tools: '*',
-      enabled: true,
-      description: 'Direct Windows UI automation: click, type, scroll, drag, screenshots, shell commands. Requires Python 3.13+ and uv.',
+    {
+      id: 'mcp-default-windows-mcp',
+      config: {
+        name: 'Windows Automation (UI)',
+        type: 'local' as const,
+        command: 'uvx',
+        args: ['windows-mcp'],
+        tools: '*',
+        enabled: true,
+        description: 'Direct Windows UI automation: click, type, scroll, drag, screenshots, shell commands. Requires Python 3.13+ and uv.',
+      },
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
     },
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-  },
-];
+  ];
+}

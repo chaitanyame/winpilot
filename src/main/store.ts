@@ -3,6 +3,7 @@
 import Store from 'electron-store';
 import { Settings, ScheduledTask, TaskLog, Timer, ClipboardEntry } from '../shared/types';
 import { DEFAULT_SETTINGS, DEFAULT_MCP_SERVERS } from '../shared/constants';
+import { getDefaultMcpServers } from '../shared/constants';
 import { StoredMCPServer, MCPServerConfig } from '../shared/mcp-types';
 
 interface StoreSchema {
@@ -58,14 +59,11 @@ function ensureDefaultMcpServers(): void {
   const existingIds = new Set(existing.map(s => s.id));
   let added = false;
 
-  for (const defaultServer of DEFAULT_MCP_SERVERS) {
+  const defaultServers = getDefaultMcpServers(); // Get fresh copy each time
+
+  for (const defaultServer of defaultServers) {
     if (!existingIds.has(defaultServer.id)) {
-      // Create with fresh timestamps
-      existing.push({
-        ...defaultServer,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-      });
+      existing.push(defaultServer);
       added = true;
     }
   }
