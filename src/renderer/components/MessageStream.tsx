@@ -361,11 +361,6 @@ const ToolCallsDisplay = memo(({
 
   const showExpanded = expanded;
 
-  // Get the current/last tool for the summary
-  const currentTool = toolCalls.find(t => t.status === 'running') || toolCalls[toolCalls.length - 1];
-  const info = getToolInfo(currentTool.name);
-  const Icon = info.icon;
-
   // Get top tool names for summary (up to 3)
   const topToolNames = toolCalls
     .slice(0, 3)
@@ -378,9 +373,9 @@ const ToolCallsDisplay = memo(({
   };
 
   return (
-    <div className="mb-2">
-      {/* Collapsed summary */}
-      {!showExpanded && toolCalls.length > 0 && (
+    <div className="mb-2 space-y-2">
+      {/* Summary button */}
+      {toolCalls.length > 0 && (
         <button
           onClick={handleToggleExpand}
           className="flex items-center gap-2 text-xs text-dark-500 dark:text-dark-400 hover:text-dark-700 dark:hover:text-dark-300 transition-colors group"
@@ -400,7 +395,7 @@ const ToolCallsDisplay = memo(({
             ) : allSuccess ? (
               <CheckCircle className="w-3.5 h-3.5" />
             ) : (
-              <Icon className="w-3.5 h-3.5" />
+              <AlertTriangle className="w-3.5 h-3.5" />
             )}
             <span>
               {toolCalls.length === 1 ? 'Action completed' : `${toolCalls.length} actions completed`}
@@ -416,7 +411,7 @@ const ToolCallsDisplay = memo(({
         </button>
       )}
 
-      {/* Expanded view */}
+      {/* Expanded view - show each tool with its reasoning */}
       <AnimatePresence>
         {showExpanded && (
           <motion.div
@@ -424,17 +419,8 @@ const ToolCallsDisplay = memo(({
             animate={{ opacity: 1, height: 'auto' }}
             exit={{ opacity: 0, height: 0 }}
             transition={{ duration: 0.2 }}
-            className="space-y-1"
+            className="space-y-2"
           >
-            {!hasRunning && toolCalls.length > 1 && (
-              <button
-                onClick={handleToggleExpand}
-                className="flex items-center gap-1 text-xs text-dark-400 hover:text-dark-600 dark:hover:text-dark-300 mb-1"
-              >
-                <ChevronDown className="w-3 h-3" />
-                <span>Collapse</span>
-              </button>
-            )}
             {toolCalls.map((tool) => {
               const toolMeta = getToolInfo(tool.name);
               const ToolIcon = toolMeta.icon;
@@ -447,7 +433,17 @@ const ToolCallsDisplay = memo(({
                   key={tool.id}
                   initial={{ opacity: 0, x: -10 }}
                   animate={{ opacity: 1, x: 0 }}
-                  className={`flex flex-col gap-1.5 px-2.5 py-1.5 rounded-lg text-xs ${
+                  className="space-y-1"
+                >
+                  {/* Reasoning - on its own line above tool */}
+                  {reasoning && (
+                    <div className="text-[11px] text-stone-500 dark:text-stone-400 italic leading-relaxed border-l-2 border-stone-300 dark:border-stone-600 pl-2">
+                      {reasoning}
+                    </div>
+                  )}
+
+                  {/* Tool execution card */}
+                  <div className={`flex flex-col gap-1.5 px-2.5 py-1.5 rounded-lg text-xs ${
                     tool.status === 'running'
                       ? 'bg-purple-500/10 dark:bg-purple-500/10 text-purple-700 dark:text-purple-300 border border-purple-500/20 dark:border-purple-500/20'
                       : tool.status === 'success'
@@ -455,42 +451,35 @@ const ToolCallsDisplay = memo(({
                         : tool.status === 'error'
                           ? 'bg-rose-500/10 dark:bg-rose-500/10 text-rose-700 dark:text-rose-400 border border-rose-500/20 dark:border-rose-500/20'
                           : 'bg-stone-100 dark:bg-stone-800 text-stone-600 dark:text-stone-400'
-                  }`}
-                >
-                  {/* Tool status line */}
-                  <div className="flex items-center gap-2">
-                    {tool.status === 'running' ? (
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    ) : tool.status === 'success' ? (
-                      <CheckCircle className="w-3.5 h-3.5" />
-                    ) : tool.status === 'error' ? (
-                      <XCircle className="w-3.5 h-3.5" />
-                    ) : (
-                      <ToolIcon className="w-3.5 h-3.5" />
+                  }`}>
+                    {/* Tool status line */}
+                    <div className="flex items-center gap-2">
+                      {tool.status === 'running' ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : tool.status === 'success' ? (
+                        <CheckCircle className="w-3.5 h-3.5" />
+                      ) : tool.status === 'error' ? (
+                        <XCircle className="w-3.5 h-3.5" />
+                      ) : (
+                        <ToolIcon className="w-3.5 h-3.5" />
+                      )}
+                      <span className="font-medium">{toolMeta.verb}</span>
+                    </div>
+
+                    {/* Command details (if available) */}
+                    {command && (
+                      <div className="text-[10px] font-mono text-stone-500 dark:text-stone-400 bg-stone-950/10 dark:bg-stone-950/40 px-2 py-1 rounded">
+                        {command}
+                      </div>
                     )}
-                    <span className="font-medium">{toolMeta.verb}</span>
+
+                    {/* Error message */}
+                    {tool.error && (
+                      <div className="text-[10px] text-rose-600 dark:text-rose-400 bg-rose-950/20 px-2 py-1 rounded">
+                        {tool.error}
+                      </div>
+                    )}
                   </div>
-
-                  {/* Command details (if available) */}
-                  {command && (
-                    <div className="text-[10px] font-mono text-stone-500 dark:text-stone-400 bg-stone-950/10 dark:bg-stone-950/40 px-2 py-1 rounded">
-                      {command}
-                    </div>
-                  )}
-
-                  {/* Reasoning - shows WHY Claude chose this action */}
-                  {reasoning && (
-                    <div className="text-[11px] text-stone-600 dark:text-stone-300 italic leading-relaxed border-l-2 border-stone-300 dark:border-stone-600 pl-2">
-                      {reasoning}
-                    </div>
-                  )}
-
-                  {/* Error message */}
-                  {tool.error && (
-                    <div className="text-[10px] text-rose-600 dark:text-rose-400 bg-rose-950/20 px-2 py-1 rounded">
-                      {tool.error}
-                    </div>
-                  )}
                 </motion.div>
               );
             })}
@@ -938,34 +927,42 @@ const InlineLogs = memo(({ logs, isExecutionComplete }: { logs: ActionLog[]; isE
             className="overflow-hidden"
           >
             <div className="space-y-2">
-              {logs.map(log => (
-                <div key={log.id} className="p-2.5 rounded-lg bg-stone-900/50 border border-stone-700/60">
-                  <div className="flex items-center gap-2 text-xs">
-                    {log.status === 'success' ? (
-                      <CheckCircle className="w-3.5 h-3.5 text-emerald-400" />
-                    ) : log.status === 'error' ? (
-                      <XCircle className="w-3.5 h-3.5 text-rose-400" />
-                    ) : log.status === 'pending' ? (
-                      <Loader2 className="w-3.5 h-3.5 text-amber-400 animate-spin" />
-                    ) : (
-                      <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+              {logs.map(log => {
+                const { reasoning } = parseReasoning(log.details);
+                
+                return (
+                  <div key={log.id} className="space-y-1">
+                    {/* Reasoning - on its own line above tool */}
+                    {reasoning && (
+                      <div className="text-[11px] text-stone-500 dark:text-stone-400 italic leading-relaxed border-l-2 border-stone-300 dark:border-stone-600 pl-2">
+                        {reasoning}
+                      </div>
                     )}
-                    <span className="text-stone-400 font-mono">{log.timestamp}</span>
-                    <span className="text-stone-200 font-medium">{log.tool}</span>
+                    {/* Tool execution card */}
+                    <div className="p-2.5 rounded-lg bg-stone-900/50 border border-stone-700/60">
+                      <div className="flex items-center gap-2 text-xs">
+                        {log.status === 'success' ? (
+                          <CheckCircle className="w-3.5 h-3.5 text-emerald-400" />
+                        ) : log.status === 'error' ? (
+                          <XCircle className="w-3.5 h-3.5 text-rose-400" />
+                        ) : log.status === 'pending' ? (
+                          <Loader2 className="w-3.5 h-3.5 text-amber-400 animate-spin" />
+                        ) : (
+                          <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+                        )}
+                        <span className="text-stone-400 font-mono">{log.timestamp}</span>
+                        <span className="text-stone-200 font-medium">{log.tool}</span>
+                      </div>
+                      <div className="text-[11px] text-stone-300 mt-1">{log.description}</div>
+                      {log.error && (
+                        <div className="text-[10px] text-rose-400 font-mono break-all mt-1 rounded-md bg-rose-950/30 border border-rose-900/40 p-2">
+                          {log.error}
+                        </div>
+                      )}
+                    </div>
                   </div>
-                  <div className="text-[11px] text-stone-300 mt-1">{log.description}</div>
-                  {log.details && (
-                    <div className="text-[10px] text-stone-400 font-mono whitespace-pre-wrap mt-1 rounded-md bg-stone-950/40 border border-stone-800/60 p-2">
-                      {log.details}
-                    </div>
-                  )}
-                  {log.error && (
-                    <div className="text-[10px] text-rose-400 font-mono break-all mt-1 rounded-md bg-rose-950/30 border border-rose-900/40 p-2">
-                      {log.error}
-                    </div>
-                  )}
-                </div>
-              ))}
+                );
+              })}
             </div>
           </motion.div>
         )}

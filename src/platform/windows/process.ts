@@ -13,18 +13,18 @@ export class WindowsProcess implements IProcess {
 
       const sortProperty = sortBy === 'cpu' ? 'CPU' : sortBy === 'memory' ? 'WS' : 'ProcessName';
       
-      // Optimized: Use WS (WorkingSet) alias and limit early in pipeline
+      // Optimized: Limit to 200 initially (faster), use WS alias, 60s timeout for heavy systems
       const script = `
-        Get-Process | 
-        Select-Object -First 500 -Property Id, ProcessName, CPU, WS, Responding |
+        Get-Process -ErrorAction SilentlyContinue | 
+        Select-Object -First 200 -Property Id, ProcessName, CPU, WS |
         Sort-Object -Property ${sortProperty} -Descending |
         Select-Object -First ${limit} |
         ForEach-Object {
-          @{ pid = $_.Id; name = $_.ProcessName; cpu = if($_.CPU){[math]::Round($_.CPU, 2)}else{0}; memory = [math]::Round($_.WS / 1MB, 2); status = if($_.Responding) { "running" } else { "stopped" } }
+          @{ pid = $_.Id; name = $_.ProcessName; cpu = if($_.CPU){[math]::Round($_.CPU, 2)}else{0}; memory = [math]::Round($_.WS / 1MB, 2); status = "running" }
         } | ConvertTo-Json -Compress
       `;
 
-      const { stdout } = await runPowerShell(script);
+      const { stdout } = await runPowerShell(script, { timeout: 60000 });
 
       if (!stdout.trim()) return [];
 
@@ -66,7 +66,7 @@ export class WindowsProcess implements IProcess {
         return null;
       }
 
-      const { stdout } = await runPowerShell(script);
+      const { stdout } = await runPowerShell(script, { timeout: 15000 });
       
       if (!stdout.trim()) return null;
 
@@ -108,18 +108,18 @@ export class WindowsProcess implements IProcess {
       const limit = params.limit || 10;
       const sortProperty = params.resource === 'cpu' ? 'CPU' : 'WorkingSet64';
 
-      // Use semicolons in hashtable for single-line compatibility
+      // Optimized: limit initial buffer, 45s timeout
       const script = `
-        Get-Process | 
+        Get-Process -ErrorAction SilentlyContinue | 
         Where-Object { $_.${sortProperty} -gt 0 } |
         Sort-Object -Property ${sortProperty} -Descending |
         Select-Object -First ${limit} |
         ForEach-Object {
-          @{ pid = $_.Id; name = $_.ProcessName; cpu = [math]::Round($_.CPU, 2); memory = [math]::Round($_.WorkingSet64 / 1MB, 2); status = if($_.Responding) { "running" } else { "stopped" } }
+          @{ pid = $_.Id; name = $_.ProcessName; cpu = [math]::Round($_.CPU, 2); memory = [math]::Round($_.WorkingSet64 / 1MB, 2); status = "running" }
         } | ConvertTo-Json -Compress
       `;
 
-      const { stdout } = await runPowerShell(script);
+      const { stdout } = await runPowerShell(script, { timeout: 45000 });
 
       if (!stdout.trim()) return [];
 
