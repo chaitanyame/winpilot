@@ -274,10 +274,26 @@ export class CopilotController {
       });
 
       logger.copilot('Session created', { sessionId: this.session.sessionId });
+      
+      // Debug: Log available tools
+      if (this.session && 'listTools' in this.session && typeof this.session.listTools === 'function') {
+        try {
+          const availableTools = await (this.session as any).listTools();
+          logger.copilot('Available tools in session:', {
+            count: availableTools.length,
+            tools: availableTools.map((t: any) => t.name || t)
+          });
+        } catch (e) {
+          logger.copilot('Could not list tools:', e);
+        }
+      }
+      
       this.isInitialized = true;
     } catch (error) {
       // Check if error is related to MCP server connection
       const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error('Copilot', 'Session creation failed', error);
+      
       if (errorMessage.includes('MCP') || errorMessage.includes('chrome') || errorMessage.includes('reconnect')) {
         const mcpServerNames = Object.keys(mcpServers).length > 0
           ? Object.keys(mcpServers).join(', ')

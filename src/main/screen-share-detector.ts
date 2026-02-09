@@ -18,6 +18,7 @@ export class ScreenShareDetector {
   private timer: NodeJS.Timeout | null = null;
   private isActive = false;
   private listeners: Array<(active: boolean) => void> = [];
+  private isPolling = false; // Prevent concurrent polls
 
   start(): void {
     if (this.timer) return;
@@ -43,18 +44,29 @@ export class ScreenShareDetector {
   }
 
   private async poll(): Promise<void> {
-    const adapter = getPlatformAdapter();
-    const processes = await adapter.process.listProcesses({ sortBy: 'name', limit: 200 });
-    const running = processes.map(p => p.name.toLowerCase());
-    if (running.length === 0) {
+    // Skip if previous poll still running
+    if (this.isPolling) {
+      logger.copilot('[ScreenShareDetector] Skipping poll - previous still running');
       return;
     }
-    const isSharing = running.some(name => SCREEN_SHARE_APPS.some(app => name.includes(app)));
 
-    if (isSharing !== this.isActive) {
-      this.isActive = isSharing;
-      logger.copilot(`[ScreenShareDetector] Screen sharing status changed: ${isSharing ? 'ACTIVE' : 'INACTIVE'}`);
-      this.listeners.forEach(listener => listener(isSharing));
+    this.isPolling = true;
+    try {
+      const adapter = getPlatformAdapter();
+      const processes = await adapter.process.listProcesses({ sortBy: 'name', limit: 200 });
+      const running = processes.map(p => p.name.toLowerCase());
+      if (running.length === 0) {
+        return;
+      }
+      const isSharing = running.some(name => SCREEN_SHARE_APPS.some(app => name.includes(app)));
+
+      if (isSharing !== this.isActive) {
+        this.isActive = isSharing;
+        logger.copilot(`[ScreenShareDetector] Screen sharing status changed: ${isSharing ? 'ACTIVE' : 'INACTIVE'}`);
+        this.listeners.forEach(listener => listener(isSharing));
+      }
+    } finally {
+      this.isPolling = false;
     }
   }
 }

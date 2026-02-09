@@ -11,16 +11,16 @@ export class WindowsProcess implements IProcess {
       const sortBy = params?.sortBy || 'memory';
       const limit = params?.limit || 50;
 
-      const sortProperty = sortBy === 'cpu' ? 'CPU' : sortBy === 'memory' ? 'WorkingSet64' : 'ProcessName';
+      const sortProperty = sortBy === 'cpu' ? 'CPU' : sortBy === 'memory' ? 'WS' : 'ProcessName';
       
-      // Use semicolons in hashtable for single-line compatibility
+      // Optimized: Use WS (WorkingSet) alias and limit early in pipeline
       const script = `
         Get-Process | 
-        Select-Object -Property Id, ProcessName, CPU, WorkingSet64, Responding |
+        Select-Object -First 500 -Property Id, ProcessName, CPU, WS, Responding |
         Sort-Object -Property ${sortProperty} -Descending |
         Select-Object -First ${limit} |
         ForEach-Object {
-          @{ pid = $_.Id; name = $_.ProcessName; cpu = [math]::Round($_.CPU, 2); memory = [math]::Round($_.WorkingSet64 / 1MB, 2); status = if($_.Responding) { "running" } else { "stopped" } }
+          @{ pid = $_.Id; name = $_.ProcessName; cpu = if($_.CPU){[math]::Round($_.CPU, 2)}else{0}; memory = [math]::Round($_.WS / 1MB, 2); status = if($_.Responding) { "running" } else { "stopped" } }
         } | ConvertTo-Json -Compress
       `;
 
