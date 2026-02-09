@@ -170,34 +170,6 @@ export class CopilotController {
     }
   }
 
-  /**
-   * Destroy the copilot client and clean up all resources
-   */
-  destroy(): void {
-    // Stop cleanup interval
-    if (this.cleanupIntervalId) {
-      clearInterval(this.cleanupIntervalId);
-      this.cleanupIntervalId = null;
-      logger.copilot('Stopped cleanup interval');
-    }
-
-    // Clean up session if active
-    if (this.session) {
-      this.unsubscribe?.();
-      this.unsubscribe = null;
-      this.session = null;
-    }
-
-    // Clear all data structures
-    this.toolExecutionMap.clear();
-    this.toolNameCache.clear();
-    this.currentTurnResults = [];
-    this.currentAssistantResponse = '';
-    this.eventQueue = [];
-
-    logger.copilot('CopilotClient destroyed and cleaned up');
-  }
-
   /** Get cached formatted tool name to avoid repeated regex operations */
   private getFormattedToolName(toolName: string): { display: string; description: string } {
     let cached = this.toolNameCache.get(toolName);
@@ -1362,7 +1334,12 @@ Always explain findings in plain language. Never execute risky fixes without exp
     }
     await this.client.stop();
     this.toolExecutionMap.clear();
+    this.toolNameCache.clear();
+    this.currentTurnResults = [];
+    this.currentAssistantResponse = '';
+    this.eventQueue = [];
     this.isInitialized = false;
+    logger.copilot('CopilotController destroyed and cleaned up');
   }
 }
 

@@ -464,7 +464,7 @@ export function setupIpcHandlers(): void {
     senderWindow?.hide();
   });
   ipcMain.on('app:show', () => showCommandWindow());
-  ipcMain.handle('app:autoHideSuppressed', (_event: Electron.IpcMainEvent, value: boolean) => {
+  ipcMain.handle('app:autoHideSuppressed', (_event, value: boolean) => {
     setAutoHideSuppressed(Boolean(value));
     return true;
   });

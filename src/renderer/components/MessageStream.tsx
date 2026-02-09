@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState, memo, useCallback } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState, memo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { User, Bot, Loader2, CheckCircle, XCircle, ChevronDown,
   MonitorUp, FolderOpen, AppWindow, Volume2, Clipboard, Cpu, FileText, AlertTriangle } from 'lucide-react';
@@ -645,17 +645,19 @@ const MessageStream = memo(function MessageStream({ messages, isLoading, actionL
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   
-  // === SCROLL STATE MANAGEMENT (R1-R4) ===
-  const [isAtBottom, setIsAtBottom] = useState(true);
+  // === SCROLL STATE MANAGEMENT ===
   const [showScrollButton, setShowScrollButton] = useState(false);
-  const [userScrolledAway, setUserScrolledAway] = useState(false); // R2: Manual override flag
+  const [userScrolledAway, setUserScrolledAway] = useState(false);
   const prevMessageCountRef = useRef(messages.length);
   const prevIsLoadingRef = useRef(isLoading);
   const scrollParentRef = useRef<HTMLElement | null>(null);
+  const lastUserMessageIdRef = useRef<string | null>(null);
+  // scrollMode: 'follow-bottom' = auto-scroll to bottom, 'pinned' = don't auto-scroll
+  const scrollModeRef = useRef<'follow-bottom' | 'pinned'>('follow-bottom');
   
   // Threshold constants
-  const BOTTOM_THRESHOLD_PX = 20; // R1: Within 20px = "at bottom"
-  const SCROLL_AWAY_THRESHOLD_PX = 20; // R2: User must scroll 20px+ to detach
+  const BOTTOM_THRESHOLD_PX = 20;
+  const SCROLL_AWAY_THRESHOLD_PX = 20;
 
   const userMessageTimestamps = useMemo(() =>
     messages
@@ -701,6 +703,13 @@ const MessageStream = memo(function MessageStream({ messages, isLoading, actionL
     return distanceFromBottom <= BOTTOM_THRESHOLD_PX;
   }, [BOTTOM_THRESHOLD_PX]);
 
+  // Helper: check if content is shorter than scroll container (new conversation)
+  const isContentShorterThanViewport = useCallback((): boolean => {
+    const scrollParent = scrollParentRef.current;
+    if (!scrollParent) return true;
+    return scrollParent.scrollHeight <= scrollParent.clientHeight + BOTTOM_THRESHOLD_PX;
+  }, [BOTTOM_THRESHOLD_PX]);
+
   // R1 & R2: Track scroll position and detect user manual scroll
   useEffect(() => {
     const container = containerRef.current;
@@ -714,97 +723,158 @@ const MessageStream = memo(function MessageStream({ messages, isLoading, actionL
     let lastScrollHeight = scrollParent.scrollHeight;
 
     let ticking = false;
+    const updateScrollState = () => {
+      const currentScrollTop = scrollParent.scrollTop;
+      const currentScrollHeight = scrollParent.scrollHeight;
+      const atBottom = checkIsAtBottom(scrollParent);
+
+      const contentGrew = currentScrollHeight > lastScrollHeight;
+      const userScrolledUp = currentScrollTop < lastScrollTop - SCROLL_AWAY_THRESHOLD_PX;
+
+      // If user manually scrolls up during loading, switch to pinned mode
+      if (isLoading && userScrolledUp && !contentGrew) {
+        setUserScrolledAway(true);
+        scrollModeRef.current = 'pinned';
+      }
+
+      // If user scrolls back to bottom, re-enable follow mode
+      if (atBottom && scrollModeRef.current === 'pinned') {
+        // Only switch back to follow if user deliberately scrolled to bottom
+        // (not just because content is short)
+        if (currentScrollHeight > scrollParent.clientHeight + BOTTOM_THRESHOLD_PX) {
+          scrollModeRef.current = 'follow-bottom';
+          setUserScrolledAway(false);
+        }
+      }
+
+      const contentOverflows = scrollParent.scrollHeight > scrollParent.clientHeight + BOTTOM_THRESHOLD_PX;
+      const showButton = !atBottom && contentOverflows && messages.length > 0;
+      setShowScrollButton(prev => (prev === showButton ? prev : showButton));
+
+      lastScrollTop = currentScrollTop;
+      lastScrollHeight = currentScrollHeight;
+    };
+
     const handleScroll = () => {
       if (ticking) return;
       ticking = true;
       requestAnimationFrame(() => {
-        const currentScrollTop = scrollParent.scrollTop;
-        const currentScrollHeight = scrollParent.scrollHeight;
-        const atBottom = checkIsAtBottom(scrollParent);
-        
-        // Detect if content grew (new tokens) vs user scrolled
-        const contentGrew = currentScrollHeight > lastScrollHeight;
-        const userScrolledUp = currentScrollTop < lastScrollTop - SCROLL_AWAY_THRESHOLD_PX;
-        
-        // R2: If user manually scrolls up during loading, detach auto-scroll
-        if (isLoading && userScrolledUp && !contentGrew) {
-          setUserScrolledAway(true);
-        }
-        
-        // If user scrolls back to bottom, re-attach
-        if (atBottom) {
-          setUserScrolledAway(false);
-        }
-        
-        setIsAtBottom(prev => (prev === atBottom ? prev : atBottom));
-        // R3: Show button when not at bottom
-        const showButton = !atBottom && messages.length > 0;
-        setShowScrollButton(prev => (prev === showButton ? prev : showButton));
-        
-        lastScrollTop = currentScrollTop;
-        lastScrollHeight = currentScrollHeight;
+        updateScrollState();
         ticking = false;
       });
     };
 
-    scrollParent.addEventListener('scroll', handleScroll, { passive: true });
-    handleScroll();
-    return () => scrollParent.removeEventListener('scroll', handleScroll);
-  }, [findScrollParent, checkIsAtBottom, messages.length, isLoading, SCROLL_AWAY_THRESHOLD_PX]);
+    // Respond to window resize — recalculate scroll state for responsive layout
+    const handleResize = () => {
+      requestAnimationFrame(updateScrollState);
+    };
 
-  // R1: Auto-scroll when at bottom and content changes (streaming)
+    scrollParent.addEventListener('scroll', handleScroll, { passive: true });
+    window.addEventListener('resize', handleResize, { passive: true });
+    handleScroll();
+    return () => {
+      scrollParent.removeEventListener('scroll', handleScroll);
+      window.removeEventListener('resize', handleResize);
+    };
+  }, [findScrollParent, checkIsAtBottom, messages.length, isLoading, SCROLL_AWAY_THRESHOLD_PX, BOTTOM_THRESHOLD_PX]);
+
+  // Auto-scroll: follow bottom when in follow mode and content changes
   useEffect(() => {
+    if (scrollModeRef.current !== 'follow-bottom') return;
+    if (userScrolledAway) return;
+
     const scrollParent = scrollParentRef.current;
     if (!scrollParent) return;
 
     const lastMsg = messages[messages.length - 1];
     if (!lastMsg) return;
 
-    const isNewMessage = messages.length > prevMessageCountRef.current;
-    const isUserMessage = lastMsg.role === 'user';
+    // Don't auto-scroll for user messages - handled separately
+    if (lastMsg.role === 'user' && messages.length > prevMessageCountRef.current) return;
 
-    // When user sends a new message, always scroll to bottom (confirms action - R1 table)
-    if (isNewMessage && isUserMessage) {
-      setUserScrolledAway(false); // Reset detach state
+    const contentOverflows = !isContentShorterThanViewport();
+    if (contentOverflows) {
       requestAnimationFrame(() => {
-        bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+        if (scrollModeRef.current === 'follow-bottom') {
+          bottomRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' });
+        }
       });
     }
-    // For assistant messages or streaming updates
-    else if (!userScrolledAway) {
-      // Only auto-scroll if user hasn't manually scrolled away (R2)
-      if (isAtBottom || isNewMessage) {
-        requestAnimationFrame(() => {
-          bottomRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' });
-        });
-      }
-    }
+  }, [messages, messages.length, userScrolledAway]);
 
-    prevMessageCountRef.current = messages.length;
-  }, [messages, messages.length, isAtBottom, userScrolledAway]);
-
-  // R4: When stream completes, don't force scroll - stay at current position
+  // When stream completes, reset to follow-bottom for next interaction
   useEffect(() => {
     if (prevIsLoadingRef.current && !isLoading) {
-      // Stream just finished - reset the detach flag for next interaction
-      // but don't scroll (R4)
+      scrollModeRef.current = 'follow-bottom';
       setUserScrolledAway(false);
     }
     prevIsLoadingRef.current = isLoading;
   }, [isLoading]);
 
-  // Initial scroll to bottom on mount (R10: land at bottom of history)
+  // Initial scroll
   useEffect(() => {
     const timer = setTimeout(() => {
-      bottomRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' });
+      if (!scrollParentRef.current && containerRef.current) {
+        scrollParentRef.current = findScrollParent(containerRef.current);
+      }
+      if (messages.length > 5) {
+        bottomRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' });
+      } else if (scrollParentRef.current) {
+        scrollParentRef.current.scrollTop = 0;
+      }
     }, 50);
     return () => clearTimeout(timer);
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Track message count for auto-scroll new-message detection
+  useEffect(() => {
+    prevMessageCountRef.current = messages.length;
+  }, [messages]);
+
+  // useLayoutEffect: detect new user messages AND scroll them to top, all in one hook.
+  // useLayoutEffect runs BEFORE useEffect and before browser paint,
+  // so we must set pinned mode AND scroll here (not in a separate useEffect).
+  useLayoutEffect(() => {
+    const lastMsg = messages[messages.length - 1];
+    if (!lastMsg || lastMsg.role !== 'user') return;
+    if (lastMsg.id === lastUserMessageIdRef.current) return;
+
+    // New user message detected — pin and scroll
+    lastUserMessageIdRef.current = lastMsg.id;
+    scrollModeRef.current = 'pinned';
+
+    const scrollParent = scrollParentRef.current;
+    if (!scrollParent || !containerRef.current) return;
+
+    const msgEl = containerRef.current.querySelector(`[data-message-id="${lastMsg.id}"]`) as HTMLElement;
+    if (!msgEl) return;
+
+    // Position the user message 16px from the top of the scroll container
+    const msgRect = msgEl.getBoundingClientRect();
+    const parentRect = scrollParent.getBoundingClientRect();
+    const offset = msgRect.top - parentRect.top;
+    scrollParent.scrollTop = scrollParent.scrollTop + offset - 16;
+  }, [messages]);
 
   const scrollToBottom = useCallback(() => {
     setUserScrolledAway(false);
+    scrollModeRef.current = 'follow-bottom';
     bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }, []);
+
+  // Track scroll parent height for the bottom spacer
+  const [scrollParentHeight, setScrollParentHeight] = useState(0);
+
+  // Keep scroll parent height updated
+  useEffect(() => {
+    const sp = scrollParentRef.current;
+    if (!sp) return;
+    const update = () => setScrollParentHeight(sp.clientHeight);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(sp);
+    return () => ro.disconnect();
+  }, [scrollParentRef.current]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div ref={containerRef} className="p-6 space-y-5 relative">
@@ -832,7 +902,7 @@ const MessageStream = memo(function MessageStream({ messages, isLoading, actionL
         const isExecutionComplete = message.role === 'user' && completedMessageIds.has(message.id);
 
         return (
-          <div key={message.id}>
+          <div key={message.id} data-message-role={message.role} data-message-id={message.id}>
             <MessageItem
               message={message}
               isLoading={isLoading}
@@ -866,6 +936,12 @@ const MessageStream = memo(function MessageStream({ messages, isLoading, actionL
             </div>
           </div>
         </motion.div>
+      )}
+
+      {/* Spacer: creates enough scroll room so any message can be scrolled to the top.
+          This is how Claude/ChatGPT allow scrolling the last message to the top of the viewport. */}
+      {messages.length > 0 && scrollParentHeight > 0 && (
+        <div style={{ height: `${Math.max(scrollParentHeight - 150, 0)}px` }} aria-hidden />
       )}
 
       <div ref={bottomRef} />
