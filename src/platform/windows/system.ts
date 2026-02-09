@@ -16,6 +16,7 @@ export class WindowsSystem implements ISystem {
     try {
       // Shared COM audio interface definition
       const comDefinition = `
+        if (-not ("Audio" -as [type])) {
         Add-Type -TypeDefinition @"
         using System;
         using System.Runtime.InteropServices;
@@ -47,6 +48,7 @@ export class WindowsSystem implements ISystem {
             public static bool GetMute() { bool m; Vol().GetMute(out m); return m; }
         }
 "@ -ErrorAction SilentlyContinue
+        }
       `;
 
       switch (params.action) {
@@ -285,10 +287,11 @@ export class WindowsSystem implements ISystem {
     try {
       console.log('[System] Simulating paste...');
       
-      const script = `Add-Type @"
+      const script = `if (-not ("KeySenderPaste" -as [type])) {
+Add-Type @"
 using System;
 using System.Runtime.InteropServices;
-public class KeySender {
+public class KeySenderPaste {
     [DllImport("user32.dll")]
     public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
     
@@ -311,9 +314,10 @@ public class KeySender {
     }
 }
 "@
+}
 
-${typeof targetHwnd === 'number' && targetHwnd > 0 ? `[KeySender]::SetForegroundWindow([IntPtr]${targetHwnd})` : ''}
-[KeySender]::SendCtrlV()
+${typeof targetHwnd === 'number' && targetHwnd > 0 ? `[KeySenderPaste]::SetForegroundWindow([IntPtr]${targetHwnd})` : ''}
+[KeySenderPaste]::SendCtrlV()
 `;
       
       await runPowerShell(script);
@@ -328,15 +332,17 @@ ${typeof targetHwnd === 'number' && targetHwnd > 0 ? `[KeySender]::SetForeground
 
   async getForegroundWindowHandle(): Promise<number> {
     try {
-      const script = `Add-Type @"
+      const script = `if (-not ("Win32Foreground" -as [type])) {
+Add-Type @"
 using System;
 using System.Runtime.InteropServices;
-public class Win32 {
+public class Win32Foreground {
     [DllImport("user32.dll")]
     public static extern IntPtr GetForegroundWindow();
 }
 "@
-$hwnd = [Win32]::GetForegroundWindow()
+}
+$hwnd = [Win32Foreground]::GetForegroundWindow()
 [int]$hwnd
 `;
       const { stdout } = await runPowerShell(script);
@@ -351,16 +357,18 @@ $hwnd = [Win32]::GetForegroundWindow()
 
   async setForegroundWindow(hwnd: number): Promise<boolean> {
     try {
-      const script = `Add-Type @"
+      const script = `if (-not ("Win32SetForeground" -as [type])) {
+Add-Type @"
 using System;
 using System.Runtime.InteropServices;
-public class Win32 {
+public class Win32SetForeground {
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool SetForegroundWindow(IntPtr hWnd);
 }
 "@
-[Win32]::SetForegroundWindow([IntPtr]${hwnd})
+}
+[Win32SetForeground]::SetForegroundWindow([IntPtr]${hwnd})
 `;
       await runPowerShell(script);
 
@@ -374,7 +382,8 @@ public class Win32 {
 
   async getActiveWindowInfo(): Promise<{ appName: string; windowTitle: string; processId: number } | null> {
     try {
-      const script = `Add-Type @"
+      const script = `if (-not ("ActiveWindowInfo" -as [type])) {
+Add-Type @"
 using System;
 using System.Runtime.InteropServices;
 using System.Diagnostics;
@@ -419,6 +428,7 @@ public class ActiveWindowInfo {
     }
 }
 "@
+}
 $result = [ActiveWindowInfo]::GetInfo()
 if ($result -eq $null) {
     Write-Output "null"
@@ -453,10 +463,11 @@ if ($result -eq $null) {
       // Save current clipboard content
       const originalClipboard = clipboard.readText();
 
-      const script = `Add-Type @"
+      const script = `if (-not ("KeySenderCopy" -as [type])) {
+Add-Type @"
 using System;
 using System.Runtime.InteropServices;
-public class KeySender {
+public class KeySenderCopy {
     [DllImport("user32.dll")]
     public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
 
@@ -475,7 +486,8 @@ public class KeySender {
     }
 }
 "@
-[KeySender]::SendCtrlC()
+}
+[KeySenderCopy]::SendCtrlC()
 `;
 
       await runPowerShell(script);

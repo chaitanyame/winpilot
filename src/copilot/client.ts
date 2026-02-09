@@ -101,6 +101,11 @@ export class CopilotController {
   private lastSkillActivity = 0;
   private readonly skillExpiryMs = 5 * 60 * 1000;
   private readonly skillHysteresisMs = 30 * 1000;
+  private sessionExpiryTimer: NodeJS.Timeout | null = null;
+  private lastSessionActivity = 0;
+  private readonly sessionExpiryMs = 10 * 60 * 1000;
+  private systemPromptCache: { key: string; prompt: string } | null = null;
+  private toolListCache: string | null = null;
   // Session compaction
   private compactionSummary: string | null = null;
   // Agentic loop state
@@ -111,6 +116,8 @@ export class CopilotController {
   private toolExecutionMap = new Map<string, { toolName: string; startTime: number; details?: string }>();
   // Track user message timestamp for action log grouping
   private currentUserMessageTimestamp = 0;
+  // Track whether tools just executed, so we can insert a newline before the next reasoning text
+  private toolsJustExecuted = false;
   // Cleanup interval for stale tool executions
   private cleanupIntervalId: NodeJS.Timeout | null = null;
   // Cache for formatted tool names to avoid repeated regex ops
@@ -307,6 +314,52 @@ export class CopilotController {
     }
   }
 
+  private touchSessionActivity(): void {
+    this.lastSessionActivity = Date.now();
+    this.scheduleSessionExpiry();
+  }
+
+  private scheduleSessionExpiry(): void {
+    if (this.sessionExpiryTimer) {
+      clearTimeout(this.sessionExpiryTimer);
+    }
+    const now = Date.now();
+    const expiresAt = this.lastSessionActivity + this.sessionExpiryMs;
+    const delay = Math.max(expiresAt - now, 0);
+    this.sessionExpiryTimer = setTimeout(() => {
+      void this.destroyIdleSession();
+    }, delay);
+  }
+
+  private clearSessionExpiryTimer(): void {
+    if (this.sessionExpiryTimer) {
+      clearTimeout(this.sessionExpiryTimer);
+      this.sessionExpiryTimer = null;
+    }
+  }
+
+  private async destroyIdleSession(): Promise<void> {
+    if (!this.session) return;
+    if (this.isSending) {
+      this.scheduleSessionExpiry();
+      return;
+    }
+    const idleFor = Date.now() - this.lastSessionActivity;
+    if (idleFor < this.sessionExpiryMs) {
+      this.scheduleSessionExpiry();
+      return;
+    }
+    logger.copilot('Session idle timeout, destroying session', { idleMs: idleFor });
+    if (this.unsubscribe) {
+      this.unsubscribe();
+      this.unsubscribe = null;
+    }
+    await this.session.destroy();
+    this.session = null;
+    this.isInitialized = false;
+    this.clearSessionExpiryTimer();
+  }
+
   /**
    * Initialize the Copilot session with streaming and custom tools
    */
@@ -321,6 +374,7 @@ export class CopilotController {
       logger.copilot('Reinitializing due to MCP servers or skill context change...');
       await this.session.destroy();
       this.session = null;
+      this.clearSessionExpiryTimer();
       this.isInitialized = false;
       this.mcpServersChanged = false;
       this.skillContextChanged = false;
@@ -367,6 +421,7 @@ export class CopilotController {
       });
 
       logger.copilot('Session created', { sessionId: this.session.sessionId });
+      this.touchSessionActivity();
       
       // Debug: Log available tools
       if (this.session && 'listTools' in this.session && typeof this.session.listTools === 'function') {
@@ -408,6 +463,7 @@ export class CopilotController {
         });
 
         logger.copilot('Session created (without MCP)', { sessionId: this.session.sessionId });
+        this.touchSessionActivity();
         this.isInitialized = true;
         this.skillContextChanged = false;
       } else {
@@ -435,6 +491,7 @@ export class CopilotController {
     // Reset assistant response from previous message to avoid stale reasoning in logs
     this.currentAssistantResponse = '';
     this.currentTurnResults = [];
+    this.toolsJustExecuted = false;
 
     if (!loopConfig.enabled) {
       // If loop disabled, fall back to single-turn
@@ -746,6 +803,7 @@ What should we do next?`;
     }
 
     this.isSending = true;
+    this.touchSessionActivity();
     if (this.activeSkillContext) {
       this.touchSkillActivity();
     }
@@ -832,6 +890,7 @@ What should we do next?`;
    * Handle incoming session events and convert to StreamEvents
    */
   private handleSessionEvent(event: SessionEvent): void {
+    this.touchSessionActivity();
     let streamEvent: StreamEvent | null = null;
 
     switch (event.type) {
@@ -841,14 +900,21 @@ What should we do next?`;
         const deltaData = event.data as MessageDeltaData;
         logger.copilot('Message delta', { content: deltaData.deltaContent?.substring(0, 50) });
 
+        // If tools just executed, prepend a newline so each reasoning segment starts on its own line
+        let deltaContent = deltaData.deltaContent;
+        if (this.toolsJustExecuted && deltaContent) {
+          deltaContent = '\n' + deltaContent;
+          this.toolsJustExecuted = false;
+        }
+
         // Accumulate assistant response for analysis
-        if (deltaData.deltaContent) {
-          this.currentAssistantResponse += deltaData.deltaContent;
+        if (deltaContent) {
+          this.currentAssistantResponse += deltaContent;
         }
 
         streamEvent = {
           type: 'text',
-          content: deltaData.deltaContent,
+          content: deltaContent,
         };
         break;
       }
@@ -897,6 +963,10 @@ What should we do next?`;
           : undefined;
         const details = [commandDetail, reasoningDetail].filter(Boolean).join('\n\n') || undefined;
 
+        // Reset assistant response after capturing reasoning for this tool
+        // so the next tool doesn't get stale/accumulated reasoning text
+        this.currentAssistantResponse = '';
+
         if (toolStartData.toolCallId) {
           this.toolExecutionMap.set(toolStartData.toolCallId, {
             toolName: toolStartData.toolName,
@@ -930,7 +1000,8 @@ What should we do next?`;
       }
 
       case 'tool.execution_complete': {
-        // Tool execution completed
+        // Tool execution completed - flag so next reasoning text starts on a new line
+        this.toolsJustExecuted = true;
         const toolCompleteData = event.data as ToolExecutionCompleteData;
         logger.copilot('Tool execution complete', { success: toolCompleteData.success, result: toolCompleteData.result, error: toolCompleteData.error });
 
@@ -1099,6 +1170,7 @@ Provide ONLY the summary, no preamble.`;
       await this.session.destroy();
       this.session = null;
       this.isInitialized = false;
+      this.clearSessionExpiryTimer();
     }
     // Next sendMessage call will reinitialize
   }
@@ -1107,17 +1179,22 @@ Provide ONLY the summary, no preamble.`;
    * Get the system prompt for Desktop Commander
    */
   private getSystemPrompt(): string {
+    const key = this.getSystemPromptKey();
+    if (this.systemPromptCache?.key === key) {
+      return this.systemPromptCache.prompt;
+    }
     // Build tool list from registered tools
-    const toolList = desktopCommanderTools.map(t => {
+    const toolList = this.toolListCache ?? desktopCommanderTools.map(t => {
       const desc = (t as any).description || '';
       return `- ${t.name}: ${desc}`;
     }).join('\n');
+    this.toolListCache = toolList;
 
     const skillSection = this.activeSkillContext
       ? `\n## Active Skill: ${this.activeSkillContext.id}\n\n${this.activeSkillContext.instructions}\n`
       : '';
 
-    return `You are Desktop Commander, an AI assistant that helps users control their desktop through natural language commands.
+    const prompt = `You are Desktop Commander, an AI assistant that helps users control their desktop through natural language commands.
 
 ## Available Tools
 
@@ -1209,6 +1286,16 @@ When user describes a problem (e.g., "WiFi disconnects", "computer is slow"):
 7. Verify if issue is resolved, iterate if needed
 
 Always explain findings in plain language. Never execute risky fixes without explicit approval.${this.compactionSummary ? `\n\n## Previous Conversation Context\n${this.compactionSummary}` : ''}`;
+    this.systemPromptCache = { key, prompt };
+    return prompt;
+  }
+
+  private getSystemPromptKey(): string {
+    const skillKey = this.activeSkillContext
+      ? `${this.activeSkillContext.id}:${this.activeSkillContext.instructions}`
+      : 'none';
+    const summaryKey = this.compactionSummary || '';
+    return `${skillKey}::${summaryKey}`;
   }
 
   /**
@@ -1220,6 +1307,7 @@ Always explain findings in plain language. Never execute risky fixes without exp
       this.cleanupIntervalId = null;
     }
     this.clearSkillExpiryTimer();
+    this.clearSessionExpiryTimer();
     if (this.unsubscribe) {
       this.unsubscribe();
       this.unsubscribe = null;

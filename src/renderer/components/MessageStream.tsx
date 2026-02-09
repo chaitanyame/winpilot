@@ -661,31 +661,38 @@ const MessageStream = memo(function MessageStream({ messages, isLoading, actionL
     let lastScrollTop = scrollParent.scrollTop;
     let lastScrollHeight = scrollParent.scrollHeight;
 
+    let ticking = false;
     const handleScroll = () => {
-      const currentScrollTop = scrollParent.scrollTop;
-      const currentScrollHeight = scrollParent.scrollHeight;
-      const atBottom = checkIsAtBottom(scrollParent);
-      
-      // Detect if content grew (new tokens) vs user scrolled
-      const contentGrew = currentScrollHeight > lastScrollHeight;
-      const userScrolledUp = currentScrollTop < lastScrollTop - SCROLL_AWAY_THRESHOLD_PX;
-      
-      // R2: If user manually scrolls up during loading, detach auto-scroll
-      if (isLoading && userScrolledUp && !contentGrew) {
-        setUserScrolledAway(true);
-      }
-      
-      // If user scrolls back to bottom, re-attach
-      if (atBottom) {
-        setUserScrolledAway(false);
-      }
-      
-      setIsAtBottom(atBottom);
-      // R3: Show button when not at bottom
-      setShowScrollButton(!atBottom && messages.length > 0);
-      
-      lastScrollTop = currentScrollTop;
-      lastScrollHeight = currentScrollHeight;
+      if (ticking) return;
+      ticking = true;
+      requestAnimationFrame(() => {
+        const currentScrollTop = scrollParent.scrollTop;
+        const currentScrollHeight = scrollParent.scrollHeight;
+        const atBottom = checkIsAtBottom(scrollParent);
+        
+        // Detect if content grew (new tokens) vs user scrolled
+        const contentGrew = currentScrollHeight > lastScrollHeight;
+        const userScrolledUp = currentScrollTop < lastScrollTop - SCROLL_AWAY_THRESHOLD_PX;
+        
+        // R2: If user manually scrolls up during loading, detach auto-scroll
+        if (isLoading && userScrolledUp && !contentGrew) {
+          setUserScrolledAway(true);
+        }
+        
+        // If user scrolls back to bottom, re-attach
+        if (atBottom) {
+          setUserScrolledAway(false);
+        }
+        
+        setIsAtBottom(prev => (prev === atBottom ? prev : atBottom));
+        // R3: Show button when not at bottom
+        const showButton = !atBottom && messages.length > 0;
+        setShowScrollButton(prev => (prev === showButton ? prev : showButton));
+        
+        lastScrollTop = currentScrollTop;
+        lastScrollHeight = currentScrollHeight;
+        ticking = false;
+      });
     };
 
     scrollParent.addEventListener('scroll', handleScroll, { passive: true });

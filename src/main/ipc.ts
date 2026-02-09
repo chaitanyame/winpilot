@@ -38,6 +38,7 @@ import { recordingManager } from './recording-manager';
 import { createNote, getNote, listNotes, updateNote, deleteNote, searchNotes } from './notes';
 import { createTodo, listTodos, completeTodo, deleteTodo } from './todos';
 import { speak, stopSpeaking, listVoices } from '../platform/windows/tts';
+import { runPowerShell } from '../platform/windows/powershell-pool';
 
 // Initialize intent router
 const intentRouter = new IntentRouter();
@@ -171,7 +172,7 @@ async function downloadFile(url: string, destPath: string): Promise<void> {
 
 // Extract zip file (Windows)
 async function extractZip(zipPath: string, destDir: string): Promise<void> {
-  await execAsync(`powershell -Command "Expand-Archive -Path '${zipPath}' -DestinationPath '${destDir}' -Force"`);
+  await runPowerShell(`Expand-Archive -Path '${zipPath}' -DestinationPath '${destDir}' -Force`);
 }
 
 // Ensure whisper binary is available
@@ -463,9 +464,9 @@ export function setupIpcHandlers(): void {
     senderWindow?.hide();
   });
   ipcMain.on('app:show', () => showCommandWindow());
-  ipcMain.on('app:autoHideSuppressed', (event: Electron.IpcMainEvent, value: boolean) => {
+  ipcMain.handle('app:autoHideSuppressed', (_event: Electron.IpcMainEvent, value: boolean) => {
     setAutoHideSuppressed(Boolean(value));
-    event.returnValue = true; // Required for sendSync
+    return true;
   });
   ipcMain.on('app:resize', (_event: Electron.IpcMainEvent, height: number) => resizeCommandWindow(height));
 

@@ -44,6 +44,7 @@ export class WindowsWindowManager implements IWindowManager {
       // PowerShell script to get all visible windows using Win32 API
       // Optimized: removed Process.GetProcessById (can hang) and GetWindowDisplayAffinity (slow)
       const script = `
+if (-not ("WindowInfo" -as [type])) {
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
@@ -88,7 +89,7 @@ public class WindowInfo {
         public int Bottom;
     }
     
-    public static List<object> GetWindows() {
+public static List<object> GetWindows() {
         var windows = new List<object>();
         IntPtr foreground = GetForegroundWindow();
         
@@ -131,6 +132,7 @@ public class WindowInfo {
     }
 }
 "@
+}
 [WindowInfo]::GetWindows() | ConvertTo-Json -Compress
 `;
 
@@ -220,6 +222,7 @@ public class WindowInfo {
       if (!targetHandle) return false;
 
       const script = `
+        if (-not ("Win32" -as [type])) {
         Add-Type @"
         using System;
         using System.Runtime.InteropServices;
@@ -232,6 +235,7 @@ public class WindowInfo {
             public static extern bool IsIconic(IntPtr hWnd);
         }
 "@
+        }
         $handle = [IntPtr]::new(${targetHandle})
         if ([Win32]::IsIconic($handle)) {
             [Win32]::ShowWindow($handle, 9)
@@ -263,6 +267,7 @@ public class WindowInfo {
       const heightVal = params.height !== undefined ? params.height : '($rect.Bottom - $rect.Top)';
       
       const script = `
+if (-not ("Win32Move" -as [type])) {
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
@@ -281,6 +286,7 @@ public class Win32Move {
     public struct RECT { public int Left, Top, Right, Bottom; }
 }
 "@
+}
 $handle = [IntPtr]::new(${params.windowId})
 if ([Win32Move]::IsIconic($handle)) {
     [Win32Move]::ShowWindow($handle, 9) | Out-Null
@@ -317,6 +323,7 @@ $height = ${heightVal}
           return false;
         }
         const script = `
+if (-not ("Win32Close" -as [type])) {
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
@@ -325,6 +332,7 @@ public class Win32Close {
     public static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
 }
 "@
+}
 [Win32Close]::PostMessage([IntPtr]::new(${params.windowId}), 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)
 `;
         await runPowerShell(script);
@@ -351,6 +359,7 @@ public class Win32Close {
       }
 
       const script = `
+if (-not ("Win32Minimize" -as [type])) {
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
@@ -359,6 +368,7 @@ public class Win32Minimize {
     public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 }
 "@
+}
 [Win32Minimize]::ShowWindow([IntPtr]::new(${windowId}), 6)
 `;
       await runPowerShell(script);
@@ -379,6 +389,7 @@ public class Win32Minimize {
       }
 
       const script = `
+if (-not ("Win32Maximize" -as [type])) {
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
@@ -387,6 +398,7 @@ public class Win32Maximize {
     public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 }
 "@
+}
 [Win32Maximize]::ShowWindow([IntPtr]::new(${windowId}), 3)
 `;
       await runPowerShell(script);

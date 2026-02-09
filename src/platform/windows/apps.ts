@@ -214,10 +214,11 @@ export class WindowsApps implements IApps {
     try {
       const safeName = escapePowerShellString(name);
       const script = `
+        if (-not ("Win32AppSwitch" -as [type])) {
         Add-Type @"
         using System;
         using System.Runtime.InteropServices;
-        public class Win32 {
+        public class Win32AppSwitch {
             [DllImport("user32.dll")]
             public static extern bool SetForegroundWindow(IntPtr hWnd);
             [DllImport("user32.dll")]
@@ -226,13 +227,14 @@ export class WindowsApps implements IApps {
             public static extern bool IsIconic(IntPtr hWnd);
         }
 "@
+        }
         $proc = Get-Process -Name '${safeName}' -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($proc -and $proc.MainWindowHandle -ne 0) {
             $handle = $proc.MainWindowHandle
-            if ([Win32]::IsIconic($handle)) {
-                [Win32]::ShowWindow($handle, 9)
+            if ([Win32AppSwitch]::IsIconic($handle)) {
+                [Win32AppSwitch]::ShowWindow($handle, 9)
             }
-            [Win32]::SetForegroundWindow($handle)
+            [Win32AppSwitch]::SetForegroundWindow($handle)
             Write-Output "true"
         } else {
             Write-Output "false"

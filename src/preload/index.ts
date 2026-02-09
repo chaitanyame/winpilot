@@ -19,7 +19,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   clearHistory: () => ipcRenderer.invoke('app:clearHistory'),
   hide: () => ipcRenderer.send('app:hide'),
   show: () => ipcRenderer.send('app:show'),
-  setAutoHideSuppressed: (value: boolean) => ipcRenderer.sendSync('app:autoHideSuppressed', value),
+  setAutoHideSuppressed: (value: boolean) => ipcRenderer.invoke('app:autoHideSuppressed', value),
   resize: (height: number) => ipcRenderer.send('app:resize', height),
   minimize: () => ipcRenderer.send(IPC_CHANNELS.APP_WINDOW_MINIMIZE),
   maximize: () => ipcRenderer.send(IPC_CHANNELS.APP_WINDOW_MAXIMIZE),
@@ -534,7 +534,7 @@ export interface ElectronAPI {
 
   voiceTest: () => Promise<{ success: boolean }>;
   voiceIsRecording: () => Promise<boolean>;
-  setAutoHideSuppressed: (value: boolean) => void;
+  setAutoHideSuppressed: (value: boolean) => Promise<void>;
   onVoiceRecordingStarted: (callback: () => void) => () => void;
   onVoiceRecordingStopped: (callback: () => void) => () => void;
   onVoiceTranscript: (callback: (transcript: string) => void) => () => void;
