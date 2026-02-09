@@ -32,7 +32,7 @@ import { RouteResult } from '../intent/types';
 import { detectSkillIdFromMessage } from '../intent/skill-intents';
 import { getSkillIndex, refreshSkillIndex } from './skills-registry';
 import { clipboardMonitor } from './clipboard-monitor';
-import { saveUserMessage, saveAssistantMessage } from './chat-history';
+import { saveUserMessage, saveAssistantMessage, getConversationHistory, getAllConversations, loadConversation, deleteConversation } from './chat-history';
 import { recordingManager } from './recording-manager';
 import { createNote, getNote, listNotes, updateNote, deleteNote, searchNotes } from './notes';
 import { createTodo, listTodos, completeTodo, deleteTodo } from './todos';
@@ -1503,22 +1503,18 @@ export function setupIpcHandlers(): void {
   });
 
   ipcMain.handle('chat:getHistory', (_, conversationId) => {
-    const { getConversationHistory } = require('./chat-history');
     return getConversationHistory(conversationId);
   });
 
   ipcMain.handle('chat:getConversations', () => {
-    const { getAllConversations } = require('./chat-history');
     return getAllConversations();
   });
 
   ipcMain.handle('chat:loadConversation', (_, id) => {
-    const { loadConversation } = require('./chat-history');
     return loadConversation(id);
   });
 
   ipcMain.handle('chat:deleteConversation', (_, id) => {
-    const { deleteConversation } = require('./chat-history');
     return deleteConversation(id);
   });
 

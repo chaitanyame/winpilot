@@ -4,6 +4,7 @@ import { X, Send, MessageSquare } from 'lucide-react';
 import { MessageStream } from './MessageStream';
 import { executeSlashCommand, getSlashCommandSuggestions, type SlashCommand } from '../slash-commands';
 import type { Message, ActionLog } from '../../shared/types';
+import { actionLogToToolCall } from '../utils/actionLogMapper';
 
 interface Props {
   isOpen: boolean;
@@ -22,6 +23,7 @@ export function ChatPanel({ isOpen, onClose, variant = 'modal' }: Props) {
   const currentAssistantMessageRef = useRef<string>('');
   const [slashSuggestions, setSlashSuggestions] = useState<SlashCommand[]>([]);
   const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(0);
+  const [completedMessageIds, setCompletedMessageIds] = useState<Set<string>>(new Set());
 
   // Auto-focus input when opened
   useEffect(() => {
@@ -60,19 +62,64 @@ export function ChatPanel({ isOpen, onClose, variant = 'modal' }: Props) {
       setIsLoading(false);
       currentAssistantMessageRef.current = '';
 
-      if (data?.error) {
-        setMessages(prev => [...prev, {
-          id: Date.now().toString(),
-          role: 'assistant',
-          content: '',
-          timestamp: new Date(),
-          error: data.error,
-        }]);
-      }
+      // Mark the last user message as complete (to trigger log collapse)
+      setMessages(prev => {
+        const lastUserMsg = [...prev].reverse().find(m => m.role === 'user');
+        if (lastUserMsg) {
+          setCompletedMessageIds(prevIds => new Set(prevIds).add(lastUserMsg.id));
+        }
+
+        if (data?.error) {
+          return [...prev, {
+            id: Date.now().toString(),
+            role: 'assistant',
+            content: '',
+            timestamp: new Date(),
+            error: data.error,
+          }];
+        }
+
+        return prev;
+      });
     });
 
     const unsubscribeActionLog = window.electronAPI.onActionLog((log: ActionLog) => {
+      // Keep actionLogs for backward compatibility
       setActionLogs(prev => [...prev, log]);
+
+      // Sync to message.toolCalls for ToolCallsDisplay
+      setMessages(prev => {
+        const result = [...prev];
+
+        // Find user message by timestamp matching (log.createdAt is user message timestamp)
+        for (let i = result.length - 1; i >= 0; i--) {
+          if (result[i].role === 'user') {
+            const userMsg = result[i];
+            const msgTime = userMsg.timestamp?.getTime() ?? 0;
+
+            // Match by timestamp window (within 100ms)
+            if (Math.abs(log.createdAt - msgTime) < 100) {
+              const toolCall = actionLogToToolCall(log);
+
+              // Find if this tool already exists (status update)
+              const existingIndex = userMsg.toolCalls?.findIndex(tc => tc.id === log.id) ?? -1;
+
+              if (existingIndex >= 0) {
+                // Update existing tool call (status changed from pending to success/error)
+                userMsg.toolCalls![existingIndex] = toolCall;
+              } else {
+                // Add new tool call
+                userMsg.toolCalls = [...(userMsg.toolCalls || []), toolCall];
+              }
+
+              result[i] = { ...userMsg }; // Trigger re-render
+              break;
+            }
+          }
+        }
+
+        return result;
+      });
     });
 
     return () => {
@@ -213,7 +260,12 @@ export function ChatPanel({ isOpen, onClose, variant = 'modal' }: Props) {
 
             {/* Messages */}
             <div className="flex-1 overflow-y-auto p-4 min-h-0">
-              <MessageStream messages={messages} isLoading={isLoading} actionLogs={actionLogs} />
+              <MessageStream
+                messages={messages}
+                isLoading={isLoading}
+                actionLogs={actionLogs}
+                completedMessageIds={completedMessageIds}
+              />
             </div>
 
             {/* Input */}

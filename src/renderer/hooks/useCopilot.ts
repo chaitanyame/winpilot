@@ -18,7 +18,7 @@ export function useCopilot(): UseCopilotReturn {
   const [error, setError] = useState<string | null>(null);
   const currentAssistantMessageRef = useRef<string>('');
   const responseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const RESPONSE_TIMEOUT_MS = 180000;
+  const RESPONSE_TIMEOUT_MS = 300000; // 5 minutes
 
   const clearResponseTimeout = useCallback(() => {
     if (responseTimeoutRef.current) {
