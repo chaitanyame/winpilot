@@ -11,6 +11,7 @@ import { PatternMatcher } from './patterns';
 import { MLIntentClassifier } from './ml-classifier';
 import { ParameterExtractor } from './extractors';
 import { ToolExecutor } from './executor';
+import { getSkillIdForIntent } from './skill-intents';
 import { RouteResult, CONFIDENCE_THRESHOLDS, TelemetryEvent } from './types';
 import { logger } from '../utils/logger';
 
@@ -65,7 +66,7 @@ export class IntentRouter {
 
       // TIER 2: FastText ML Model (5-15ms, ~30% coverage)
       const mlResult = await this.tryMLClassification(query);
-      if (mlResult.handled) {
+      if (mlResult.handled || mlResult.skillId) {
         this.recordTelemetry(query, 2, mlResult, startTime);
         return mlResult;
       }
@@ -141,6 +142,22 @@ export class IntentRouter {
     }
 
     const mlResult = await this.mlClassifier.classify(query);
+    const skillId = getSkillIdForIntent(mlResult.intent);
+
+    if (skillId && mlResult.confidence >= CONFIDENCE_THRESHOLDS.ML_MEDIUM) {
+      logger.copilot('ML classification: skill intent detected', {
+        intent: mlResult.intent,
+        skillId,
+        confidence: mlResult.confidence.toFixed(2),
+      });
+      return {
+        handled: false,
+        reason: 'Skill intent detected',
+        skillId,
+        confidence: mlResult.confidence,
+        tier: 2,
+      };
+    }
 
     // Check confidence threshold
     if (mlResult.confidence < CONFIDENCE_THRESHOLDS.ML_CLASSIFICATION) {

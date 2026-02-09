@@ -37,6 +37,7 @@ import { fetchWeather } from '../main/weather';
 import { convertUnit } from '../main/unit-converter';
 import { getMediaStatus } from '../platform/windows/media-status';
 import { showOSD } from '../main/osd-window';
+import { getSkillIndex, refreshSkillIndex } from '../main/skills-registry';
 
 const adapter = getUnifiedAdapter();
 
@@ -3008,6 +3009,36 @@ export const mediaStatusTool = defineTool('media_status', {
   },
 });
 
+// ============================================================================
+// Skills
+// ============================================================================
+
+export const skillsListTool = defineTool('skills_list', {
+  description: 'List available agent skills loaded from SKILL.md directories',
+  parameters: p({}),
+  handler: async () => {
+    const skills = getSkillIndex();
+    if (skills.length === 0) {
+      return 'No skills found. Add SKILL.md files under ~/.claude/skills/<skill-name>/SKILL.md.';
+    }
+    return skills
+      .map(skill => {
+        const license = skill.license ? ` (license: ${skill.license})` : '';
+        return `- ${skill.id}: ${skill.description} [${skill.source}]${license}`;
+      })
+      .join('\n');
+  },
+});
+
+export const skillsRefreshTool = defineTool('skills_refresh', {
+  description: 'Reload agent skills from disk',
+  parameters: p({}),
+  handler: async () => {
+    const skills = refreshSkillIndex();
+    return `Skills refreshed. Found ${skills.length} skill(s).`;
+  },
+});
+
 export const desktopCommanderTools = [
   // Window Management
   windowListTool,
@@ -3140,4 +3171,7 @@ export const desktopCommanderTools = [
   convertUnitTool,
   // Media Status
   mediaStatusTool,
+  // Skills
+  skillsListTool,
+  skillsRefreshTool,
 ];

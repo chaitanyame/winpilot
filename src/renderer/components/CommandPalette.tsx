@@ -3,6 +3,7 @@ import { motion } from 'framer-motion';
 import { Send, X, History, Square, Monitor, Plug, Trash2, Settings as SettingsIcon, Clock, Mic, MicOff, Volume2, Brain, Minus, Maximize2, ScrollText, Copy, Video, Loader2, Sparkles, ChevronRight, ChevronLeft, Shield, FileText } from 'lucide-react';
 import { MessageStream } from './MessageStream';
 import { MCPServersPanel } from './MCPServersPanel';
+import { SkillsPanel } from './SkillsPanel';
 import { SettingsPanel } from './SettingsPanel';
 import { ScheduledTasksPanel } from './ScheduledTasksPanel';
 import { ActionLogsPanel } from './ActionLogsPanel';
@@ -28,10 +29,11 @@ const SPEECH_ERROR_MESSAGES: Record<string, string> = {
 // Minimum confidence threshold for accepting transcripts (0-1)
 const CONFIDENCE_THRESHOLD = 0.5;
 
-interface HistoryItem {
+interface ConversationItem {
   id: string;
-  input: string;
-  timestamp: number;
+  title: string;
+  created_at: number;
+  updated_at: number;
 }
 
 interface PromptTemplate {
@@ -162,11 +164,11 @@ const ONBOARDING_PROMPTS = PROMPT_TEMPLATES.slice(0, 5);
 
 const getToolDescription = (toolName: string): string => TOOL_DESCRIPTIONS[toolName] || toolName;
 
-type PanelName = 'history' | 'mcp' | 'settings' | 'tasks' | 'logs' | 'clipboard' | 'recordings' | 'screenSharePrivacy' | 'notes' | 'onboarding' | null;
+type PanelName = 'history' | 'mcp' | 'skills' | 'settings' | 'tasks' | 'logs' | 'clipboard' | 'recordings' | 'screenSharePrivacy' | 'notes' | 'onboarding' | null;
 
 export function CommandPalette() {
   const [input, setInput] = useState('');
-  const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [history, setHistory] = useState<ConversationItem[]>([]);
   const [activePanel, setActivePanel] = useState<PanelName>(null);
   const [slashSuggestions, setSlashSuggestions] = useState<SlashCommand[]>([]);
   const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(0);
@@ -194,6 +196,7 @@ export function CommandPalette() {
     sendMessage,
     cancelMessage,
     clearMessages,
+    loadConversation,
   } = useCopilot();
 
   // Track action logs from tool calls - optimized to only process new tool calls
@@ -817,7 +820,7 @@ export function CommandPalette() {
 
   const loadHistory = async () => {
     try {
-      const data = await window.electronAPI.getHistory() as HistoryItem[];
+      const data = await window.electronAPI.chatGetConversations() as ConversationItem[];
       setHistory(data || []);
     } catch (err) {
       console.error('Failed to load history:', err);
@@ -854,6 +857,8 @@ export function CommandPalette() {
       if (result) {
         if (result.message === '__CLEAR__') {
           clearMessages();
+        } else if (result.conversationId) {
+          await loadConversation(result.conversationId);
         } else if (result.message) {
           // Send the slash command result as a message for the user to see
           await sendMessage(`/system ${result.message}`);
@@ -912,10 +917,17 @@ export function CommandPalette() {
     }
   };
 
-  const handleHistorySelect = (item: HistoryItem) => {
-    setInput(item.input);
-    setActivePanel(null);
-    inputRef.current?.focus();
+  const handleHistorySelect = async (item: ConversationItem) => {
+    try {
+      const result = await window.electronAPI.chatLoadConversation(item.id);
+      if (result) {
+        await loadConversation(item.id);
+      }
+      setActivePanel(null);
+      inputRef.current?.focus();
+    } catch (error) {
+      console.error('Failed to load conversation:', error);
+    }
   };
 
   // Suppress auto-hide on mouse down (before blur fires)
@@ -1183,6 +1195,16 @@ export function CommandPalette() {
             <Plug className="w-4 h-4 flex-shrink-0" />
             {sidebarExpanded && <span className="text-sm">MCP Servers</span>}
           </button>
+          <button
+            onClick={() => setActivePanel('skills')}
+            className={`p-2 rounded-lg transition-colors flex items-center gap-3
+                       text-[color:var(--app-text-muted)] hover:text-[color:var(--app-text)]
+                       hover:bg-[color:var(--app-surface)] ${sidebarExpanded ? 'w-full' : ''}`}
+            title="Skills"
+          >
+            <Sparkles className="w-4 h-4 flex-shrink-0" />
+            {sidebarExpanded && <span className="text-sm">Skills</span>}
+          </button>
 
           <div className={`h-px bg-[color:var(--app-border)] my-3 ${sidebarExpanded ? 'w-full' : 'w-6'}`} />
 
@@ -1332,7 +1354,7 @@ export function CommandPalette() {
             ) : activePanel === 'history' ? (
               <div className="flex-1 overflow-y-auto p-4">
                 <h3 className="text-sm font-medium text-[color:var(--app-text-muted)] mb-3">
-                  Recent Commands
+                  Chat History
                 </h3>
                 <div className="space-y-2">
                   {history.slice(0, 10).map((item) => (
@@ -1343,16 +1365,16 @@ export function CommandPalette() {
                                  bg-[color:var(--app-surface-2)] hover:bg-[color:var(--app-surface)]"
                     >
                       <p className="text-sm text-[color:var(--app-text)] truncate">
-                        {item.input}
+                        {item.title || 'Untitled Conversation'}
                       </p>
                       <p className="text-xs text-[color:var(--app-text-muted)] mt-1">
-                        {new Date(item.timestamp).toLocaleString()}
+                        {new Date(item.updated_at).toLocaleString()}
                       </p>
                     </button>
                   ))}
                   {history.length === 0 && (
                     <p className="text-sm text-[color:var(--app-text-muted)] text-center py-4">
-                      No history yet
+                      No chat history yet
                     </p>
                   )}
                 </div>
@@ -1530,6 +1552,11 @@ export function CommandPalette() {
 
       <MCPServersPanel
         isOpen={activePanel === 'mcp'}
+        onClose={() => setActivePanel(null)}
+      />
+
+      <SkillsPanel
+        isOpen={activePanel === 'skills'}
         onClose={() => setActivePanel(null)}
       />
 

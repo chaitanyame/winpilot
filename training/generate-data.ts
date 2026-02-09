@@ -7,7 +7,7 @@
  * Usage: npm run train:generate-data
  */
 
-import { desktopCommanderTools } from '../src/tools/index.js';
+import { desktopCommanderTools } from '../src/tools/index';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -250,6 +250,51 @@ async function main() {
     }
 
     console.log(`  Generated ${examples.length} examples`);
+  }
+
+  const skillIntentExamples = [
+    {
+      intent: 'document-creation-pptx',
+      examples: [
+        'create a PowerPoint presentation',
+        'make a slide deck about quarterly results',
+        'build a presentation with 5 slides',
+        'create slides for a product launch',
+      ],
+    },
+    {
+      intent: 'document-creation-docx',
+      examples: [
+        'write a Word document',
+        'create a report in Word',
+        'draft a project proposal document',
+        'generate a formatted document',
+      ],
+    },
+    {
+      intent: 'document-creation-pdf',
+      examples: [
+        'create a PDF report',
+        'export this as a PDF',
+        'generate a PDF summary',
+        'make a PDF with charts',
+      ],
+    },
+    {
+      intent: 'document-creation-xlsx',
+      examples: [
+        'create an Excel spreadsheet',
+        'make a spreadsheet with sales data',
+        'build an xlsx file from this data',
+        'generate a budget spreadsheet',
+      ],
+    },
+  ];
+
+  for (const skill of skillIntentExamples) {
+    for (const example of skill.examples) {
+      trainingData.push(`__label__${skill.intent} ${example}`);
+    }
   }
 
   console.log(`\nTotal training examples: ${trainingData.length}`);

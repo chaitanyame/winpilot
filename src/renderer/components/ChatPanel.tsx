@@ -82,6 +82,29 @@ export function ChatPanel({ isOpen, onClose, variant = 'modal' }: Props) {
     };
   }, []);
 
+  const loadConversation = useCallback(async (conversationId: string | null) => {
+    try {
+      const data = await window.electronAPI.chatGetHistory(conversationId ?? undefined) as Array<{
+        id: string;
+        role: 'user' | 'assistant' | 'system';
+        content: string;
+        tool_calls?: string | null;
+        created_at: number;
+      }>;
+      const mapped = (data || [])
+        .sort((a, b) => a.created_at - b.created_at)
+        .map((item) => ({
+          id: item.id,
+          role: item.role,
+          content: item.content,
+          timestamp: new Date(item.created_at),
+        }));
+      setMessages(mapped);
+    } catch (error) {
+      console.error('Failed to load conversation history:', error);
+    }
+  }, []);
+
   // Keyboard shortcuts
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     if (!isOpen) return;
@@ -121,6 +144,8 @@ export function ChatPanel({ isOpen, onClose, variant = 'modal' }: Props) {
       if (result) {
         if (result.message === '__CLEAR__') {
           setMessages([]);
+        } else if (result.conversationId) {
+          await loadConversation(result.conversationId);
         } else if (result.message) {
           slashContext.addSystemMessage(result.message);
         }

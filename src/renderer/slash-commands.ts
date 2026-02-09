@@ -17,6 +17,7 @@ export interface SlashCommandContext {
 export interface SlashCommandResult {
   handled: boolean;
   message?: string;
+  conversationId?: string;
 }
 
 const commands: SlashCommand[] = [
@@ -38,6 +39,7 @@ const commands: SlashCommand[] = [
       return {
         handled: true,
         message: `Started new session${title ? `: "${title}"` : ''} (${id})`,
+        conversationId: id,
       };
     },
   },
@@ -84,7 +86,7 @@ const commands: SlashCommand[] = [
       if (!id) return { handled: true, message: 'Usage: /switch <session-id>' };
       const result = await ctx.api.chatLoadConversation(id);
       if (result) {
-        return { handled: true, message: `Switched to session: ${id}` };
+        return { handled: true, message: `Switched to session: ${id}`, conversationId: id };
       }
       return { handled: true, message: `Session ${id} not found.` };
     },

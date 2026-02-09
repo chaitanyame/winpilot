@@ -16,6 +16,8 @@ import { copilotController } from '../copilot/client';
 import { clipboardMonitor } from './clipboard-monitor';
 import { clipboardWatcher } from './clipboard-watcher';
 import { ensureInstalledAppsCache } from './app-indexer';
+import { ensureSkillDirectories } from './skills';
+import { refreshSkillIndex, startSkillWatcher, stopSkillWatcher } from './skills-registry';
 import { screenSharePrivacyService } from './screen-share-privacy';
 import { screenShareDetector } from './screen-share-detector';
 import { getSettings } from './store';
@@ -101,6 +103,9 @@ async function initApp() {
   // ── Phase 1: Synchronous essentials (must complete before window) ──────
   initStore();
   initDatabase();
+  ensureSkillDirectories();
+  refreshSkillIndex();
+  startSkillWatcher();
   screenSharePrivacyService.init();
 
   // Setup media permissions
@@ -197,6 +202,7 @@ app.on('activate', () => {
     taskScheduler.destroy();
     timerManager.destroy();
     reminderManager.destroy();
+    stopSkillWatcher();
     clipboardWatcher.stop();
     clipboardMonitor.destroy();
     screenSharePrivacyService.clear();

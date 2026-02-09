@@ -2,8 +2,7 @@
 
 import Store from 'electron-store';
 import { Settings, ScheduledTask, TaskLog, Timer, ClipboardEntry } from '../shared/types';
-import { DEFAULT_SETTINGS, DEFAULT_MCP_SERVERS } from '../shared/constants';
-import { getDefaultMcpServers } from '../shared/constants';
+import { DEFAULT_SETTINGS, getDefaultMcpServers } from '../shared/constants';
 import { StoredMCPServer, MCPServerConfig } from '../shared/mcp-types';
 
 interface StoreSchema {

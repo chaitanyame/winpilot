@@ -5,6 +5,7 @@ import { CopilotClient, CopilotSession, type SessionEvent, type MCPServerConfig 
 import { desktopCommanderTools } from '../tools';
 import { logger } from '../utils/logger';
 import { getEnabledMcpServers } from '../main/store';
+import { getSkillInstructions } from '../main/skills-registry';
 import { MCPLocalServerConfig, MCPRemoteServerConfig } from '../shared/mcp-types';
 import { setActiveWebContents, getActiveWebContents } from '../main/permission-gate';
 import * as path from 'path';
@@ -93,7 +94,13 @@ export class CopilotController {
   private isComplete = false;
   private isStreaming = false;
   private mcpServersChanged = false;
+  private skillContextChanged = false;
   private isSending = false;
+  private activeSkillContext: { id: string; instructions: string } | null = null;
+  private skillExpiryTimer: NodeJS.Timeout | null = null;
+  private lastSkillActivity = 0;
+  private readonly skillExpiryMs = 5 * 60 * 1000;
+  private readonly skillHysteresisMs = 30 * 1000;
   // Session compaction
   private compactionSummary: string | null = null;
   // Agentic loop state
@@ -152,6 +159,7 @@ export class CopilotController {
   private buildMcpServersConfig(): Record<string, SDKMCPServerConfig> {
     const enabledServers = getEnabledMcpServers();
     const mcpServers: Record<string, SDKMCPServerConfig> = {};
+    const reservedToolNames = new Set(desktopCommanderTools.map(t => t.name));
 
     for (const server of enabledServers) {
       const config = server.config;
@@ -159,6 +167,16 @@ export class CopilotController {
       // SDK requires tools as string[]. The SDK comment says "[] means none, \"*\" means all"
       // So when config.tools is "*" string, convert to ["*"] array
       const toolsArray: string[] = Array.isArray(config.tools) ? config.tools : ['*'];
+
+      if (!toolsArray.includes('*')) {
+        const collisions = toolsArray.filter(name => reservedToolNames.has(name));
+        if (collisions.length > 0) {
+          logger.warn('Copilot', 'MCP tool name collision detected', {
+            serverId: server.id,
+            collisions,
+          });
+        }
+      }
 
       if (config.type === 'local' || config.type === 'stdio') {
         const localConfig = config as MCPLocalServerConfig;
@@ -216,21 +234,80 @@ export class CopilotController {
   }
 
   /**
+   * Set active skill context for JIT prompt injection
+   */
+  setActiveSkill(skillId: string): boolean {
+    const instructions = getSkillInstructions(skillId);
+    if (!instructions) {
+      logger.warn('Skills', 'Failed to load skill instructions', { skillId });
+      return false;
+    }
+    this.activeSkillContext = { id: skillId, instructions };
+    this.skillContextChanged = true;
+    this.touchSkillActivity();
+    logger.copilot('Active skill context set', { skillId });
+    return true;
+  }
+
+  /**
+   * Clear active skill context
+   */
+  clearActiveSkill(): void {
+    if (this.activeSkillContext) {
+      logger.copilot('Clearing active skill context', { skillId: this.activeSkillContext.id });
+      this.activeSkillContext = null;
+      this.skillContextChanged = true;
+      this.clearSkillExpiryTimer();
+    }
+  }
+
+  private touchSkillActivity(): void {
+    this.lastSkillActivity = Date.now();
+    this.scheduleSkillExpiry();
+  }
+
+  private scheduleSkillExpiry(): void {
+    if (this.skillExpiryTimer) {
+      clearTimeout(this.skillExpiryTimer);
+    }
+    const now = Date.now();
+    const expiresAt = this.lastSkillActivity + this.skillExpiryMs;
+    const delay = Math.max(expiresAt - now, 0) + this.skillHysteresisMs;
+    this.skillExpiryTimer = setTimeout(() => {
+      if (!this.activeSkillContext) return;
+      const elapsed = Date.now() - this.lastSkillActivity;
+      if (elapsed >= this.skillExpiryMs) {
+        this.clearActiveSkill();
+      } else {
+        this.scheduleSkillExpiry();
+      }
+    }, delay);
+  }
+
+  private clearSkillExpiryTimer(): void {
+    if (this.skillExpiryTimer) {
+      clearTimeout(this.skillExpiryTimer);
+      this.skillExpiryTimer = null;
+    }
+  }
+
+  /**
    * Initialize the Copilot session with streaming and custom tools
    */
   async initialize(): Promise<void> {
-    if (this.isInitialized && this.session && !this.mcpServersChanged) {
+    if (this.isInitialized && this.session && !this.mcpServersChanged && !this.skillContextChanged) {
       logger.copilot('Already initialized');
       return;
     }
 
-    // If MCP servers changed, destroy existing session first
-    if (this.mcpServersChanged && this.session) {
-      logger.copilot('Reinitializing due to MCP servers change...');
+    // If MCP servers or skill context changed, destroy existing session first
+    if ((this.mcpServersChanged || this.skillContextChanged) && this.session) {
+      logger.copilot('Reinitializing due to MCP servers or skill context change...');
       await this.session.destroy();
       this.session = null;
       this.isInitialized = false;
       this.mcpServersChanged = false;
+      this.skillContextChanged = false;
     }
 
     const toolNames = desktopCommanderTools.map(t => t.name);
@@ -289,6 +366,7 @@ export class CopilotController {
       }
       
       this.isInitialized = true;
+      this.skillContextChanged = false;
     } catch (error) {
       // Check if error is related to MCP server connection
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -315,6 +393,7 @@ export class CopilotController {
 
         logger.copilot('Session created (without MCP)', { sessionId: this.session.sessionId });
         this.isInitialized = true;
+        this.skillContextChanged = false;
       } else {
         logger.error('Copilot', 'Failed to create session', error);
         throw error;
@@ -651,10 +730,13 @@ What should we do next?`;
     }
 
     this.isSending = true;
+    if (this.activeSkillContext) {
+      this.touchSkillActivity();
+    }
     
     // Ensure session is initialized
-    if (!this.session) {
-      logger.copilot('No session, initializing...');
+    if (!this.session || this.skillContextChanged) {
+      logger.copilot('No session or skill context changed, initializing...');
       await this.initialize();
     }
 
@@ -1013,6 +1095,10 @@ Provide ONLY the summary, no preamble.`;
       return `- ${t.name}: ${desc}`;
     }).join('\n');
 
+    const skillSection = this.activeSkillContext
+      ? `\n## Active Skill: ${this.activeSkillContext.id}\n\n${this.activeSkillContext.instructions}\n`
+      : '';
+
     return `You are Desktop Commander, an AI assistant that helps users control their desktop through natural language commands.
 
 ## Available Tools
@@ -1020,6 +1106,7 @@ Provide ONLY the summary, no preamble.`;
 You MUST use these exact tool names when calling tools:
 
 ${toolList}
+${skillSection}
 
 ## Web Access
 
@@ -1114,6 +1201,7 @@ Always explain findings in plain language. Never execute risky fixes without exp
       clearInterval(this.cleanupIntervalId);
       this.cleanupIntervalId = null;
     }
+    this.clearSkillExpiryTimer();
     if (this.unsubscribe) {
       this.unsubscribe();
       this.unsubscribe = null;

@@ -28,7 +28,11 @@ import { timerManager } from './timers';
 import { reminderManager } from './reminders';
 import { contextCaptureService } from './context-capture';
 import { IntentRouter } from '../intent/router';
+import { RouteResult } from '../intent/types';
+import { detectSkillIdFromMessage } from '../intent/skill-intents';
+import { getSkillIndex, refreshSkillIndex } from './skills-registry';
 import { clipboardMonitor } from './clipboard-monitor';
+import { saveUserMessage, saveAssistantMessage } from './chat-history';
 import { recordingManager } from './recording-manager';
 import { createNote, getNote, listNotes, updateNote, deleteNote, searchNotes } from './notes';
 import { createTodo, listTodos, completeTodo, deleteTodo } from './todos';
@@ -805,19 +809,13 @@ export function setupIpcHandlers(): void {
 
     // Add to history
     addToHistory(contextualMessage);
+    saveUserMessage(contextualMessage);
 
     try {
-      let routeResult = { handled: false, reason: 'Intent router initializing' } as {
-        handled: boolean;
-        reason?: string;
-        response?: string;
-        toolName?: string;
-        confidence?: number;
-        tier?: number | string;
-        failedToolName?: string;
-        failedError?: string;
-        originalTier?: number;
-      };
+      let assistantResponse = '';
+      let didEnd = false;
+      let streamError: string | null = null;
+      let routeResult: RouteResult = { handled: false, reason: 'Intent router initializing' };
 
       if (intentRouterInitialized) {
         // Try intent-based routing first (Tier 1 & 2)
@@ -842,15 +840,32 @@ export function setupIpcHandlers(): void {
           sender.send(IPC_CHANNELS.COPILOT_STREAM_CHUNK, routeResult.response);
           sender.send(IPC_CHANNELS.COPILOT_STREAM_END);
         }
+        if (routeResult.response) {
+          saveAssistantMessage(routeResult.response);
+        }
         return;
       }
 
       // Fall back to LLM for complex queries
       console.log('[IPC] Falling back to LLM', { reason: routeResult.reason });
 
+      const skillId = routeResult.skillId || detectSkillIdFromMessage(contextualMessage);
+      let skillWarning: string | null = null;
+      if (skillId) {
+        console.log('[IPC] Skill intent detected, setting active skill context', { skillId });
+        const skillSet = copilotController.setActiveSkill(skillId);
+        if (!skillSet) {
+          console.log('[IPC] Skill context not set (missing SKILL.md?)', { skillId });
+          skillWarning = `[System: Skill instructions for "${skillId}" were not found. Proceed with available tools and explain if setup is required.]`;
+        }
+      }
+
       // If a tool was attempted but failed, enrich the message with failure context
       // so the LLM can reason about an alternative approach
       let llmMessage = contextualMessage;
+      if (skillWarning) {
+        llmMessage = `${skillWarning}\n\n${llmMessage}`;
+      }
       if (routeResult.failedToolName && routeResult.failedError) {
         console.log('[IPC] Including tool failure context for LLM', {
           failedTool: routeResult.failedToolName,
@@ -874,6 +889,9 @@ export function setupIpcHandlers(): void {
         console.log('[IPC] Stream event:', streamEvent.type, streamEvent.content?.substring(0, 50));
         switch (streamEvent.type) {
           case 'text':
+            if (streamEvent.content) {
+              assistantResponse += streamEvent.content;
+            }
             sender.send(IPC_CHANNELS.COPILOT_STREAM_CHUNK, streamEvent.content);
             break;
           case 'tool_call':
@@ -883,6 +901,9 @@ export function setupIpcHandlers(): void {
             // Tool execution details are shown in the Logs panel; avoid duplicating in chat output.
             break;
           case 'iteration_start':
+            if (streamEvent.content) {
+              assistantResponse += streamEvent.content;
+            }
             sender.send(IPC_CHANNELS.COPILOT_STREAM_CHUNK, streamEvent.content || '');
             break;
           case 'iteration_complete':
@@ -890,6 +911,9 @@ export function setupIpcHandlers(): void {
             console.log('[IPC] Iteration complete:', streamEvent.iterationNumber);
             break;
           case 'loop_complete':
+            if (streamEvent.content) {
+              assistantResponse += streamEvent.content;
+            }
             sender.send(IPC_CHANNELS.COPILOT_STREAM_CHUNK, streamEvent.content);
             break;
           case 'error':
@@ -897,18 +921,27 @@ export function setupIpcHandlers(): void {
             if (!sender.isDestroyed()) {
               sender.send(IPC_CHANNELS.COPILOT_STREAM_END, { error: streamEvent.error });
             }
-            return;
+            streamError = streamEvent.error ?? 'Unknown error';
+            didEnd = true;
+            break;
           case 'done':
             console.log('[IPC] Stream done');
             if (!sender.isDestroyed()) {
               sender.send(IPC_CHANNELS.COPILOT_STREAM_END);
             }
-            return;
+            didEnd = true;
+            break;
+        }
+        if (didEnd) {
+          break;
         }
       }
       console.log('[IPC] Generator exhausted');
-      if (!sender.isDestroyed()) {
+      if (!didEnd && !sender.isDestroyed()) {
         sender.send(IPC_CHANNELS.COPILOT_STREAM_END);
+      }
+      if (!streamError && assistantResponse.trim()) {
+        saveAssistantMessage(assistantResponse.trim());
       }
     } catch (error) {
       console.error('Copilot error:', error);
@@ -1009,6 +1042,31 @@ export function setupIpcHandlers(): void {
       copilotController.notifyMcpServersChanged();
     }
     return server;
+  });
+
+  // Skills handlers
+  ipcMain.handle(IPC_CHANNELS.SKILLS_LIST, () => {
+    return getSkillIndex().map(skill => ({
+      id: skill.id,
+      name: skill.name,
+      description: skill.description,
+      source: skill.source,
+      license: skill.license,
+      triggers: skill.triggers,
+      path: skill.path,
+    }));
+  });
+
+  ipcMain.handle(IPC_CHANNELS.SKILLS_REFRESH, () => {
+    return refreshSkillIndex().map(skill => ({
+      id: skill.id,
+      name: skill.name,
+      description: skill.description,
+      source: skill.source,
+      license: skill.license,
+      triggers: skill.triggers,
+      path: skill.path,
+    }));
   });
 
   // Scheduled Tasks handlers

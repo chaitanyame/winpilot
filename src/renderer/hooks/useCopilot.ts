@@ -9,6 +9,7 @@ interface UseCopilotReturn {
   sendMessage: (content: string) => Promise<void>;
   cancelMessage: () => void;
   clearMessages: () => Promise<void>;
+  loadConversation: (conversationId: string | null) => Promise<void>;
 }
 
 export function useCopilot(): UseCopilotReturn {
@@ -17,7 +18,7 @@ export function useCopilot(): UseCopilotReturn {
   const [error, setError] = useState<string | null>(null);
   const currentAssistantMessageRef = useRef<string>('');
   const responseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const RESPONSE_TIMEOUT_MS = 90000;
+  const RESPONSE_TIMEOUT_MS = 180000;
 
   const clearResponseTimeout = useCallback(() => {
     if (responseTimeoutRef.current) {
@@ -148,6 +149,48 @@ export function useCopilot(): UseCopilotReturn {
     }
   }, [clearResponseTimeout]);
 
+  const loadConversation = useCallback(async (conversationId: string | null) => {
+    clearResponseTimeout();
+    setIsLoading(false);
+    setError(null);
+    currentAssistantMessageRef.current = '';
+    try {
+      const data = await window.electronAPI.chatGetHistory(conversationId ?? undefined) as Array<{
+        id: string;
+        role: 'user' | 'assistant' | 'system';
+        content: string;
+        tool_calls?: string | null;
+        created_at: number;
+      }>;
+      const mapped = (data || [])
+        .sort((a, b) => a.created_at - b.created_at)
+        .map((item) => {
+          let toolCalls: Message['toolCalls'] | undefined;
+          if (item.tool_calls) {
+            try {
+              const parsed = JSON.parse(item.tool_calls);
+              if (Array.isArray(parsed)) {
+                toolCalls = parsed;
+              }
+            } catch {
+              toolCalls = undefined;
+            }
+          }
+          return {
+            id: item.id,
+            role: item.role,
+            content: item.content,
+            timestamp: new Date(item.created_at),
+            toolCalls,
+          } satisfies Message;
+        });
+      setMessages(mapped);
+    } catch (err) {
+      console.error('Failed to load conversation history:', err);
+      setError('Failed to load conversation history');
+    }
+  }, [clearResponseTimeout]);
+
   return {
     messages,
     isLoading,
@@ -155,5 +198,6 @@ export function useCopilot(): UseCopilotReturn {
     sendMessage,
     cancelMessage,
     clearMessages,
+    loadConversation,
   };
 }

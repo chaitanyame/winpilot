@@ -159,6 +159,35 @@ Settings are stored locally and can be configured:
 - **Permissions** - Customize confirmation requirements
 - **Safety** - Set protected paths and operation limits
 
+## 🧠 Agent Skills (Anthropic)
+
+Desktop Commander supports Agent Skills via `SKILL.md` files. Skills are injected into the Copilot system prompt only when relevant, to avoid prompt bloat.
+
+**Where to place skills:**
+
+- **User skills (recommended):** `~/.claude/skills/<skill-name>/SKILL.md`, `~/.agents/skills/<skill-name>/SKILL.md`, or `./.agents/skills/<skill-name>/SKILL.md` (project root)
+- **Built-in skills (packaged apps):** `resources/skills/` (empty by default)
+
+**Anthropic document skills (pptx/docx/pdf/xlsx):**
+
+Anthropic's document skills are **source-available and proprietary**. You must **bring your own copies** and place them in your user skills directory. We do **not** bundle them in the app.
+
+Example layout:
+
+```
+~/.claude/skills/ (or ~/.agents/skills/ or ./.agents/skills/)
+  pptx/
+    SKILL.md
+  docx/
+    SKILL.md
+  pdf/
+    SKILL.md
+  xlsx/
+    SKILL.md
+```
+
+Once installed, Desktop Commander will automatically detect these skills and inject the correct instructions when you mention presentations, documents, PDFs, or spreadsheets.
+
 ## 🗺️ Roadmap
 
 - [x] Phase 1: Windows support with core tools

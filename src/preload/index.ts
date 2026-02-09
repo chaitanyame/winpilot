@@ -132,6 +132,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   mcpDelete: (id: string) => ipcRenderer.invoke(MCP_IPC_CHANNELS.MCP_DELETE, id),
   mcpToggle: (id: string) => ipcRenderer.invoke(MCP_IPC_CHANNELS.MCP_TOGGLE, id),
 
+  // Skills
+  skillsList: () => ipcRenderer.invoke(IPC_CHANNELS.SKILLS_LIST),
+  skillsRefresh: () => ipcRenderer.invoke(IPC_CHANNELS.SKILLS_REFRESH),
+
   // Scheduled Tasks
   taskList: () => ipcRenderer.invoke('task:list'),
   taskAdd: (task: unknown) => ipcRenderer.invoke('task:add', task),
@@ -510,6 +514,9 @@ export interface ElectronAPI {
   mcpUpdate: (id: string, config: unknown) => Promise<unknown>;
   mcpDelete: (id: string) => Promise<boolean>;
   mcpToggle: (id: string) => Promise<unknown>;
+
+  skillsList: () => Promise<import('../shared/types').SkillSummary[]>;
+  skillsRefresh: () => Promise<import('../shared/types').SkillSummary[]>;
 
   taskList: () => Promise<unknown>;
   taskAdd: (task: unknown) => Promise<unknown>;

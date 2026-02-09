@@ -144,6 +144,16 @@ export interface ToolCall {
   error?: string;
 }
 
+export interface SkillSummary {
+  id: string;
+  name: string;
+  description: string;
+  source: 'builtin' | 'user';
+  license?: string;
+  triggers?: string[];
+  path: string;
+}
+
 // Permission request
 export interface PermissionRequest {
   id: string;
@@ -349,6 +359,10 @@ export const IPC_CHANNELS = {
   // Context Awareness
   CONTEXT_GET: 'context:get',
   CONTEXT_CLEAR: 'context:clear',
+
+  // Skills
+  SKILLS_LIST: 'skills:list',
+  SKILLS_REFRESH: 'skills:refresh',
 
   // Notes
   NOTES_LIST: 'notes:list',

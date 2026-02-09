@@ -44,7 +44,7 @@ export async function createCommandWindow(): Promise<BrowserWindow> {
     minimizable: true,
     maximizable: true,
     fullscreenable: false,
-    alwaysOnTop: true,
+    alwaysOnTop: false,
     skipTaskbar: false, // Show in taskbar when minimized
     title: 'Desktop Commander',
     webPreferences: {
@@ -468,9 +468,11 @@ export function showCommandWindow(): void {
 
   // FIRST: Always restore and show the window before doing anything else
   try {
-    // Force alwaysOnTop with highest priority during voice recording
+    // Only force alwaysOnTop during voice recording
     if (suppressAutoHide) {
       commandWindow.setAlwaysOnTop(true, 'screen-saver');
+    } else {
+      commandWindow.setAlwaysOnTop(false);
     }
     
     if (commandWindow.isMinimized()) {

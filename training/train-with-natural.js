@@ -19,8 +19,14 @@ if (!fs.existsSync(trainingDataPath)) {
   process.exit(1);
 }
 
-const trainingData = fs.readFileSync(trainingDataPath, 'utf-8').split('\n').filter(Boolean);
-const testData = fs.readFileSync(testDataPath, 'utf-8').split('\n').filter(Boolean);
+const trainingData = fs.readFileSync(trainingDataPath, 'utf-8')
+  .split('\n')
+  .map(line => line.replace(/\r$/, ''))
+  .filter(Boolean);
+const testData = fs.readFileSync(testDataPath, 'utf-8')
+  .split('\n')
+  .map(line => line.replace(/\r$/, ''))
+  .filter(Boolean);
 
 console.log(`📊 Training data: ${trainingData.length} examples`);
 console.log(`📊 Test data: ${testData.length} examples\n`);

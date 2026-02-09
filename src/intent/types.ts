@@ -57,6 +57,8 @@ export interface RouteResult {
   failedError?: string;
   /** Which tier attempted execution before failing */
   originalTier?: ClassificationTier;
+  /** Skill ID for JIT context injection */
+  skillId?: string;
 }
 
 /**
