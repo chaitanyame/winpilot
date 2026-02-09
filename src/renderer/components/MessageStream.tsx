@@ -833,13 +833,14 @@ const MessageStream = memo(function MessageStream({ messages, isLoading, actionL
 
   // useLayoutEffect: detect new user messages AND scroll them to top, all in one hook.
   // useLayoutEffect runs BEFORE useEffect and before browser paint,
-  // so we must set pinned mode AND scroll here (not in a separate useEffect).
+  // so we must set pinned mode here (not in a separate useEffect).
+  // The actual smooth scroll happens in a rAF after layout commits.
   useLayoutEffect(() => {
     const lastMsg = messages[messages.length - 1];
     if (!lastMsg || lastMsg.role !== 'user') return;
     if (lastMsg.id === lastUserMessageIdRef.current) return;
 
-    // New user message detected — pin and scroll
+    // New user message detected — pin immediately so auto-scroll won't interfere
     lastUserMessageIdRef.current = lastMsg.id;
     scrollModeRef.current = 'pinned';
 
@@ -849,11 +850,15 @@ const MessageStream = memo(function MessageStream({ messages, isLoading, actionL
     const msgEl = containerRef.current.querySelector(`[data-message-id="${lastMsg.id}"]`) as HTMLElement;
     if (!msgEl) return;
 
-    // Position the user message 16px from the top of the scroll container
+    // Calculate target scroll position: user message 16px from top
     const msgRect = msgEl.getBoundingClientRect();
     const parentRect = scrollParent.getBoundingClientRect();
-    const offset = msgRect.top - parentRect.top;
-    scrollParent.scrollTop = scrollParent.scrollTop + offset - 16;
+    const targetScrollTop = scrollParent.scrollTop + (msgRect.top - parentRect.top) - 16;
+
+    // Use rAF to smooth-scroll after layout commits
+    requestAnimationFrame(() => {
+      scrollParent.scrollTo({ top: targetScrollTop, behavior: 'smooth' });
+    });
   }, [messages]);
 
   const scrollToBottom = useCallback(() => {
