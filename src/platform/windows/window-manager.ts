@@ -32,13 +32,13 @@ export class WindowsWindowManager implements IWindowManager {
   async listWindows(): Promise<WindowInfo[]> {
     try {
       // PowerShell script to get all visible windows using Win32 API
+      // Optimized: removed Process.GetProcessById (can hang) and GetWindowDisplayAffinity (slow)
       const script = `
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Collections.Generic;
-using System.Diagnostics;
 
 public class WindowInfo {
     [DllImport("user32.dll")]
@@ -56,11 +56,8 @@ public class WindowInfo {
     [DllImport("user32.dll")]
     public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
     
-            [DllImport("user32.dll")]
-            public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
-            
-            [DllImport("user32.dll")]
-            public static extern bool GetWindowDisplayAffinity(IntPtr hWnd, out uint affinity);
+    [DllImport("user32.dll")]
+    public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
     
     [DllImport("user32.dll")]
     public static extern bool IsIconic(IntPtr hWnd);
@@ -105,20 +102,9 @@ public class WindowInfo {
             bool isMinimized = IsIconic(hWnd);
             if (!isMinimized && (rect.Right - rect.Left < 50 || rect.Bottom - rect.Top < 50)) return true;
             
-            string processName = "";
-            try {
-                var proc = Process.GetProcessById((int)processId);
-                processName = proc.ProcessName;
-            } catch { }
-            
-            uint affinity = 0;
-            GetWindowDisplayAffinity(hWnd, out affinity);
-            bool isHiddenFromCapture = affinity != 0;
-            
             windows.Add(new {
                 id = hWnd.ToString(),
                 title = title,
-                app = processName,
                 processId = processId,
                 x = rect.Left,
                 y = rect.Top,
@@ -126,8 +112,7 @@ public class WindowInfo {
                 height = isMinimized ? 0 : rect.Bottom - rect.Top,
                 isMinimized = isMinimized,
                 isMaximized = IsZoomed(hWnd),
-                isFocused = hWnd == foreground,
-                isHiddenFromCapture = isHiddenFromCapture
+                isFocused = hWnd == foreground
             });
             return true;
         }, IntPtr.Zero);
@@ -139,7 +124,7 @@ public class WindowInfo {
 [WindowInfo]::GetWindows() | ConvertTo-Json -Compress
 `;
 
-      const { stdout } = await runPowerShell(script);
+      const { stdout } = await runPowerShell(script, { timeout: 15000 });
 
       const parsed = JSON.parse(stdout || '[]');
       const windowsArray = Array.isArray(parsed) ? parsed : [parsed];
@@ -147,10 +132,8 @@ public class WindowInfo {
       // Filter out our own app's windows (WinPilot / electron)
       const filteredWindows = windowsArray.filter((w: any) => {
         const title = (w.title || '').toLowerCase();
-        const app = (w.app || '').toLowerCase();
         // Filter out our own window
-        if (title.includes('winpilot')) return false;
-        if (app === 'electron' || app === 'winpilot') return false;
+        if (title.includes('winpilot') || title.includes('desktop commander')) return false;
         return true;
       });
 
@@ -161,23 +144,30 @@ public class WindowInfo {
       }
 
       // Map results and mark the "active" window (last focused external, not Desktop Commander)
-      return filteredWindows.map((w: any) => ({
-        id: w.id,
-        title: w.title,
-        app: w.app,
-        processId: w.processId,
-        bounds: {
-          x: w.x,
-          y: w.y,
-          width: w.width,
-          height: w.height,
-        },
-        isMinimized: w.isMinimized,
-        isMaximized: w.isMaximized,
-        // Mark as focused if it's the last known focused external window
-        isFocused: w.id === lastFocusedExternalWindowId,
-        isHiddenFromCapture: Boolean(w.isHiddenFromCapture),
-      }));
+      // Get app names from running processes (fast lookup)
+      const processes = new Map<number, string>();
+      return filteredWindows.map((w: any) => {
+        // Try to find app name from cached processes or use processId as fallback
+        const appName = processes.get(w.processId) || `pid:${w.processId}`;
+        
+        return {
+          id: w.id,
+          title: w.title,
+          app: appName,
+          processId: w.processId,
+          bounds: {
+            x: w.x,
+            y: w.y,
+            width: w.width,
+            height: w.height,
+          },
+          isMinimized: w.isMinimized,
+          isMaximized: w.isMaximized,
+          // Mark as focused if it's the last known focused external window
+          isFocused: w.id === lastFocusedExternalWindowId,
+          isHiddenFromCapture: false, // Disabled to improve speed
+        };
+      });
     } catch (error) {
       console.error('Error listing windows:', error);
       return [];

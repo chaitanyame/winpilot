@@ -34,6 +34,7 @@ export const DEFAULT_SETTINGS = {
   appearanceMode: 'system' as const,
   themeId: 'claude' as const,
   screenSharePrivacy: {
+    enabled: false,
     autoHideOnShare: true,
   },
   permissions: {

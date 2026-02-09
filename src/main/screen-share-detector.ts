@@ -19,6 +19,7 @@ export class ScreenShareDetector {
   private isActive = false;
   private listeners: Array<(active: boolean) => void> = [];
   private isPolling = false; // Prevent concurrent polls
+  private isPaused = false; // Pause polling during long operations
 
   start(): void {
     if (this.timer) return;
@@ -36,6 +37,20 @@ export class ScreenShareDetector {
     }
   }
 
+  /**
+   * Pause polling temporarily during long-running operations
+   */
+  pause(): void {
+    this.isPaused = true;
+  }
+
+  /**
+   * Resume polling after long-running operations complete
+   */
+  resume(): void {
+    this.isPaused = false;
+  }
+
   onChange(listener: (active: boolean) => void): () => void {
     this.listeners.push(listener);
     return () => {
@@ -44,9 +59,8 @@ export class ScreenShareDetector {
   }
 
   private async poll(): Promise<void> {
-    // Skip if previous poll still running
-    if (this.isPolling) {
-      logger.copilot('[ScreenShareDetector] Skipping poll - previous still running');
+    // Skip if paused or previous poll still running
+    if (this.isPaused || this.isPolling) {
       return;
     }
 

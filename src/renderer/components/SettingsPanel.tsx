@@ -898,26 +898,54 @@ export function SettingsPanel({ isOpen, onClose }: Props) {
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
                     type="checkbox"
-                    checked={settings.screenSharePrivacy?.autoHideOnShare ?? true}
+                    checked={settings.screenSharePrivacy?.enabled ?? false}
                     onChange={(e) => updateSettings({
                       screenSharePrivacy: {
                         ...settings.screenSharePrivacy,
-                        autoHideOnShare: e.target.checked,
+                        enabled: e.target.checked,
                       },
                     })}
                     className="w-4 h-4 rounded border-dark-300 text-primary-500"
                   />
-                  <span className="text-sm text-dark-600 dark:text-dark-400">
-                    Auto-hide Desktop Commander when screen sharing starts
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <Shield className="w-4 h-4 text-dark-600 dark:text-dark-400" />
+                    <span className="text-sm text-dark-600 dark:text-dark-400">
+                      Enable screen share detector
+                    </span>
+                  </div>
                 </label>
+                <p className="text-xs text-dark-500 mt-1 ml-6">
+                  Monitors for screen sharing apps (Zoom, Teams, OBS, Discord, WebEx, etc.)
+                </p>
               </div>
+
+              {settings.screenSharePrivacy?.enabled && (
+                <div>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={settings.screenSharePrivacy?.autoHideOnShare ?? true}
+                      onChange={(e) => updateSettings({
+                        screenSharePrivacy: {
+                          ...settings.screenSharePrivacy,
+                          autoHideOnShare: e.target.checked,
+                        },
+                      })}
+                      className="w-4 h-4 rounded border-dark-300 text-primary-500"
+                    />
+                    <span className="text-sm text-dark-600 dark:text-dark-400">
+                      Auto-hide Desktop Commander when screen sharing starts
+                    </span>
+                  </label>
+                </div>
+              )}
 
               <div className="p-3 bg-primary-50 dark:bg-primary-900/20 rounded-lg">
                 <p className="text-xs text-primary-700 dark:text-primary-300">
                   <Shield className="w-3 h-3 inline mr-1" />
-                  When enabled, Desktop Commander will hide itself if a screen sharing app
-                  (Zoom, Teams, OBS, etc.) is detected.
+                  {settings.screenSharePrivacy?.enabled
+                    ? 'Screen share detection is active. The app will automatically hide itself when a screen sharing app is detected if auto-hide is enabled.'
+                    : 'Screen share detection is currently disabled. Enable it to automatically monitor and respond to screen sharing activities.'}
                 </p>
               </div>
             </div>

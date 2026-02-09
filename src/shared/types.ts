@@ -180,6 +180,7 @@ export interface Settings {
   appearanceMode: AppearanceMode;
   themeId: ThemeId;
   screenSharePrivacy: {
+    enabled: boolean;
     autoHideOnShare: boolean;
   };
   permissions: {

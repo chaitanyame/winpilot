@@ -146,12 +146,17 @@ async function initApp() {
   ];
 
   // Non-async services start immediately (no await needed)
-  screenShareDetector.start();
+  // Start detector only if enabled in settings
+  const settings = getSettings();
+  if (settings.screenSharePrivacy?.enabled) {
+    screenShareDetector.start();
+  }
+  
   screenShareDetector.onChange((active) => {
     console.log('[ScreenShareDetector] onChange fired, active:', active);
     if (!active) return;
-    const settings = getSettings();
-    if (settings.screenSharePrivacy?.autoHideOnShare) {
+    const currentSettings = getSettings();
+    if (currentSettings.screenSharePrivacy?.autoHideOnShare) {
       const isRecording = voiceInputManager.getIsRecording();
       console.log('[ScreenShareDetector] Voice recording status:', isRecording);
       if (!isRecording) {

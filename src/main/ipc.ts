@@ -16,6 +16,7 @@ import { getSettings, setSettings, getHistory, addToHistory, clearHistory, getMc
 import { getAppSetting, setAppSetting, deleteAppSetting } from './database';
 import { hideCommandWindow, showCommandWindow, resizeCommandWindow, minimizeCommandWindow, maximizeCommandWindow, fitWindowToScreen, getCommandWindow, setAutoHideSuppressed, startAudioCapture, stopAudioCapture, handleAudioCaptureReady, handleAudioCaptureError, markAudioCaptureWindowReady } from './windows';
 import { screenSharePrivacyService } from './screen-share-privacy';
+import { screenShareDetector } from './screen-share-detector';
 import { InvisiwindWrapper } from '../platform/windows/invisiwind';
 import { updateHotkey, registerVoiceHotkey, unregisterVoiceHotkey } from './hotkeys';
 import { updateTrayMenu } from './tray';
@@ -430,6 +431,15 @@ export function setupIpcHandlers(): void {
       }
     }
 
+    // Update screen share detector if settings changed
+    if (settings.screenSharePrivacy !== undefined) {
+      if (settings.screenSharePrivacy.enabled) {
+        screenShareDetector.start();
+      } else {
+        screenShareDetector.stop();
+      }
+    }
+
     // Update tray menu
     updateTrayMenu();
 
@@ -815,17 +825,20 @@ export function setupIpcHandlers(): void {
       let assistantResponse = '';
       let didEnd = false;
       let streamError: string | null = null;
-      let routeResult: RouteResult = { handled: false, reason: 'Intent router initializing' };
+      let routeResult: RouteResult = { handled: false, reason: 'Intent router not ready' };
 
-      if (intentRouterInitialized) {
+      // Pause screen share detector polling during processing (prevents log spam during window/process operations)
+      screenShareDetector.pause();
+
+      try {
+        // Ensure intent router is initialized (once) before routing
+        await ensureIntentRouterInitialized();
+
         // Try intent-based routing first (Tier 1 & 2)
         console.log('[IPC] Attempting intent-based routing...');
         routeResult = await intentRouter.route(contextualMessage);
-      } else {
-        console.log('[IPC] Intent router not ready, warming in background...');
-        ensureIntentRouterInitialized().catch((error) => {
-          console.error('[IPC] Intent router init failed:', error);
-        });
+      } finally {
+        screenShareDetector.resume();
       }
 
       if (routeResult.handled) {
@@ -879,62 +892,69 @@ export function setupIpcHandlers(): void {
       // Ensure tool execution can request permissions from the active window.
       copilotController.setActiveWebContents(sender);
 
-      // Use the AsyncGenerator pattern with agentic loop
-      for await (const streamEvent of copilotController.sendMessageWithLoop(llmMessage)) {
-        // Check if sender is still valid before sending
-        if (sender.isDestroyed()) {
-          console.log('[IPC] Sender destroyed, stopping stream');
-          return;
+      // Pause screen share detector during LLM processing
+      screenShareDetector.pause();
+
+      try {
+        // Use the AsyncGenerator pattern with agentic loop
+        for await (const streamEvent of copilotController.sendMessageWithLoop(llmMessage)) {
+          // Check if sender is still valid before sending
+          if (sender.isDestroyed()) {
+            console.log('[IPC] Sender destroyed, stopping stream');
+            return;
+          }
+          console.log('[IPC] Stream event:', streamEvent.type, streamEvent.content?.substring(0, 50));
+          switch (streamEvent.type) {
+            case 'text':
+              if (streamEvent.content) {
+                assistantResponse += streamEvent.content;
+              }
+              sender.send(IPC_CHANNELS.COPILOT_STREAM_CHUNK, streamEvent.content);
+              break;
+            case 'tool_call':
+              // Tool execution details are shown in the Logs panel; avoid duplicating in chat output.
+              break;
+            case 'tool_result':
+              // Tool execution details are shown in the Logs panel; avoid duplicating in chat output.
+              break;
+            case 'iteration_start':
+              if (streamEvent.content) {
+                assistantResponse += streamEvent.content;
+              }
+              sender.send(IPC_CHANNELS.COPILOT_STREAM_CHUNK, streamEvent.content || '');
+              break;
+            case 'iteration_complete':
+              // Just log, no need to send to UI unless we want progress indicators
+              console.log('[IPC] Iteration complete:', streamEvent.iterationNumber);
+              break;
+            case 'loop_complete':
+              if (streamEvent.content) {
+                assistantResponse += streamEvent.content;
+              }
+              sender.send(IPC_CHANNELS.COPILOT_STREAM_CHUNK, streamEvent.content);
+              break;
+            case 'error':
+              console.error('[IPC] Stream error:', streamEvent.error);
+              if (!sender.isDestroyed()) {
+                sender.send(IPC_CHANNELS.COPILOT_STREAM_END, { error: streamEvent.error });
+              }
+              streamError = streamEvent.error ?? 'Unknown error';
+              didEnd = true;
+              break;
+            case 'done':
+              console.log('[IPC] Stream done');
+              if (!sender.isDestroyed()) {
+                sender.send(IPC_CHANNELS.COPILOT_STREAM_END);
+              }
+              didEnd = true;
+              break;
+          }
+          if (didEnd) {
+            break;
+          }
         }
-        console.log('[IPC] Stream event:', streamEvent.type, streamEvent.content?.substring(0, 50));
-        switch (streamEvent.type) {
-          case 'text':
-            if (streamEvent.content) {
-              assistantResponse += streamEvent.content;
-            }
-            sender.send(IPC_CHANNELS.COPILOT_STREAM_CHUNK, streamEvent.content);
-            break;
-          case 'tool_call':
-            // Tool execution details are shown in the Logs panel; avoid duplicating in chat output.
-            break;
-          case 'tool_result':
-            // Tool execution details are shown in the Logs panel; avoid duplicating in chat output.
-            break;
-          case 'iteration_start':
-            if (streamEvent.content) {
-              assistantResponse += streamEvent.content;
-            }
-            sender.send(IPC_CHANNELS.COPILOT_STREAM_CHUNK, streamEvent.content || '');
-            break;
-          case 'iteration_complete':
-            // Just log, no need to send to UI unless we want progress indicators
-            console.log('[IPC] Iteration complete:', streamEvent.iterationNumber);
-            break;
-          case 'loop_complete':
-            if (streamEvent.content) {
-              assistantResponse += streamEvent.content;
-            }
-            sender.send(IPC_CHANNELS.COPILOT_STREAM_CHUNK, streamEvent.content);
-            break;
-          case 'error':
-            console.error('[IPC] Stream error:', streamEvent.error);
-            if (!sender.isDestroyed()) {
-              sender.send(IPC_CHANNELS.COPILOT_STREAM_END, { error: streamEvent.error });
-            }
-            streamError = streamEvent.error ?? 'Unknown error';
-            didEnd = true;
-            break;
-          case 'done':
-            console.log('[IPC] Stream done');
-            if (!sender.isDestroyed()) {
-              sender.send(IPC_CHANNELS.COPILOT_STREAM_END);
-            }
-            didEnd = true;
-            break;
-        }
-        if (didEnd) {
-          break;
-        }
+      } finally {
+        screenShareDetector.resume();
       }
       console.log('[IPC] Generator exhausted');
       if (!didEnd && !sender.isDestroyed()) {
