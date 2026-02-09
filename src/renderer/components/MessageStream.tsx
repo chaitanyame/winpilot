@@ -74,7 +74,15 @@ function getToolInfo(toolName: string) {
  */
 const renderContent = (content: string): React.ReactNode => {
   const elements: React.ReactNode[] = [];
-  const lines = content.split('\n');
+
+  // Pre-process: collapse completed tool blocks into single-line markers
+  // A completed block has both <!--tool:start:NAME--> and <!--tool:end:STATUS-->
+  const processed = content.replace(
+    /<!--tool:start:(.+?)-->[\s\S]*?<!--tool:end:(.+?)-->/g,
+    '<!--tool:done:$1:$2-->'
+  );
+
+  const lines = processed.split('\n');
   let inCodeBlock = false;
   let codeBlockContent: string[] = [];
   let listItems: string[] = [];
@@ -211,6 +219,50 @@ const renderContent = (content: string): React.ReactNode => {
 
     if (inCodeBlock) {
       codeBlockContent.push(line);
+      continue;
+    }
+
+    // Collapsible tool block: completed (collapsed by default)
+    const doneMatch = line.match(/^<!--tool:done:(.+?):(.+?)-->$/);
+    if (doneMatch) {
+      flushList();
+      flushTable();
+      const toolName = doneMatch[1];
+      const status = doneMatch[2];
+      const isSuccess = status.includes('✅');
+      elements.push(
+        <details key={`tool-${i}`} className="my-1.5 rounded-lg bg-dark-100/60 dark:bg-dark-700/40 border border-dark-200/50 dark:border-dark-600/50 overflow-hidden">
+          <summary className="cursor-pointer px-3 py-1.5 text-xs flex items-center gap-2 text-dark-500 dark:text-dark-400 select-none hover:bg-dark-200/40 dark:hover:bg-dark-600/30 transition-colors">
+            {isSuccess
+              ? <CheckCircle className="w-3.5 h-3.5 text-green-500 flex-shrink-0" />
+              : <XCircle className="w-3.5 h-3.5 text-red-400 flex-shrink-0" />}
+            <span className="capitalize">{toolName}</span>
+          </summary>
+        </details>
+      );
+      continue;
+    }
+
+    // Collapsible tool block: in-progress (expanded with spinner)
+    const startMatch = line.match(/^<!--tool:start:(.+?)-->$/);
+    if (startMatch) {
+      flushList();
+      flushTable();
+      const toolName = startMatch[1];
+      elements.push(
+        <details key={`tool-${i}`} open className="my-1.5 rounded-lg bg-dark-100/60 dark:bg-dark-700/40 border border-blue-300/30 dark:border-blue-500/20 overflow-hidden">
+          <summary className="cursor-pointer px-3 py-1.5 text-xs flex items-center gap-2 text-dark-500 dark:text-dark-400 select-none">
+            <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-400 flex-shrink-0" />
+            <span className="capitalize">{toolName}</span>
+          </summary>
+          <div className="px-3 pb-2 text-xs text-dark-400 dark:text-dark-500">Running...</div>
+        </details>
+      );
+      continue;
+    }
+
+    // Skip orphaned end markers (already consumed by pre-processing)
+    if (line.match(/^<!--tool:end:.+?-->$/)) {
       continue;
     }
 

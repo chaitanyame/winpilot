@@ -912,12 +912,22 @@ export function setupIpcHandlers(): void {
               }
               sender.send(IPC_CHANNELS.COPILOT_STREAM_CHUNK, streamEvent.content);
               break;
-            case 'tool_call':
-              // Tool execution details are shown in the Logs panel; avoid duplicating in chat output.
+            case 'tool_call': {
+              // Show tool execution inline as a collapsible block
+              const toolLabel = (streamEvent.toolName || 'tool').replace(/_/g, ' ');
+              const toolChunk = `\n<!--tool:start:${toolLabel}-->\n`;
+              assistantResponse += toolChunk;
+              sender.send(IPC_CHANNELS.COPILOT_STREAM_CHUNK, toolChunk);
               break;
-            case 'tool_result':
-              // Tool execution details are shown in the Logs panel; avoid duplicating in chat output.
+            }
+            case 'tool_result': {
+              // Close the collapsible tool block with status
+              const resultIcon = streamEvent.content?.startsWith('✅') ? '✅' : '❌';
+              const resultChunk = `<!--tool:end:${resultIcon}-->\n`;
+              assistantResponse += resultChunk;
+              sender.send(IPC_CHANNELS.COPILOT_STREAM_CHUNK, resultChunk);
               break;
+            }
             case 'iteration_start':
               if (streamEvent.content) {
                 assistantResponse += streamEvent.content;

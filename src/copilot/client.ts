@@ -944,7 +944,7 @@ What should we do next?`;
         const deltaData = event.data as MessageDeltaData;
         logger.copilot('Message delta', { content: deltaData.deltaContent?.substring(0, 50) });
 
-        // If tools just executed, prepend a newline so each reasoning segment starts on its own line
+        // If tools just executed, prepend a newline so the next reasoning segment starts on its own line
         let deltaContent = deltaData.deltaContent;
         if (this.toolsJustExecuted && deltaContent) {
           deltaContent = '\n' + deltaContent;
