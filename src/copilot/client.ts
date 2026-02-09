@@ -113,6 +113,8 @@ export class CopilotController {
   private currentUserMessageTimestamp = 0;
   // Cleanup interval for stale tool executions
   private cleanupIntervalId: NodeJS.Timeout | null = null;
+  // Cache for formatted tool names to avoid repeated regex ops
+  private toolNameCache = new Map<string, { display: string; description: string }>();
 
   constructor() {
     // Check Node.js version for Copilot CLI compatibility
@@ -143,6 +145,20 @@ export class CopilotController {
         logger.copilot(`Cleaned up stale tool execution: ${id} (${exec.toolName})`);
       }
     }
+  }
+
+  /** Get cached formatted tool name to avoid repeated regex operations */
+  private getFormattedToolName(toolName: string): { display: string; description: string } {
+    let cached = this.toolNameCache.get(toolName);
+    if (!cached) {
+      const readable = toolName.replace(/_/g, ' ');
+      cached = {
+        display: readable.replace(/\b\w/g, l => l.toUpperCase()),
+        description: readable,
+      };
+      this.toolNameCache.set(toolName, cached);
+    }
+    return cached;
   }
 
   /**
@@ -868,13 +884,13 @@ What should we do next?`;
       case 'tool.execution_start': {
         // Tool is being called
         const toolStartData = event.data as ToolExecutionStartData;
-        logger.copilot('Tool execution start', { toolName: toolStartData.toolName, arguments: toolStartData.arguments });
+        logger.copilot('Tool execution start', { toolName: toolStartData.toolName });
 
         const toolArgs = toolStartData.arguments || {};
         const commandDetail = toolStartData.toolName === 'run_shell_command' && typeof toolArgs.command === 'string'
           ? `Command: ${toolArgs.command}`
           : Object.keys(toolArgs).length > 0
-            ? `Args: ${JSON.stringify(toolArgs, null, 2)}`
+            ? `Args: ${JSON.stringify(toolArgs)}`
             : undefined;
         const reasoningDetail = this.currentAssistantResponse?.trim()
           ? `Reasoning: ${this.currentAssistantResponse.trim()}`
@@ -892,12 +908,13 @@ What should we do next?`;
         // Emit action log event
         const webContents = getActiveWebContents();
         if (webContents) {
+          const { display, description } = this.getFormattedToolName(toolStartData.toolName);
           webContents.send('copilot:actionLog', {
             id: `log-${toolStartData.toolCallId}`,
             timestamp: new Date().toLocaleTimeString('en-US', { hour12: false }),
             createdAt: this.currentUserMessageTimestamp,
-            tool: toolStartData.toolName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
-            description: `Executing ${toolStartData.toolName.replace(/_/g, ' ')}...`,
+            tool: display,
+            description: `Executing ${description}...`,
             status: 'pending' as const,
             details,
           });
@@ -936,12 +953,13 @@ What should we do next?`;
         // Emit action log event for completion
         const webContents = getActiveWebContents();
         if (webContents) {
+          const { display, description } = this.getFormattedToolName(toolName);
           webContents.send('copilot:actionLog', {
             id: `log-${toolCompleteData.toolCallId}`,
             timestamp: new Date().toLocaleTimeString('en-US', { hour12: false }),
             createdAt: this.currentUserMessageTimestamp,
-            tool: toolName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
-            description: `Completed ${toolName.replace(/_/g, ' ')}`,
+            tool: display,
+            description: `Completed ${description}`,
             status: toolCompleteData.success ? ('success' as const) : ('error' as const),
             error: toolCompleteData.error?.message,
             duration,

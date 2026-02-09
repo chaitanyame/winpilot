@@ -27,9 +27,19 @@ function isValidWindowId(windowId: string): boolean {
 // Track the last focused window that wasn't our own app
 let lastFocusedExternalWindowId: string | null = null;
 
+// TTL cache for window list to avoid expensive re-enumeration in agentic loops
+const WINDOW_LIST_CACHE_TTL_MS = 3000; // 3 seconds
+let windowListCache: WindowInfo[] | null = null;
+let windowListCacheTime = 0;
+
 export class WindowsWindowManager implements IWindowManager {
-  
+
   async listWindows(): Promise<WindowInfo[]> {
+    // Return cached result if still valid
+    const now = Date.now();
+    if (windowListCache && (now - windowListCacheTime) < WINDOW_LIST_CACHE_TTL_MS) {
+      return windowListCache;
+    }
     try {
       // PowerShell script to get all visible windows using Win32 API
       // Optimized: removed Process.GetProcessById (can hang) and GetWindowDisplayAffinity (slow)
@@ -146,10 +156,10 @@ public class WindowInfo {
       // Map results and mark the "active" window (last focused external, not Desktop Commander)
       // Get app names from running processes (fast lookup)
       const processes = new Map<number, string>();
-      return filteredWindows.map((w: any) => {
+      const result = filteredWindows.map((w: any) => {
         // Try to find app name from cached processes or use processId as fallback
         const appName = processes.get(w.processId) || `pid:${w.processId}`;
-        
+
         return {
           id: w.id,
           title: w.title,
@@ -168,10 +178,22 @@ public class WindowInfo {
           isHiddenFromCapture: false, // Disabled to improve speed
         };
       });
+
+      // Cache the result
+      windowListCache = result;
+      windowListCacheTime = Date.now();
+
+      return result;
     } catch (error) {
       console.error('Error listing windows:', error);
       return [];
     }
+  }
+
+  /** Invalidate the window list cache after a mutation */
+  private invalidateCache(): void {
+    windowListCache = null;
+    windowListCacheTime = 0;
   }
 
   async focusWindow(params: { windowId?: string; appName?: string; titleContains?: string }): Promise<boolean> {
@@ -218,6 +240,7 @@ public class WindowInfo {
       `;
 
       await runPowerShell(script);
+      this.invalidateCache();
       return true;
     } catch (error) {
       console.error('Error focusing window:', error);
@@ -277,6 +300,7 @@ $height = ${heightVal}
 `;
 
       await runPowerShell(script);
+      this.invalidateCache();
       return true;
     } catch (error) {
       console.error('Error moving window:', error);
@@ -304,10 +328,12 @@ public class Win32Close {
 [Win32Close]::PostMessage([IntPtr]::new(${params.windowId}), 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)
 `;
         await runPowerShell(script);
+        this.invalidateCache();
       } else if (params.appName) {
         // Sanitize appName to prevent command injection
         const safeAppName = escapePowerShellString(params.appName);
         await runPowerShell(`Stop-Process -Name '${safeAppName}' -ErrorAction SilentlyContinue`);
+        this.invalidateCache();
       }
       return true;
     } catch (error) {
@@ -336,6 +362,7 @@ public class Win32Minimize {
 [Win32Minimize]::ShowWindow([IntPtr]::new(${windowId}), 6)
 `;
       await runPowerShell(script);
+      this.invalidateCache();
       return true;
     } catch (error) {
       console.error('Error minimizing window:', error);
@@ -363,6 +390,7 @@ public class Win32Maximize {
 [Win32Maximize]::ShowWindow([IntPtr]::new(${windowId}), 3)
 `;
       await runPowerShell(script);
+      this.invalidateCache();
       return true;
     } catch (error) {
       console.error('Error maximizing window:', error);

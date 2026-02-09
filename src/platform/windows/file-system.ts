@@ -45,6 +45,8 @@ export class WindowsFileSystem implements IFileSystem {
     }
   }
 
+  private static readonly STAT_BATCH_SIZE = 50;
+
   private async walkDirectory(
     dirPath: string,
     recursive: boolean,
@@ -54,11 +56,22 @@ export class WindowsFileSystem implements IFileSystem {
     try {
       const entries = await readdir(dirPath, { withFileTypes: true });
 
-      for (const entry of entries) {
-        const fullPath = path.join(dirPath, entry.name);
-        
-        try {
-          const stats = await stat(fullPath);
+      // Process entries in parallel batches for stat() calls
+      const batchSize = WindowsFileSystem.STAT_BATCH_SIZE;
+      for (let i = 0; i < entries.length; i += batchSize) {
+        const batch = entries.slice(i, i + batchSize);
+        const statResults = await Promise.allSettled(
+          batch.map(async (entry) => {
+            const fullPath = path.join(dirPath, entry.name);
+            const stats = await stat(fullPath);
+            return { entry, fullPath, stats };
+          })
+        );
+
+        const subdirs: { fullPath: string }[] = [];
+        for (const result of statResults) {
+          if (result.status === 'rejected') continue; // Skip inaccessible files
+          const { entry, fullPath, stats } = result.value;
           const fileInfo = this.createFileInfo(entry.name, fullPath, stats, entry.isDirectory());
 
           if (this.matchesFilter(fileInfo, filter)) {
@@ -66,14 +79,16 @@ export class WindowsFileSystem implements IFileSystem {
           }
 
           if (recursive && entry.isDirectory()) {
-            await this.walkDirectory(fullPath, recursive, filter, results);
+            subdirs.push({ fullPath });
           }
-        } catch {
-          // Skip files we can't access
-          continue;
+        }
+
+        // Recurse into subdirectories
+        for (const { fullPath } of subdirs) {
+          await this.walkDirectory(fullPath, recursive, filter, results);
         }
       }
-    } catch (error) {
+    } catch {
       // Skip directories we can't access
     }
   }

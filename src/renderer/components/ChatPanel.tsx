@@ -21,9 +21,12 @@ export function ChatPanel({ isOpen, onClose, variant = 'modal' }: Props) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const [actionLogs, setActionLogs] = useState<ActionLog[]>([]);
   const currentAssistantMessageRef = useRef<string>('');
+  const rafIdRef = useRef<number | null>(null);
+  const lastUserMsgIdRef = useRef<string | null>(null);
   const [slashSuggestions, setSlashSuggestions] = useState<SlashCommand[]>([]);
   const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(0);
   const [completedMessageIds, setCompletedMessageIds] = useState<Set<string>>(new Set());
+  const MAX_ACTION_LOGS = 200;
 
   // Auto-focus input when opened
   useEffect(() => {
@@ -37,25 +40,29 @@ export function ChatPanel({ isOpen, onClose, variant = 'modal' }: Props) {
     const unsubscribeChunk = window.electronAPI.onStreamChunk((chunk: string) => {
       currentAssistantMessageRef.current += chunk;
 
-      setMessages((prev) => {
-        const lastMessage = prev[prev.length - 1];
-        if (lastMessage?.role === 'assistant') {
-          // Update existing assistant message
-          return [
-            ...prev.slice(0, -1),
-            { ...lastMessage, content: currentAssistantMessageRef.current },
-          ];
-        } else {
-          // Create new assistant message
-          const assistantMessage: Message = {
-            id: Date.now().toString(),
-            role: 'assistant',
-            content: currentAssistantMessageRef.current,
-            timestamp: new Date(),
-          };
-          return [...prev, assistantMessage];
-        }
-      });
+      // Batch stream updates via requestAnimationFrame to avoid re-render per chunk
+      if (rafIdRef.current === null) {
+        rafIdRef.current = requestAnimationFrame(() => {
+          rafIdRef.current = null;
+          const content = currentAssistantMessageRef.current;
+          setMessages((prev) => {
+            const lastMessage = prev[prev.length - 1];
+            if (lastMessage?.role === 'assistant') {
+              return [
+                ...prev.slice(0, -1),
+                { ...lastMessage, content },
+              ];
+            } else {
+              return [...prev, {
+                id: Date.now().toString(),
+                role: 'assistant' as const,
+                content,
+                timestamp: new Date(),
+              }];
+            }
+          });
+        });
+      }
     });
 
     const unsubscribeEnd = window.electronAPI.onStreamEnd((data) => {
@@ -84,36 +91,55 @@ export function ChatPanel({ isOpen, onClose, variant = 'modal' }: Props) {
     });
 
     const unsubscribeActionLog = window.electronAPI.onActionLog((log: ActionLog) => {
-      // Keep actionLogs for backward compatibility
-      setActionLogs(prev => [...prev, log]);
+      // Keep actionLogs for backward compatibility (bounded)
+      setActionLogs(prev => {
+        const next = [...prev, log];
+        return next.length > MAX_ACTION_LOGS ? next.slice(-MAX_ACTION_LOGS) : next;
+      });
 
       // Sync to message.toolCalls for ToolCallsDisplay
       setMessages(prev => {
         const result = [...prev];
 
-        // Find user message by timestamp matching (log.createdAt is user message timestamp)
+        // Fast path: try last known user message first
+        const lastId = lastUserMsgIdRef.current;
+        if (lastId) {
+          for (let i = result.length - 1; i >= 0; i--) {
+            if (result[i].id === lastId) {
+              const userMsg = result[i];
+              const msgTime = userMsg.timestamp?.getTime() ?? 0;
+              if (Math.abs(log.createdAt - msgTime) < 100) {
+                const toolCall = actionLogToToolCall(log);
+                const existingIndex = userMsg.toolCalls?.findIndex(tc => tc.id === log.id) ?? -1;
+                if (existingIndex >= 0) {
+                  userMsg.toolCalls![existingIndex] = toolCall;
+                } else {
+                  userMsg.toolCalls = [...(userMsg.toolCalls || []), toolCall];
+                }
+                result[i] = { ...userMsg };
+                return result;
+              }
+              break;
+            }
+          }
+        }
+
+        // Fallback: search from end for matching user message by timestamp
         for (let i = result.length - 1; i >= 0; i--) {
           if (result[i].role === 'user') {
             const userMsg = result[i];
             const msgTime = userMsg.timestamp?.getTime() ?? 0;
-
-            // Match by timestamp window (within 100ms)
             if (Math.abs(log.createdAt - msgTime) < 100) {
               const toolCall = actionLogToToolCall(log);
-
-              // Find if this tool already exists (status update)
               const existingIndex = userMsg.toolCalls?.findIndex(tc => tc.id === log.id) ?? -1;
-
               if (existingIndex >= 0) {
-                // Update existing tool call (status changed from pending to success/error)
                 userMsg.toolCalls![existingIndex] = toolCall;
               } else {
-                // Add new tool call
                 userMsg.toolCalls = [...(userMsg.toolCalls || []), toolCall];
               }
-
-              result[i] = { ...userMsg }; // Trigger re-render
-              break;
+              result[i] = { ...userMsg };
+              lastUserMsgIdRef.current = userMsg.id;
+              return result;
             }
           }
         }
@@ -126,6 +152,10 @@ export function ChatPanel({ isOpen, onClose, variant = 'modal' }: Props) {
       unsubscribeChunk();
       unsubscribeEnd();
       unsubscribeActionLog();
+      if (rafIdRef.current !== null) {
+        cancelAnimationFrame(rafIdRef.current);
+        rafIdRef.current = null;
+      }
     };
   }, []);
 
@@ -191,6 +221,8 @@ export function ChatPanel({ isOpen, onClose, variant = 'modal' }: Props) {
       if (result) {
         if (result.message === '__CLEAR__') {
           setMessages([]);
+          setActionLogs([]);
+          lastUserMsgIdRef.current = null;
         } else if (result.conversationId) {
           await loadConversation(result.conversationId);
         } else if (result.message) {
@@ -209,6 +241,7 @@ export function ChatPanel({ isOpen, onClose, variant = 'modal' }: Props) {
       timestamp: new Date(),
     };
 
+    lastUserMsgIdRef.current = userMessage.id;
     setMessages(prev => [...prev, userMessage]);
     const messageToSend = input;
     setInput('');

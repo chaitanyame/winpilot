@@ -23,24 +23,35 @@ export class WindowsApps implements IApps {
 
   async listApps(filter?: 'running' | 'installed' | 'all'): Promise<AppInfo[]> {
     try {
-      const apps: AppInfo[] = [];
+      const needRunning = filter === 'running' || filter === 'all' || !filter;
+      const needInstalled = filter === 'installed' || filter === 'all';
 
-      if (filter === 'running' || filter === 'all' || !filter) {
-        const runningApps = await this.getRunningApps();
-        apps.push(...runningApps);
-      }
-
-      if (filter === 'installed' || filter === 'all') {
-        const installedApps = await this.getInstalledApps();
-        // Avoid duplicates
+      if (needRunning && needInstalled) {
+        // Fetch both in parallel
+        const [runningApps, installedApps] = await Promise.all([
+          this.getRunningApps(),
+          this.getInstalledApps(),
+        ]);
+        const apps: AppInfo[] = [...runningApps];
+        // Use Set for O(1) duplicate lookup instead of O(n) find()
+        const seen = new Set(runningApps.map(a => a.name));
         for (const app of installedApps) {
-          if (!apps.find(a => a.name === app.name)) {
+          if (!seen.has(app.name)) {
+            seen.add(app.name);
             apps.push(app);
           }
         }
+        return apps;
       }
 
-      return apps;
+      if (needRunning) {
+        return await this.getRunningApps();
+      }
+      if (needInstalled) {
+        return await this.getInstalledApps();
+      }
+
+      return [];
     } catch (error) {
       console.error('Error listing apps:', error);
       return [];
