@@ -600,7 +600,7 @@ const DateSeparator = memo(({ label }: { label: string }) => (
 ));
 DateSeparator.displayName = 'DateSeparator';
 
-export function MessageStream({ messages, isLoading, actionLogs = [], completedMessageIds = new Set() }: Props) {
+const MessageStream = memo(function MessageStream({ messages, isLoading, actionLogs = [], completedMessageIds = new Set() }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   
@@ -843,7 +843,8 @@ export function MessageStream({ messages, isLoading, actionLogs = [], completedM
       </AnimatePresence>
     </div>
   );
-}
+});
+MessageStream.displayName = 'MessageStream';
 
 // LogsSummary component - shows collapsed summary of action logs
 interface LogsSummaryProps {
@@ -973,3 +974,5 @@ const InlineLogs = memo(({ logs, isExecutionComplete }: { logs: ActionLog[]; isE
   );
 });
 InlineLogs.displayName = 'InlineLogs';
+
+export { MessageStream };
