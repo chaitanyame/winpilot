@@ -122,6 +122,8 @@ export class CopilotController {
   private cleanupIntervalId: NodeJS.Timeout | null = null;
   // Cache for formatted tool names to avoid repeated regex ops
   private toolNameCache = new Map<string, { display: string; description: string }>();
+  // Maximum size for tool execution map to prevent unbounded growth
+  private readonly MAX_TOOL_EXECUTIONS = 100;
 
   constructor() {
     // Check Node.js version for Copilot CLI compatibility
@@ -146,12 +148,54 @@ export class CopilotController {
     const now = Date.now();
     const staleThreshold = 60000; // 60 seconds
 
+    let cleanedCount = 0;
     for (const [id, exec] of this.toolExecutionMap) {
       if (now - exec.startTime > staleThreshold) {
         this.toolExecutionMap.delete(id);
-        logger.copilot(`Cleaned up stale tool execution: ${id} (${exec.toolName})`);
+        cleanedCount++;
       }
     }
+
+    // If map is still too large after cleanup, remove oldest entries
+    if (this.toolExecutionMap.size > this.MAX_TOOL_EXECUTIONS) {
+      const entries = Array.from(this.toolExecutionMap.entries())
+        .sort((a, b) => a[1].startTime - b[1].startTime);
+      const toRemove = entries.slice(0, this.toolExecutionMap.size - this.MAX_TOOL_EXECUTIONS);
+      toRemove.forEach(([id]) => this.toolExecutionMap.delete(id));
+      cleanedCount += toRemove.length;
+    }
+
+    if (cleanedCount > 0) {
+      logger.copilot(`Cleaned up ${cleanedCount} tool executions (current size: ${this.toolExecutionMap.size})`);
+    }
+  }
+
+  /**
+   * Destroy the copilot client and clean up all resources
+   */
+  destroy(): void {
+    // Stop cleanup interval
+    if (this.cleanupIntervalId) {
+      clearInterval(this.cleanupIntervalId);
+      this.cleanupIntervalId = null;
+      logger.copilot('Stopped cleanup interval');
+    }
+
+    // Clean up session if active
+    if (this.session) {
+      this.unsubscribe?.();
+      this.unsubscribe = null;
+      this.session = null;
+    }
+
+    // Clear all data structures
+    this.toolExecutionMap.clear();
+    this.toolNameCache.clear();
+    this.currentTurnResults = [];
+    this.currentAssistantResponse = '';
+    this.eventQueue = [];
+
+    logger.copilot('CopilotClient destroyed and cleaned up');
   }
 
   /** Get cached formatted tool name to avoid repeated regex operations */

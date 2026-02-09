@@ -707,14 +707,27 @@ export async function createClipboardHistoryWindow(): Promise<BrowserWindow> {
     });
   }
 
+  // Start clipboard monitoring when window is shown
+  clipboardHistoryWindow.once('show', () => {
+    const { clipboardMonitor } = require('./clipboard-monitor');
+    clipboardMonitor.startMonitoring(true);
+    console.log('[ClipboardWindow] Started monitoring');
+  });
+
   clipboardHistoryWindow.on('closed', () => {
+    const { clipboardMonitor } = require('./clipboard-monitor');
+    clipboardMonitor.stopMonitoring();
+    console.log('[ClipboardWindow] Stopped monitoring on close');
     clipboardHistoryWindow = null;
   });
 
-  // Close on blur (optional - can be removed if you want it to persist)
+  // Close on blur and stop monitoring
   clipboardHistoryWindow.on('blur', () => {
     if (!app.isQuitting && clipboardHistoryWindow) {
       clipboardHistoryWindow.hide();
+      const { clipboardMonitor } = require('./clipboard-monitor');
+      clipboardMonitor.stopMonitoring();
+      console.log('[ClipboardWindow] Stopped monitoring on blur');
     }
   });
 

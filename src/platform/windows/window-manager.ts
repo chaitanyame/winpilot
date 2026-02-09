@@ -41,102 +41,32 @@ export class WindowsWindowManager implements IWindowManager {
       return windowListCache;
     }
     try {
-      // PowerShell script to get all visible windows using Win32 API
-      // Optimized: removed Process.GetProcessById (can hang) and GetWindowDisplayAffinity (slow)
+      // Two-phase approach:
+      // 1. If WindowInfo C# type is already compiled (pre-warmed at pool startup),
+      //    use it for full window details (bounds, min/max/focus state).
+      // 2. Otherwise, fall back to pure PowerShell Get-Process (instant, no compilation).
       const script = `
-if (-not ("WindowInfo" -as [type])) {
-Add-Type @"
-using System;
-using System.Runtime.InteropServices;
-using System.Text;
-using System.Collections.Generic;
-
-public class WindowInfo {
-    [DllImport("user32.dll")]
-    public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
-    
-    [DllImport("user32.dll")]
-    public static extern bool IsWindowVisible(IntPtr hWnd);
-    
-    [DllImport("user32.dll")]
-    public static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
-    
-    [DllImport("user32.dll")]
-    public static extern int GetWindowTextLength(IntPtr hWnd);
-    
-    [DllImport("user32.dll")]
-    public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
-    
-    [DllImport("user32.dll")]
-    public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
-    
-    [DllImport("user32.dll")]
-    public static extern bool IsIconic(IntPtr hWnd);
-    
-    [DllImport("user32.dll")]
-    public static extern bool IsZoomed(IntPtr hWnd);
-    
-    [DllImport("user32.dll")]
-    public static extern IntPtr GetForegroundWindow();
-    
-    public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
-    
-    [StructLayout(LayoutKind.Sequential)]
-    public struct RECT {
-        public int Left;
-        public int Top;
-        public int Right;
-        public int Bottom;
+if ("WindowInfo" -as [type]) {
+  # Fast path: pre-warmed C# type is available — full window details
+  [WindowInfo]::GetWindows() | ConvertTo-Json -Compress
+} else {
+  # Fallback: pure PowerShell — no compilation needed, returns basic info
+  Get-Process | Where-Object { $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle } | ForEach-Object {
+    [PSCustomObject]@{
+      id = $_.MainWindowHandle.ToString()
+      title = $_.MainWindowTitle
+      processId = $_.Id
+      app = $_.ProcessName
+      x = 0; y = 0; width = 0; height = 0
+      isMinimized = $false
+      isMaximized = $false
+      isFocused = $false
     }
-    
-public static List<object> GetWindows() {
-        var windows = new List<object>();
-        IntPtr foreground = GetForegroundWindow();
-        
-        EnumWindows((hWnd, lParam) => {
-            if (!IsWindowVisible(hWnd)) return true;
-            
-            int length = GetWindowTextLength(hWnd);
-            if (length == 0) return true;
-            
-            StringBuilder sb = new StringBuilder(length + 1);
-            GetWindowText(hWnd, sb, sb.Capacity);
-            string title = sb.ToString();
-            if (string.IsNullOrWhiteSpace(title)) return true;
-            
-            uint processId;
-            GetWindowThreadProcessId(hWnd, out processId);
-            
-            RECT rect;
-            GetWindowRect(hWnd, out rect);
-            
-            bool isMinimized = IsIconic(hWnd);
-            if (!isMinimized && (rect.Right - rect.Left < 50 || rect.Bottom - rect.Top < 50)) return true;
-            
-            windows.Add(new {
-                id = hWnd.ToString(),
-                title = title,
-                processId = processId,
-                x = rect.Left,
-                y = rect.Top,
-                width = isMinimized ? 0 : rect.Right - rect.Left,
-                height = isMinimized ? 0 : rect.Bottom - rect.Top,
-                isMinimized = isMinimized,
-                isMaximized = IsZoomed(hWnd),
-                isFocused = hWnd == foreground
-            });
-            return true;
-        }, IntPtr.Zero);
-        
-        return windows;
-    }
+  } | ConvertTo-Json -Compress
 }
-"@
-}
-[WindowInfo]::GetWindows() | ConvertTo-Json -Compress
 `;
 
-      const { stdout } = await runPowerShell(script, { timeout: 15000 });
+      const { stdout } = await runPowerShell(script, { timeout: 10000 });
 
       const parsed = JSON.parse(stdout || '[]');
       const windowsArray = Array.isArray(parsed) ? parsed : [parsed];
@@ -144,8 +74,10 @@ public static List<object> GetWindows() {
       // Filter out our own app's windows (WinPilot / electron)
       const filteredWindows = windowsArray.filter((w: any) => {
         const title = (w.title || '').toLowerCase();
+        const app = (w.app || '').toLowerCase();
         // Filter out our own window
         if (title.includes('winpilot') || title.includes('desktop commander')) return false;
+        if (app === 'electron' || app === 'desktop-commander') return false;
         return true;
       });
 
@@ -156,16 +88,11 @@ public static List<object> GetWindows() {
       }
 
       // Map results and mark the "active" window (last focused external, not Desktop Commander)
-      // Get app names from running processes (fast lookup)
-      const processes = new Map<number, string>();
       const result = filteredWindows.map((w: any) => {
-        // Try to find app name from cached processes or use processId as fallback
-        const appName = processes.get(w.processId) || `pid:${w.processId}`;
-
         return {
           id: w.id,
           title: w.title,
-          app: appName,
+          app: w.app || w.title || `pid:${w.processId}`,
           processId: w.processId,
           bounds: {
             x: w.x,

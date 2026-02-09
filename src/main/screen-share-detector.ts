@@ -20,21 +20,33 @@ export class ScreenShareDetector {
   private listeners: Array<(active: boolean) => void> = [];
   private isPolling = false; // Prevent concurrent polls
   private isPaused = false; // Pause polling during long operations
+  private readonly POLL_INTERVAL_MS = 30000; // 30 seconds - balance between responsiveness and CPU usage
 
   start(): void {
     if (this.timer) return;
+    // Do initial poll immediately
+    this.poll().catch(error => {
+      logger.error('ScreenShareDetector', 'Initial poll failed', error);
+    });
+    // Then poll every 30 seconds
     this.timer = setInterval(() => {
       this.poll().catch(error => {
         logger.error('ScreenShareDetector', 'Polling failed', error);
       });
-    }, 5000);
+    }, this.POLL_INTERVAL_MS);
+    logger.copilot('[ScreenShareDetector] Started with 30s polling interval');
   }
 
   stop(): void {
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = null;
+      logger.copilot('[ScreenShareDetector] Stopped');
     }
+    // Reset state when stopped
+    this.isActive = false;
+    this.isPolling = false;
+    this.isPaused = false;
   }
 
   /**

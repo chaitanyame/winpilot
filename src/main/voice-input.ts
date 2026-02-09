@@ -158,24 +158,30 @@ class VoiceInputManager {
    */
   private startWindowRestoreLoop(): void {
     this.stopWindowRestoreLoop(); // Clear any existing loop
-    
+
     let attempts = 0;
     const maxAttempts = 6; // 3 seconds max (500ms interval)
-    
+    const startTime = Date.now();
+    const absoluteTimeout = 5000; // Absolute max 5 seconds regardless of state
+
     this.windowRestoreInterval = setInterval(() => {
       attempts++;
-      
-      if (!this.isRecording || attempts >= maxAttempts) {
+      const elapsed = Date.now() - startTime;
+
+      // Stop if: not recording, max attempts, OR absolute timeout exceeded
+      if (!this.isRecording || attempts >= maxAttempts || elapsed >= absoluteTimeout) {
+        console.log(`[Voice] Restore loop stopping - attempts: ${attempts}, elapsed: ${elapsed}ms, recording: ${this.isRecording}`);
         this.stopWindowRestoreLoop();
         return;
       }
-      
+
       const window = getCommandWindow();
       if (!window || window.isDestroyed()) {
+        console.log('[Voice] Restore loop stopping - window destroyed');
         this.stopWindowRestoreLoop();
         return;
       }
-      
+
       // Only force restore if window is minimized or not visible
       // Don't fight for focus - just ensure visibility
       if (window.isMinimized() || !window.isVisible()) {
@@ -188,7 +194,9 @@ class VoiceInputManager {
           window.show();
           window.moveTop();
         } catch (err) {
-          console.warn('[Voice] Failed to restore window in loop:', err);
+          console.warn('[Voice] Failed to restore window in loop, stopping:', err);
+          // Stop on error to prevent infinite error loop
+          this.stopWindowRestoreLoop();
         }
       }
     }, 500);

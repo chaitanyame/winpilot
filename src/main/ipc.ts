@@ -1411,12 +1411,16 @@ export function setupIpcHandlers(): void {
   const timerSubs = new WeakMap<Electron.WebContents, Array<() => void>>();
   const reminderSubs = new WeakMap<Electron.WebContents, Array<() => void>>();
   const recordingSubs = new WeakMap<Electron.WebContents, Array<() => void>>();
+  const destroyedListenersSet = new WeakSet<Electron.WebContents>();
 
   // Subscribe to timer updates
   ipcMain.on('timer:subscribe', (event: Electron.IpcMainEvent) => {
     // Remove previous listeners from this sender
     const prevCleanup = timerSubs.get(event.sender);
-    if (prevCleanup) prevCleanup.forEach(fn => fn());
+    if (prevCleanup) {
+      prevCleanup.forEach(fn => fn());
+      timerSubs.delete(event.sender);
+    }
 
     const timerTickHandler = (timer: Timer) => {
       if (!event.sender.isDestroyed()) {
@@ -1447,11 +1451,17 @@ export function setupIpcHandlers(): void {
     ];
     timerSubs.set(event.sender, cleanup);
 
-    // Clean up on window close
-    event.sender.on('destroyed', () => {
-      cleanup.forEach(fn => fn());
-      timerSubs.delete(event.sender);
-    });
+    // Only attach destroyed listener once per sender
+    if (!destroyedListenersSet.has(event.sender)) {
+      destroyedListenersSet.add(event.sender);
+      event.sender.once('destroyed', () => {
+        const cleanup = timerSubs.get(event.sender);
+        if (cleanup) {
+          cleanup.forEach(fn => fn());
+          timerSubs.delete(event.sender);
+        }
+      });
+    }
   });
 
   // Reminder handlers
@@ -1479,7 +1489,10 @@ export function setupIpcHandlers(): void {
   ipcMain.on('reminder:subscribe', (event: Electron.IpcMainEvent) => {
     // Remove previous listeners from this sender
     const prevCleanup = reminderSubs.get(event.sender);
-    if (prevCleanup) prevCleanup.forEach(fn => fn());
+    if (prevCleanup) {
+      prevCleanup.forEach(fn => fn());
+      reminderSubs.delete(event.sender);
+    }
 
     const reminderCreatedHandler = (reminder: unknown) => {
       if (!event.sender.isDestroyed()) {
@@ -1510,11 +1523,17 @@ export function setupIpcHandlers(): void {
     ];
     reminderSubs.set(event.sender, cleanup);
 
-    // Clean up on window close
-    event.sender.on('destroyed', () => {
-      cleanup.forEach(fn => fn());
-      reminderSubs.delete(event.sender);
-    });
+    // Only attach destroyed listener once per sender
+    if (!destroyedListenersSet.has(event.sender)) {
+      destroyedListenersSet.add(event.sender);
+      event.sender.once('destroyed', () => {
+        const cleanup = reminderSubs.get(event.sender);
+        if (cleanup) {
+          cleanup.forEach(fn => fn());
+          reminderSubs.delete(event.sender);
+        }
+      });
+    }
   });
 
   // Chat history handlers
@@ -1743,7 +1762,10 @@ export function setupIpcHandlers(): void {
   ipcMain.on(IPC_CHANNELS.RECORDING_SUBSCRIBE, (event: Electron.IpcMainEvent) => {
     // Remove previous listeners from this sender
     const prevCleanup = recordingSubs.get(event.sender);
-    if (prevCleanup) prevCleanup.forEach(fn => fn());
+    if (prevCleanup) {
+      prevCleanup.forEach(fn => fn());
+      recordingSubs.delete(event.sender);
+    }
 
     const progressHandler = (recording: Recording) => {
       if (!event.sender.isDestroyed()) {
@@ -1782,10 +1804,16 @@ export function setupIpcHandlers(): void {
     ];
     recordingSubs.set(event.sender, cleanup);
 
-    // Clean up on window close
-    event.sender.on('destroyed', () => {
-      cleanup.forEach(fn => fn());
-      recordingSubs.delete(event.sender);
-    });
+    // Only attach destroyed listener once per sender
+    if (!destroyedListenersSet.has(event.sender)) {
+      destroyedListenersSet.add(event.sender);
+      event.sender.once('destroyed', () => {
+        const cleanup = recordingSubs.get(event.sender);
+        if (cleanup) {
+          cleanup.forEach(fn => fn());
+          recordingSubs.delete(event.sender);
+        }
+      });
+    }
   });
 }

@@ -31,6 +31,13 @@ class ClipboardMonitor extends EventEmitter {
   }
 
   /**
+   * Check if monitoring is currently active
+   */
+  isMonitoringActive(): boolean {
+    return this.isMonitoring;
+  }
+
+  /**
    * Start clipboard monitoring (event-driven on Windows; polling fallback)
    */
   startMonitoring(usePollingFallback = true): void {
@@ -50,6 +57,22 @@ class ClipboardMonitor extends EventEmitter {
 
     this.emit('monitoring-started');
     console.log('Clipboard monitoring started');
+  }
+
+  /**
+   * Stop clipboard monitoring and clear interval
+   */
+  stopMonitoring(): void {
+    if (!this.isMonitoring) return;
+    this.isMonitoring = false;
+
+    if (this.monitorInterval) {
+      clearInterval(this.monitorInterval);
+      this.monitorInterval = null;
+    }
+
+    this.emit('monitoring-stopped');
+    console.log('Clipboard monitoring stopped');
   }
 
   /**

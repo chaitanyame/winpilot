@@ -10,7 +10,7 @@ import { setupIpcHandlers } from './ipc';
 import { initStore } from './store';
 import { taskScheduler } from './scheduler';
 import { timerManager } from './timers';
-import { initDatabase, closeDatabase } from './database';
+import { initDatabase, closeDatabase, cleanupOldData } from './database';
 import { reminderManager } from './reminders';
 import { copilotController } from '../copilot/client';
 import { clipboardMonitor } from './clipboard-monitor';
@@ -103,6 +103,15 @@ async function initApp() {
   // ── Phase 1: Synchronous essentials (must complete before window) ──────
   initStore();
   initDatabase();
+
+  // Clean up old data on every startup (prevent database bloat)
+  try {
+    cleanupOldData(30); // Keep last 30 days
+    console.log('[Database] Cleaned up old data on startup');
+  } catch (e) {
+    console.error('[Database] Failed to cleanup old data:', e);
+  }
+
   ensureSkillDirectories();
   refreshSkillIndex();
   startSkillWatcher();
@@ -168,13 +177,18 @@ async function initApp() {
     }
   });
 
+  // Clipboard monitoring is opt-in via UI - don't start automatically
+  // User must explicitly enable clipboard history tracking
   const usingEvents = clipboardWatcher.start();
-  clipboardMonitor.startMonitoring(!usingEvents);
   if (usingEvents) {
     clipboardWatcher.on('change', () => {
-      clipboardMonitor.checkClipboard();
+      // Only check if monitoring is active (started by user)
+      if (clipboardMonitor.isMonitoringActive()) {
+        clipboardMonitor.checkClipboard();
+      }
     });
   }
+  // Note: clipboardMonitor.startMonitoring() is called from IPC when user opens clipboard window
 
   createOSDWindow();
 
@@ -203,7 +217,7 @@ app.on('activate', () => {
 
   // Cleanup before quit
   app.on('before-quit', async () => {
-    await copilotController.destroy();
+    copilotController.destroy(); // Now synchronous with proper cleanup
     taskScheduler.destroy();
     timerManager.destroy();
     reminderManager.destroy();

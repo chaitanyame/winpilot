@@ -45,9 +45,80 @@ class PowerShellPool {
     this.startPromise = this.spawnProcess();
     try {
       await this.startPromise;
+      // Pre-warm: compile the WindowInfo C# type in the background so
+      // the first window_list call doesn't pay the 10-20s compilation cost.
+      // Fire-and-forget — don't block callers waiting for the pool.
+      this.preWarmWindowInfoType();
     } finally {
       this.startPromise = null;
     }
+  }
+
+  /**
+   * Pre-compile the WindowInfo Add-Type so window_list commands are fast.
+   * Runs as a normal queued command; if it's still compiling when a real
+   * command arrives, that command simply waits in the queue behind it.
+   */
+  private preWarmWindowInfoType(): void {
+    const script = `
+if (-not ("WindowInfo" -as [type])) {
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+using System.Collections.Generic;
+using System.Diagnostics;
+public class WindowInfo {
+    [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+    [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
+    [DllImport("user32.dll")] public static extern int GetWindowTextLength(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+    [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+    [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern bool IsZoomed(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+    [StructLayout(LayoutKind.Sequential)]
+    public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+    public static List<object> GetWindows() {
+        var windows = new List<object>();
+        IntPtr foreground = GetForegroundWindow();
+        EnumWindows((hWnd, lParam) => {
+            if (!IsWindowVisible(hWnd)) return true;
+            int length = GetWindowTextLength(hWnd);
+            if (length == 0) return true;
+            StringBuilder sb = new StringBuilder(length + 1);
+            GetWindowText(hWnd, sb, sb.Capacity);
+            string title = sb.ToString();
+            if (string.IsNullOrWhiteSpace(title)) return true;
+            uint processId;
+            GetWindowThreadProcessId(hWnd, out processId);
+            RECT rect;
+            GetWindowRect(hWnd, out rect);
+            bool isMinimized = IsIconic(hWnd);
+            if (!isMinimized && (rect.Right - rect.Left < 50 || rect.Bottom - rect.Top < 50)) return true;
+            string processName = "";
+            try { var proc = Process.GetProcessById((int)processId); processName = proc.ProcessName; } catch { }
+            windows.Add(new { id = hWnd.ToString(), title, app = processName, processId, x = rect.Left, y = rect.Top,
+                width = isMinimized ? 0 : rect.Right - rect.Left,
+                height = isMinimized ? 0 : rect.Bottom - rect.Top,
+                isMinimized, isMaximized = IsZoomed(hWnd), isFocused = hWnd == foreground });
+            return true;
+        }, IntPtr.Zero);
+        return windows;
+    }
+}
+"@
+}
+Write-Host 'WindowInfo type ready'
+`;
+    // Fire-and-forget with a generous timeout for cold compilation
+    this.exec(script, { timeout: 60000 }).then(() => {
+      logger.platform('PowerShell pre-warm: WindowInfo type compiled');
+    }).catch((err) => {
+      logger.error('platform', 'PowerShell pre-warm failed (non-fatal)', err instanceof Error ? err : new Error(String(err)));
+    });
   }
 
   private spawnProcess(): Promise<void> {
