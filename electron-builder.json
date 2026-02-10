@@ -1,0 +1,42 @@
+{
+  "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
+  "appId": "com.winpilot.app",
+  "productName": "WinPilot",
+  "directories": {
+    "output": "release/${version}"
+  },
+  "files": [
+    "dist/**/*",
+    "resources/**/*",
+    "node_modules/better-sqlite3/**/*"
+  ],
+  "extraResources": [
+    {
+      "from": "resources/ffmpeg",
+      "to": "ffmpeg",
+      "filter": ["**/*"]
+    },
+    {
+      "from": "resources/invisiwind",
+      "to": "invisiwind",
+      "filter": ["**/*"]
+    }
+  ],
+  "win": {
+    "target": [
+      {
+        "target": "nsis",
+        "arch": ["x64"]
+      }
+    ],
+    "icon": "resources/icon.ico",
+    "signAndEditExecutable": false
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true
+  },
+  "asarUnpack": [
+    "node_modules/better-sqlite3/**"
+  ]
+}

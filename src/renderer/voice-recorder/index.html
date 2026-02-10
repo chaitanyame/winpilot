@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Voice Recorder</title>
+</head>
+<body>
+  <script>
+    const { ipcRenderer } = require('electron');
+    
+    let mediaRecorder = null;
+    let audioChunks = [];
+    let mediaStream = null;
+
+    // Start recording when told
+    ipcRenderer.on('voiceToClipboard:start', async () => {
+      try {
+        console.log('[VoiceRecorder] Starting recording...');
+        
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+          audio: {
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: false,
+          }
+        });
+        
+        mediaStream = stream;
+        audioChunks = [];
+        
+        mediaRecorder = new MediaRecorder(stream, {
+          mimeType: 'audio/webm;codecs=opus'
+        });
+        
+        mediaRecorder.ondataavailable = (e) => {
+          if (e.data.size > 0) {
+            audioChunks.push(e.data);
+          }
+        };
+        
+        mediaRecorder.start(100);
+        console.log('[VoiceRecorder] Recording started');
+      } catch (err) {
+        console.error('[VoiceRecorder] Failed to start:', err);
+      }
+    });
+
+    // Stop and transcribe
+    ipcRenderer.on('voiceToClipboard:stop', async () => {
+      try {
+        if (!mediaRecorder || mediaRecorder.state === 'inactive') {
+          console.warn('[VoiceRecorder] Not recording');
+          return;
+        }
+        
+        console.log('[VoiceRecorder] Stopping recording...');
+        
+        await new Promise((resolve) => {
+          mediaRecorder.onstop = () => resolve();
+          mediaRecorder.stop();
+        });
+        
+        console.log('[VoiceRecorder] Got', audioChunks.length, 'chunks');
+        
+        const audioBlob = new Blob(audioChunks, { type: 'audio/webm;codecs=opus' });
+        const arrayBuffer = await audioBlob.arrayBuffer();
+        
+        console.log('[VoiceRecorder] Sending for transcription...');
+        
+        // Send to main process for transcription
+        const result = await window.electronAPI.voiceToClipboardTranscribe({
+          audio: arrayBuffer,
+          mimeType: 'audio/webm',
+          language: 'en',
+        });
+        
+        console.log('[VoiceRecorder] Transcription result:', result);
+        
+        // Cleanup
+        if (mediaStream) {
+          mediaStream.getTracks().forEach(track => track.stop());
+        }
+        audioChunks = [];
+        mediaRecorder = null;
+        mediaStream = null;
+      } catch (err) {
+        console.error('[VoiceRecorder] Failed to stop/transcribe:', err);
+      }
+    });
+  </script>
+</body>
+</html>

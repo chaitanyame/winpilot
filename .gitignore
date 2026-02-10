@@ -1,0 +1,26 @@
+node_modules/
+dist/
+release/
+logs/
+.env
+*.log
+*.local
+.DS_Store
+Thumbs.db
+.electron-dev/
+
+# Intent classification models and training data
+models/intent_model.ftz
+models/intent_model.bin
+training/training_data.txt
+training/test_data.txt
+
+# Local / optional voice assets (large)
+resources/whisper/
+
+# Local agent metadata
+.claude/
+.omc/
+
+# Windows null device file
+nul
