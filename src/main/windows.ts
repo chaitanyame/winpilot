@@ -47,6 +47,7 @@ export async function createCommandWindow(): Promise<BrowserWindow> {
     alwaysOnTop: false,
     skipTaskbar: false, // Show in taskbar when minimized
     title: 'Desktop Commander',
+    icon: path.join(__dirname, '../../resources/icon.png'),
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
       nodeIntegration: false,
