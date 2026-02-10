@@ -16,12 +16,21 @@ This repository is currently a **public alpha**:
 
 ## ✨ Features
 
-- **Window Management** - List, focus, move, resize, and arrange windows
-- **File Operations** - Search, move, copy, rename, and delete files
-- **Application Control** - Launch, quit, and switch between applications
-- **System Settings** - Control volume, brightness, and take screenshots
-- **Process Monitoring** - List and manage running processes
-- **Clipboard Management** - Read and write clipboard content
+- **Window Management** - List, focus, move, resize, arrange, and close windows
+- **Screen-share Privacy** - Hide/show windows from screen sharing (Invisiwind)
+- **File Operations** - List, search, read, write, move, copy, rename, delete
+- **Application Control** - List, launch, quit, and switch apps
+- **System Control** - Volume, brightness, DND, lock/sleep, screenshots, system info
+- **Process & Services** - List/kill processes; list/control Windows services
+- **Clipboard** - Read/write/clear + history search & restore
+- **Network & WiFi** - Network info/tests + WiFi status/on/off/list
+- **Browser Automation** - Open/search/new tab/close tab/refresh/bookmark
+- **Media** - Play/pause/next/previous/stop + media status
+- **Productivity** - Timers, countdowns, Pomodoro, world clock, unit conversion, reminders
+- **Content Tools** - OCR + screenshot annotation, notes & todos, email compose/open
+- **Recording** - Screen/audio recording (FFmpeg)
+- **Speech** - Text-to-speech (list voices, speak, stop)
+- **Web** - web_fetch + optional web_search (API key)
 
 ## 🚀 Quick Start
 
@@ -104,18 +113,36 @@ macOS/Linux builds are not supported yet (adapters are stubs).
 |---|---|---|
 | Window management | ✅ | None |
 | Screen-share privacy (hide/show windows) | ⚠️ | Invisiwind binaries in `resources\\invisiwind\\` |
-| File operations | ✅ | Home/temp constrained by default |
+| File operations (list/read/write/move/copy/delete/search) | ✅ | Home/temp constrained by default |
 | App control | ✅ | App must be installed |
-| System (volume/brightness/screenshot/DND/lock/sleep) | ✅ | None |
+| System control (volume/brightness/DND/lock/sleep/screenshot) | ✅ | None |
+| System info | ✅ | None |
 | Process list/kill/top | ✅ | Permission-gated |
-| Clipboard read/write/history | ✅ | None |
+| Services list/control | ✅ | Permission-gated |
+| Clipboard read/write/clear/history/restore | ✅ | None |
+| Network info/tests | ✅ | None |
+| WiFi control | ✅ | WiFi adapter present |
+| Browser automation | ✅ | Default browser installed |
+| Media controls + status | ✅ | Media session available |
+| Office document create | ⚠️ | Microsoft Office installed |
+| PowerPoint generation | ⚠️ | Microsoft PowerPoint installed |
+| Email compose/open | ⚠️ | Default mail client configured |
+| OCR (image/clipboard/region) | ⚠️ | Windows OCR engine availability |
+| Screenshot annotation | ✅ | None |
+| Notes & todos | ✅ | None |
+| Reminders | ✅ | Notifications enabled |
+| Timers/countdowns/Pomodoro | ✅ | None |
+| World clock | ✅ | None |
+| Unit conversion | ✅ | None |
 | Recording (screen/audio/webcam) | ⚠️ | FFmpeg (`ffmpeg.exe`) |
+| Text-to-speech | ✅ | Windows TTS voices available |
 | Voice input (local whisper) | ⚠️ | whisper.cpp binary + model + FFmpeg |
 | Voice input (OpenAI Whisper) | ⚠️ | OpenAI API key |
 | Voice input (Web Speech API) | ❌ | Not supported in Electron |
-| OCR (image/clipboard/region) | ⚠️ | Windows OCR engine availability |
-| Web search tool | ⚠️ | Search API key (placeholder tool) |
 | Web fetch | ✅ | Internet access |
+| Web search tool | ⚠️ | Search API key (placeholder tool) |
+| Troubleshooting workflows | ✅ | Uses system/network/process tools |
+| Shell command tool | ✅ | Permission-gated |
 | Copilot SDK/LLM tools | ⚠️ | Copilot CLI installed + `/login` completed |
 | Agent skills (docx/pptx/pdf/xlsx) | ⚠️ | User-provided `SKILL.md` files |
 
