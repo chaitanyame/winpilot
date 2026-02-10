@@ -9,9 +9,7 @@
  * Confidence threshold configuration
  */
 export const CONFIDENCE_THRESHOLDS = {
-  PATTERN_MATCH: 0.95,      // Tier 1: Pattern matching must be very confident
-  ML_CLASSIFICATION: 0.85,  // Tier 2: ML model threshold for direct execution
-  ML_MEDIUM: 0.60,          // Tier 2: Medium confidence - try parameter extraction
+  PATTERN_MATCH: 0.92,      // Tier 1: Pattern matching confidence threshold (lowered to allow enhanced patterns)
 } as const;
 
 /**
@@ -27,18 +25,6 @@ export interface PatternMatchResult {
   confidence: number;
   params?: Record<string, any>;
   matched: boolean;
-}
-
-/**
- * Result from ML classification
- */
-export interface ClassificationResult {
-  intent: string;
-  confidence: number;
-  alternatives?: Array<{
-    intent: string;
-    confidence: number;
-  }>;
 }
 
 /**

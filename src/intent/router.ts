@@ -1,50 +1,42 @@
 /**
  * Intent Classification System - Intent Router
  *
- * This module orchestrates the three-tier classification pipeline:
- * Tier 1: Pattern Matching (0-5ms, ~40% coverage)
- * Tier 2: FastText ML Model (5-15ms, ~30% coverage)
- * Tier 3: LLM Fallback (2000ms, ~30% remaining)
+ * This module orchestrates the classification pipeline:
+ * Tier 1: Pattern Matching (0-5ms, ~55-60% coverage)
+ * Tier 2: GPT-4o-mini Tool Selection (via Copilot SDK, 500ms-1s)
+ * Tier 3: GPT-4o Full Reasoning (via Copilot SDK, 2-4s)
+ *
+ * Tiers 2 & 3 are handled by the CopilotController's dual-session routing.
+ * This router handles Tier 1 (patterns) and skill keyword detection.
  */
 
 import { PatternMatcher } from './patterns';
-import { MLIntentClassifier } from './ml-classifier';
-import { ParameterExtractor } from './extractors';
 import { ToolExecutor } from './executor';
-import { getSkillIdForIntent } from './skill-intents';
+import { detectSkillIdFromMessage } from './skill-intents';
 import { RouteResult, CONFIDENCE_THRESHOLDS, TelemetryEvent } from './types';
 import { logger } from '../utils/logger';
 
 /**
  * Intent Router
- * Main orchestration class for the hybrid classification system
+ * Handles Tier 1 pattern matching and skill detection.
+ * Unmatched queries fall through to the CopilotController's dual-session LLM routing.
  */
 export class IntentRouter {
   private patternMatcher: PatternMatcher;
-  private mlClassifier: MLIntentClassifier;
-  private paramExtractor: ParameterExtractor;
   private executor: ToolExecutor;
   private telemetry: TelemetryEvent[] = [];
 
   constructor() {
     this.patternMatcher = new PatternMatcher();
-    this.mlClassifier = new MLIntentClassifier();
-    this.paramExtractor = new ParameterExtractor();
     this.executor = new ToolExecutor();
   }
 
   /**
-   * Initialize the router (loads ML model)
+   * Initialize the router
    */
   async initialize(): Promise<void> {
-    logger.copilot('Initializing IntentRouter...');
-    await this.mlClassifier.initialize();
-
-    if (this.mlClassifier.isAvailable()) {
-      logger.copilot('IntentRouter initialized with ML classification enabled');
-    } else {
-      logger.copilot('IntentRouter initialized (ML classification disabled: ' + this.mlClassifier.getError() + ')');
-    }
+    logger.copilot('Initializing IntentRouter (pattern-based, no ML)...');
+    logger.copilot('IntentRouter initialized with pattern matching + LLM fallback');
   }
 
   /**
@@ -57,22 +49,31 @@ export class IntentRouter {
     logger.copilot('Intent routing started', { query: query.substring(0, 50) });
 
     try {
-      // TIER 1: Pattern Matching (0-5ms, ~40% coverage)
+      // TIER 1: Pattern Matching (0-5ms, ~55-60% coverage)
       const patternResult = await this.tryPatternMatching(query);
       if (patternResult.handled) {
         this.recordTelemetry(query, 1, patternResult, startTime);
         return patternResult;
       }
 
-      // TIER 2: FastText ML Model (5-15ms, ~30% coverage)
-      const mlResult = await this.tryMLClassification(query);
-      if (mlResult.handled || mlResult.skillId) {
-        this.recordTelemetry(query, 2, mlResult, startTime);
-        return mlResult;
+      // Skill keyword detection (document types, etc.)
+      const skillId = detectSkillIdFromMessage(query);
+      if (skillId) {
+        logger.copilot('Skill intent detected via keywords', { skillId });
+        const skillResult: RouteResult = {
+          handled: false,
+          skillId,
+          reason: 'Skill intent detected',
+        };
+        this.recordTelemetry(query, 3, skillResult, startTime);
+        return skillResult;
       }
 
-      // TIER 3: LLM Fallback
-      const fallbackResult = this.createFallbackResult(query, patternResult, mlResult);
+      // TIER 2 & 3: Fall through to CopilotController (GPT-4o-mini → GPT-4o)
+      const fallbackResult: RouteResult = {
+        handled: false,
+        reason: `No pattern match (confidence: ${patternResult.confidence?.toFixed(2) || '0'})`,
+      };
       this.recordTelemetry(query, 3, fallbackResult, startTime);
       return fallbackResult;
     } catch (error) {
@@ -83,7 +84,7 @@ export class IntentRouter {
         handled: false,
         reason: `Routing error: ${errorMessage}`,
       };
-      this.recordTelemetry(query, 'llm', errorResult, startTime);
+      this.recordTelemetry(query, 3, errorResult, startTime);
       return errorResult;
     }
   }
@@ -98,7 +99,7 @@ export class IntentRouter {
       logger.copilot('Pattern match: no match or low confidence', {
         confidence: patternMatch.confidence.toFixed(2),
       });
-      return { handled: false, reason: 'No pattern match' };
+      return { handled: false, reason: 'No pattern match', confidence: patternMatch.confidence };
     }
 
     logger.copilot('Pattern match: found', {
@@ -133,170 +134,6 @@ export class IntentRouter {
   }
 
   /**
-   * Try Tier 2: ML Classification
-   */
-  private async tryMLClassification(query: string): Promise<RouteResult> {
-    // Skip if ML is not available
-    if (!this.mlClassifier.isAvailable()) {
-      return { handled: false, reason: 'ML classifier not available' };
-    }
-
-    const mlResult = await this.mlClassifier.classify(query);
-    const skillId = getSkillIdForIntent(mlResult.intent);
-
-    if (skillId && mlResult.confidence >= CONFIDENCE_THRESHOLDS.ML_MEDIUM) {
-      logger.copilot('ML classification: skill intent detected', {
-        intent: mlResult.intent,
-        skillId,
-        confidence: mlResult.confidence.toFixed(2),
-      });
-      return {
-        handled: false,
-        reason: 'Skill intent detected',
-        skillId,
-        confidence: mlResult.confidence,
-        tier: 2,
-      };
-    }
-
-    // Check confidence threshold
-    if (mlResult.confidence < CONFIDENCE_THRESHOLDS.ML_CLASSIFICATION) {
-      logger.copilot('ML classification: low confidence', {
-        intent: mlResult.intent,
-        confidence: mlResult.confidence.toFixed(2),
-        threshold: CONFIDENCE_THRESHOLDS.ML_CLASSIFICATION,
-      });
-
-      // Try parameter extraction for medium confidence
-      if (mlResult.confidence >= CONFIDENCE_THRESHOLDS.ML_MEDIUM) {
-        return await this.tryWithParameterExtraction(query, mlResult.intent, mlResult.confidence);
-      }
-
-      return { handled: false, reason: 'ML confidence too low' };
-    }
-
-    logger.copilot('ML classification: high confidence', {
-      intent: mlResult.intent,
-      confidence: mlResult.confidence.toFixed(2),
-    });
-
-    // Extract parameters if needed
-    const params = await this.paramExtractor.extract(query, mlResult.intent);
-
-    // Execute the tool
-    const executionResult = await this.executor.execute(mlResult.intent, params);
-
-    if (!executionResult.success) {
-      logger.copilot('ML classification: execution failed', { error: executionResult.error });
-      return {
-        handled: false,
-        reason: `Execution failed: ${executionResult.error}`,
-        failedToolName: mlResult.intent,
-        failedError: executionResult.error || executionResult.response,
-        originalTier: 2,
-      };
-    }
-
-    return {
-      handled: true,
-      response: executionResult.response,
-      toolName: mlResult.intent,
-      confidence: mlResult.confidence,
-      tier: 2,
-    };
-  }
-
-  /**
-   * Try execution with parameter extraction for medium confidence ML results
-   */
-  private async tryWithParameterExtraction(
-    query: string,
-    intent: string,
-    confidence: number
-  ): Promise<RouteResult> {
-    logger.copilot('Trying parameter extraction', { intent, confidence: confidence.toFixed(2) });
-
-    try {
-      const params = await this.paramExtractor.extract(query, intent);
-
-      // Check if we got required parameters
-      // If extraction returned empty object and tool needs params, fall back to LLM
-      if (Object.keys(params).length === 0 && this.toolNeedsParameters(intent)) {
-        logger.copilot('Parameter extraction: no parameters found for tool needing params');
-        return { handled: false, reason: 'Missing required parameters' };
-      }
-
-      // Try to execute
-      const executionResult = await this.executor.execute(intent, params);
-
-      if (!executionResult.success) {
-        logger.copilot('Parameter extraction: execution failed', { error: executionResult.error });
-        return {
-          handled: false,
-          reason: `Execution failed: ${executionResult.error}`,
-          failedToolName: intent,
-          failedError: executionResult.error || executionResult.response,
-          originalTier: 2,
-        };
-      }
-
-      return {
-        handled: true,
-        response: executionResult.response,
-        toolName: intent,
-        confidence,
-        tier: 2,
-      };
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      logger.copilot('Parameter extraction error: ' + errorMessage, 'error');
-      return {
-        handled: false,
-        reason: `Parameter extraction failed: ${errorMessage}`,
-      };
-    }
-  }
-
-  /**
-   * Check if a tool typically needs parameters
-   */
-  private toolNeedsParameters(intent: string): boolean {
-    const parameterlessTools = [
-      'window_list',
-      'system_info',
-      'network_info',
-      'apps_list',
-      'process_list',
-      'clipboard_read',
-      'clipboard_clear',
-      'service_list',
-      'system_lock',
-      'system_sleep',
-      'list_reminders',
-      'productivity_worldclock',
-    ];
-    return !parameterlessTools.includes(intent);
-  }
-
-  /**
-   * Create fallback result for LLM
-   */
-  private createFallbackResult(_query: string, patternResult: any, mlResult: any): RouteResult {
-    const patternConf = patternResult?.confidence || 0;
-    const mlConf = mlResult?.confidence || 0;
-
-    logger.copilot('Falling back to LLM', {
-      patternConfidence: patternConf.toFixed(2),
-      mlConfidence: mlConf.toFixed(2),
-    });
-
-    return {
-      handled: false,
-      reason: `Low confidence (Pattern: ${patternConf.toFixed(2)}, ML: ${mlConf.toFixed(2)})`,
-    };
-  }
-
-  /**
    * Record telemetry for analytics
    */
   private recordTelemetry(
@@ -306,7 +143,7 @@ export class IntentRouter {
     startTime: number
   ): void {
     const event: TelemetryEvent = {
-      query: query.substring(0, 100), // Truncate for privacy
+      query: query.substring(0, 100),
       tier,
       toolName: result.toolName,
       confidence: result.confidence,
@@ -318,12 +155,10 @@ export class IntentRouter {
 
     this.telemetry.push(event);
 
-    // Keep only last 1000 events to avoid memory issues
     if (this.telemetry.length > 1000) {
       this.telemetry.shift();
     }
 
-    // Log telemetry
     logger.copilot('Intent routing complete', {
       tier: tier === 'llm' ? 'LLM' : `Tier ${tier}`,
       handled: result.handled,

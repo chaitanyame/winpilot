@@ -4,9 +4,22 @@
  * This module contains regex patterns for deterministic intent matching (Tier 1).
  * Patterns are organized by tool name and include both query patterns (for simple
  * queries) and action patterns (for parameterized queries).
+ *
+ * Includes NLP-flexible prefix stripping so conversational queries like
+ * "can you list windows" or "please show me what's open" are handled.
  */
 
 import { QueryPattern, ActionPattern, PatternMatchResult } from './types';
+
+/**
+ * Strip common conversational prefixes before pattern matching.
+ * Allows natural language like "can you...", "please...", "I want to..." etc.
+ */
+const CONVERSATIONAL_PREFIXES = /^(?:can you |could you |please |i want to |i need to |i'd like to |i would like to |would you |hey |just |go ahead and |let's |help me |yo |ok |okay )+/i;
+
+function stripPrefix(query: string): string {
+  return query.replace(CONVERSATIONAL_PREFIXES, '').trim();
+}
 
 /**
  * Query patterns for deterministic matching
@@ -18,6 +31,8 @@ export const QUERY_PATTERNS: Record<string, QueryPattern[]> = {
     { pattern: /^(list|show|get|display|what).*(window|windows|open)/i, confidence: 0.96 },
     { pattern: /^what windows (are|r) (open|active|running)/i, confidence: 0.98 },
     { pattern: /^show.*(open|active) (window|windows)/i, confidence: 0.96 },
+    { pattern: /^what('s| is) open/i, confidence: 0.95 },
+    { pattern: /^(show|list) (me )?everything.*(open|running)/i, confidence: 0.94 },
   ],
 
   // System Information
@@ -206,6 +221,26 @@ export const QUERY_PATTERNS: Record<string, QueryPattern[]> = {
     { pattern: /^stop (audio|voice|sound) recording/i, confidence: 0.98 },
     { pattern: /^end audio recording/i, confidence: 0.97 },
   ],
+
+  // Media Status
+  media_status: [
+    { pattern: /^(media|music|playback) status/i, confidence: 0.97 },
+    { pattern: /^what('s| is) (playing|the current (song|track))/i, confidence: 0.96 },
+    { pattern: /^(currently|now) playing/i, confidence: 0.95 },
+  ],
+
+  // Weather
+  weather_get: [
+    { pattern: /^(weather|forecast|temperature)/i, confidence: 0.95 },
+    { pattern: /^what('s| is) the (weather|forecast|temperature)/i, confidence: 0.96 },
+    { pattern: /^(how|what).*(hot|cold|warm) (is it|outside)/i, confidence: 0.94 },
+  ],
+
+  // Speak / TTS
+  stop_speaking: [
+    { pattern: /^stop (speaking|talking|reading)/i, confidence: 0.97 },
+    { pattern: /^(shut up|be quiet|silence)/i, confidence: 0.94 },
+  ],
 };
 
 /**
@@ -245,6 +280,17 @@ export const ACTION_PATTERNS: Record<string, ActionPattern[]> = {
       extractor: () => ({ action: 'set', level: 25 }), // Default decrease
       confidence: 0.92,
     },
+    // Pronoun-based volume control ("turn it up", "make it quieter")
+    {
+      pattern: /^(turn|make) it (up|louder)/i,
+      extractor: () => ({ action: 'set', level: 75 }),
+      confidence: 0.93,
+    },
+    {
+      pattern: /^(turn|make) it (down|quieter|softer|lower)/i,
+      extractor: () => ({ action: 'set', level: 25 }),
+      confidence: 0.93,
+    },
   ],
 
   // System Brightness
@@ -270,25 +316,25 @@ export const ACTION_PATTERNS: Record<string, ActionPattern[]> = {
     },
   ],
 
-  // Launch Application
+  // Launch Application (fixed: .+ for multi-word app names, strip articles)
   apps_launch: [
     {
-      pattern: /^(launch|open|start|run) (\w+)/i,
-      extractor: (match) => ({ name: match[2] }),
+      pattern: /^(launch|open|start|run|bring up) (.+)/i,
+      extractor: (match) => ({ name: match[2].replace(/^(the|a|an) /i, '').trim() }),
       confidence: 0.95,
     },
   ],
 
-  // Quit Application
+  // Quit Application (fixed: .+ for multi-word app names)
   apps_quit: [
     {
-      pattern: /^(quit|close|kill|stop|exit) (\w+)/i,
-      extractor: (match) => ({ name: match[2], force: false }),
+      pattern: /^(quit|close|kill|stop|exit) (.+)/i,
+      extractor: (match) => ({ name: match[2].replace(/^(the|a|an) /i, '').trim(), force: false }),
       confidence: 0.94,
     },
     {
-      pattern: /^(force quit|force close|force kill) (\w+)/i,
-      extractor: (match) => ({ name: match[2], force: true }),
+      pattern: /^(force quit|force close|force kill) (.+)/i,
+      extractor: (match) => ({ name: match[2].replace(/^(the|a|an) /i, '').trim(), force: true }),
       confidence: 0.96,
     },
   ],
@@ -599,6 +645,70 @@ export const ACTION_PATTERNS: Record<string, ActionPattern[]> = {
       confidence: 0.95,
     },
   ],
+
+  // Window Close
+  window_close: [
+    {
+      pattern: /^close (the )?(.+?) window$/i,
+      extractor: (match) => ({ appName: match[2].trim() }),
+      confidence: 0.95,
+    },
+    {
+      pattern: /^close (the )?(window|this window)$/i,
+      extractor: () => ({}),
+      confidence: 0.96,
+    },
+  ],
+
+  // Window Minimize
+  window_minimize: [
+    {
+      pattern: /^minimize (the )?(.+)/i,
+      extractor: (match) => ({ appName: match[2].replace(/ window$/i, '').trim() }),
+      confidence: 0.95,
+    },
+  ],
+
+  // Window Maximize
+  window_maximize: [
+    {
+      pattern: /^maximize (the )?(.+)/i,
+      extractor: (match) => ({ appName: match[2].replace(/ window$/i, '').trim() }),
+      confidence: 0.95,
+    },
+  ],
+
+  // Process Kill
+  process_kill: [
+    {
+      pattern: /^(kill|end|terminate) (the )?(process|task) (.+)/i,
+      extractor: (match) => ({ name: match[4].trim() }),
+      confidence: 0.95,
+    },
+    {
+      pattern: /^(kill|end|terminate) (.+)/i,
+      extractor: (match) => ({ name: match[2].replace(/^(the|a) /i, '').trim() }),
+      confidence: 0.92,
+    },
+  ],
+
+  // Speak Text (TTS)
+  speak_text: [
+    {
+      pattern: /^(say|speak|read aloud|read out) (.+)/i,
+      extractor: (match) => ({ text: match[2] }),
+      confidence: 0.95,
+    },
+  ],
+
+  // Cancel Reminder
+  cancel_reminder: [
+    {
+      pattern: /^(cancel|delete|remove|clear) (the )?(reminder|alarm)/i,
+      extractor: () => ({}),
+      confidence: 0.96,
+    },
+  ],
 };
 
 /**
@@ -607,15 +717,38 @@ export const ACTION_PATTERNS: Record<string, ActionPattern[]> = {
  */
 export class PatternMatcher {
   /**
-   * Match a query against all patterns
+   * Match a query against all patterns.
+   * Tries the raw query first, then strips conversational prefixes and retries.
    */
   match(query: string): PatternMatchResult {
     const normalizedQuery = query.trim();
 
+    // Try raw query first
+    const rawResult = this.matchAgainstPatterns(normalizedQuery);
+    if (rawResult.matched) return rawResult;
+
+    // Strip conversational prefixes and retry
+    const strippedQuery = stripPrefix(normalizedQuery);
+    if (strippedQuery !== normalizedQuery && strippedQuery.length > 0) {
+      return this.matchAgainstPatterns(strippedQuery);
+    }
+
+    // No match found
+    return {
+      toolName: '',
+      confidence: 0,
+      matched: false,
+    };
+  }
+
+  /**
+   * Internal: match a query against all action and query patterns
+   */
+  private matchAgainstPatterns(query: string): PatternMatchResult {
     // First try action patterns (they have parameters)
     for (const [toolName, patterns] of Object.entries(ACTION_PATTERNS)) {
       for (const pattern of patterns) {
-        const match = normalizedQuery.match(pattern.pattern);
+        const match = query.match(pattern.pattern);
         if (match) {
           try {
             const params = pattern.extractor(match);
@@ -636,7 +769,7 @@ export class PatternMatcher {
     // Then try query patterns (no parameters)
     for (const [toolName, patterns] of Object.entries(QUERY_PATTERNS)) {
       for (const pattern of patterns) {
-        if (pattern.pattern.test(normalizedQuery)) {
+        if (pattern.pattern.test(query)) {
           return {
             toolName,
             confidence: pattern.confidence,

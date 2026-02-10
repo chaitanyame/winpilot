@@ -87,6 +87,8 @@ function findCopilotCliPath(): string | null {
 export class CopilotController {
   private client: CopilotClient;
   private session: CopilotSession | null = null;
+  private toolSelectSession: CopilotSession | null = null;
+  private toolSelectInitialized = false;
   private isInitialized = false;
   private unsubscribe: (() => void) | null = null;
   private eventQueue: StreamEvent[] = [];
@@ -436,9 +438,9 @@ export class CopilotController {
         },
       });
 
-      logger.copilot('Session created', { sessionId: this.session.sessionId });
+      logger.copilot('Session created (reasoning)', { sessionId: this.session.sessionId });
       this.touchSessionActivity();
-      
+
       // Debug: Log available tools
       if (this.session && 'listTools' in this.session && typeof this.session.listTools === 'function') {
         try {
@@ -451,7 +453,29 @@ export class CopilotController {
           logger.copilot('Could not list tools:', e);
         }
       }
-      
+
+      // Initialize GPT-4o-mini tool selection session (Tier 2)
+      if (!this.toolSelectInitialized) {
+        try {
+          this.toolSelectSession = await this.client.createSession({
+            streaming: true,
+            model: 'gpt-4o-mini',
+            tools: desktopCommanderTools,
+            excludedTools: excludedBuiltinTools,
+            systemMessage: {
+              mode: 'replace',
+              content: this.getToolSelectionPrompt(),
+            },
+          });
+          this.toolSelectInitialized = true;
+          logger.copilot('Tool selection session created (gpt-4o-mini)', {
+            sessionId: this.toolSelectSession.sessionId,
+          });
+        } catch (e) {
+          logger.copilot('Failed to create tool selection session, will use reasoning session for all queries', e);
+        }
+      }
+
       this.isInitialized = true;
       this.skillContextChanged = false;
     } catch (error) {
@@ -1189,6 +1213,223 @@ Provide ONLY the summary, no preamble.`;
       this.clearSessionExpiryTimer();
     }
     // Next sendMessage call will reinitialize
+  }
+
+  /**
+   * Send a message using dual-session routing: try GPT-4o-mini first, escalate to GPT-4o if needed.
+   * This is the primary entry point for LLM-routed messages (when patterns don't match).
+   */
+  async *sendWithToolRouting(
+    message: string,
+    config?: Partial<import('../shared/types').AgenticLoopConfig>
+  ): AsyncGenerator<StreamEvent> {
+    // If tool selection session is available, try it first for simple tool calls
+    if (this.toolSelectSession && this.toolSelectInitialized) {
+      logger.copilot('Trying GPT-4o-mini tool selection first...');
+
+      try {
+        let miniHandledTool = false;
+        let miniResponse = '';
+
+        // Send to mini session
+        for await (const event of this.sendMessageToSession(message, this.toolSelectSession)) {
+          if (event.type === 'tool_call') {
+            // Mini model picked a tool - it will execute via the SDK automatically
+            miniHandledTool = true;
+          }
+
+          // Forward all events to the caller
+          yield event;
+
+          if (event.type === 'text' && event.content) {
+            miniResponse += event.content;
+          }
+
+          if (event.type === 'done' || event.type === 'error') {
+            break;
+          }
+        }
+
+        // If mini model successfully used a tool, we're done
+        if (miniHandledTool) {
+          logger.copilot('GPT-4o-mini handled request with tool call');
+          return;
+        }
+
+        // If mini model responded with text (no tool), check if it's a genuine answer
+        // or if we need to escalate to full reasoning
+        if (miniResponse.trim().length > 0) {
+          logger.copilot('GPT-4o-mini responded with text, accepting response');
+          return;
+        }
+      } catch (error) {
+        logger.copilot('GPT-4o-mini failed, escalating to GPT-4o', error);
+        // Fall through to reasoning session
+      }
+    }
+
+    // Escalate to GPT-4o reasoning session (Tier 3)
+    logger.copilot('Using GPT-4o reasoning session');
+    yield* this.sendMessageWithLoop(message, config);
+  }
+
+  /**
+   * Send a message to a specific session and stream events.
+   * Lower-level than sendMessage - does not handle concurrency or loop logic.
+   */
+  private async *sendMessageToSession(
+    message: string,
+    targetSession: CopilotSession
+  ): AsyncGenerator<StreamEvent> {
+    const localEventQueue: StreamEvent[] = [];
+    let localResolve: (() => void) | null = null;
+    let localComplete = false;
+
+    // Subscribe to session events
+    const unsubscribe = targetSession.on((event: SessionEvent) => {
+      this.touchSessionActivity();
+      const streamEvent = this.convertSessionEvent(event);
+      if (streamEvent) {
+        localEventQueue.push(streamEvent);
+        if (localResolve) {
+          localResolve();
+          localResolve = null;
+        }
+      }
+    });
+
+    try {
+      await targetSession.send({ prompt: message });
+
+      while (!localComplete) {
+        while (localEventQueue.length > 0) {
+          const event = localEventQueue.shift()!;
+          yield event;
+          if (event.type === 'done' || event.type === 'error') {
+            localComplete = true;
+            break;
+          }
+        }
+
+        if (!localComplete && localEventQueue.length === 0) {
+          await new Promise<void>((resolve) => {
+            localResolve = resolve;
+          });
+        }
+      }
+    } finally {
+      unsubscribe();
+    }
+  }
+
+  /**
+   * Convert a SessionEvent to a StreamEvent (extracted from handleSessionEvent for reuse)
+   */
+  private convertSessionEvent(event: SessionEvent): StreamEvent | null {
+    switch (event.type) {
+      case 'assistant.message_delta': {
+        const deltaData = event.data as MessageDeltaData;
+        let deltaContent = deltaData.deltaContent;
+        if (this.toolsJustExecuted && deltaContent) {
+          deltaContent = '\n' + deltaContent;
+          this.toolsJustExecuted = false;
+        }
+        if (deltaContent) {
+          this.currentAssistantResponse += deltaContent;
+        }
+        return { type: 'text', content: deltaContent };
+      }
+
+      case 'assistant.message': {
+        const messageData = event.data as AssistantMessageData;
+        if (messageData.content && !this.isStreaming) {
+          this.currentAssistantResponse = messageData.content;
+        }
+        if (!messageData.toolRequests || messageData.toolRequests.length === 0) {
+          if (messageData.content && !this.isStreaming) {
+            return { type: 'text', content: messageData.content };
+          }
+        }
+        return null;
+      }
+
+      case 'tool.execution_start': {
+        const toolStartData = event.data as ToolExecutionStartData;
+        if (toolStartData.toolCallId) {
+          this.toolExecutionMap.set(toolStartData.toolCallId, {
+            toolName: toolStartData.toolName,
+            startTime: Date.now(),
+          });
+        }
+        return {
+          type: 'tool_call',
+          toolName: toolStartData.toolName,
+          toolArgs: toolStartData.arguments,
+          content: `🔧 Executing: ${toolStartData.toolName}...`,
+        };
+      }
+
+      case 'tool.execution_complete': {
+        this.toolsJustExecuted = true;
+        const toolCompleteData = event.data as ToolExecutionCompleteData;
+        const toolExecution = this.toolExecutionMap.get(toolCompleteData.toolCallId);
+        const toolName = toolExecution?.toolName ?? toolCompleteData.toolCallId;
+        if (toolExecution) {
+          this.toolExecutionMap.delete(toolCompleteData.toolCallId);
+        }
+        this.currentTurnResults.push({
+          toolName,
+          success: toolCompleteData.success,
+          result: toolCompleteData.result?.content,
+          error: toolCompleteData.error?.message,
+        });
+        return {
+          type: 'tool_result',
+          toolName: toolCompleteData.toolCallId,
+          result: toolCompleteData.result?.content,
+          content: toolCompleteData.success ? '✅ Done' : `❌ Failed: ${toolCompleteData.error?.message}`,
+        };
+      }
+
+      case 'session.error': {
+        const errorData = event.data as SessionErrorData;
+        return { type: 'error', error: errorData.message, content: `❌ Error: ${errorData.message}` };
+      }
+
+      case 'session.idle':
+        return { type: 'done' };
+
+      default:
+        return null;
+    }
+  }
+
+  /**
+   * Get the lightweight system prompt for GPT-4o-mini tool selection
+   */
+  private getToolSelectionPrompt(): string {
+    const toolList = desktopCommanderTools.map(t => {
+      const desc = (t as any).description || '';
+      return `- ${t.name}: ${desc}`;
+    }).join('\n');
+
+    return `You are a fast tool selector for Desktop Commander. Given a user request:
+
+1. Identify the most appropriate tool from the list below
+2. Extract the required parameters
+3. Execute the tool immediately
+
+Do NOT explain your reasoning or provide commentary. Just execute the right tool.
+If the request requires multi-step reasoning, complex planning, or you are unsure which tool to use, respond with: "ESCALATE"
+
+## Available Tools
+
+${toolList}
+
+## Instructions
+- Execute tools directly - do not ask for confirmation
+- For ambiguous requests, prefer the most likely tool
+- Signal "ESCALATE" only for genuinely complex multi-step tasks`;
   }
 
   /**

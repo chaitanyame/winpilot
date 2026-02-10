@@ -897,8 +897,8 @@ export function setupIpcHandlers(): void {
       screenShareDetector.pause();
 
       try {
-        // Use the AsyncGenerator pattern with agentic loop
-        for await (const streamEvent of copilotController.sendMessageWithLoop(llmMessage)) {
+        // Use dual-session routing: GPT-4o-mini for tool selection, GPT-4o for reasoning
+        for await (const streamEvent of copilotController.sendWithToolRouting(llmMessage)) {
           // Check if sender is still valid before sending
           if (sender.isDestroyed()) {
             console.log('[IPC] Sender destroyed, stopping stream');

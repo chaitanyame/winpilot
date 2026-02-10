@@ -167,8 +167,8 @@ export class TelemetryManager {
 
     report += 'Tier Distribution:\n';
     report += `  Tier 1 (Pattern): ${stats.tier1} (${(stats.tier1Coverage * 100).toFixed(1)}%)\n`;
-    report += `  Tier 2 (ML): ${stats.tier2} (${(stats.tier2Coverage * 100).toFixed(1)}%)\n`;
-    report += `  LLM Fallback: ${stats.llm} (${(stats.llmFallback * 100).toFixed(1)}%)\n\n`;
+    report += `  Tier 2 (GPT-4o-mini): ${stats.tier2} (${(stats.tier2Coverage * 100).toFixed(1)}%)\n`;
+    report += `  Tier 3 (GPT-4o): ${stats.llm} (${(stats.llmFallback * 100).toFixed(1)}%)\n\n`;
 
     report += 'Average Latency:\n';
     report += `  Tier 1: ${stats.avgLatency.tier1}ms\n`;

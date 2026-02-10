@@ -23,10 +23,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint src --ext .ts,.tsx",
     "rebuild": "npx @electron/rebuild -f -w better-sqlite3",
-    "postinstall": "npx @electron/rebuild -w better-sqlite3 2>/dev/null || true",
-    "train:generate-data": "ts-node training/generate-data.ts",
-    "train:model": "ts-node training/train-model.ts",
-    "train:all": "npm run train:generate-data && npm run train:model"
+    "postinstall": "npx @electron/rebuild -w better-sqlite3 2>/dev/null || true"
   },
   "keywords": [
     "desktop",
@@ -51,7 +48,6 @@
     "framer-motion": "^10.16.16",
     "lucide-react": "^0.303.0",
     "menubar": "^9.5.2",
-    "natural": "^8.1.0",
     "node-cron": "^4.2.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
@@ -60,9 +56,7 @@
     "zod-to-json-schema": "^3.25.1",
     "zustand": "^4.4.7"
   },
-  "optionalDependencies": {
-    "fasttext-node": "^1.1.7"
-  },
+  "optionalDependencies": {},
   "devDependencies": {
     "@electron/rebuild": "^3.7.2",
     "@types/node": "^20.10.6",

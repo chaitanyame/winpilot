@@ -1,19 +1,17 @@
 /**
  * Intent Classification System
  *
- * This module provides a hybrid intent classification system for WinPilot,
- * combining pattern matching and FastText ML model to handle 65-70% of user
- * queries locally, reducing LLM calls and improving response time.
+ * Hybrid intent classification for WinPilot:
+ * - Tier 1: Enhanced Pattern Matching (0-5ms, ~55-60% coverage)
+ *   NLP-flexible regex with conversational prefix stripping
+ * - Tier 2: GPT-4o-mini Tool Selection (500ms-1s, via Copilot SDK)
+ * - Tier 3: GPT-4o Full Reasoning (2-4s, via Copilot SDK)
  *
- * Architecture:
- * - Tier 1: Pattern Matching (0-5ms, ~40% coverage)
- * - Tier 2: FastText ML Model (5-15ms, ~30% coverage)
- * - Tier 3: LLM Fallback (2000ms, ~30% remaining)
+ * Tiers 2 & 3 are handled by the CopilotController's dual-session routing.
  */
 
 export { IntentRouter } from './router';
 export { PatternMatcher } from './patterns';
-export { MLIntentClassifier } from './ml-classifier';
 export { ParameterExtractor } from './extractors';
 export { ToolExecutor } from './executor';
 export { TelemetryManager } from './telemetry';
@@ -21,7 +19,6 @@ export { TelemetryManager } from './telemetry';
 export type {
   RouteResult,
   PatternMatchResult,
-  ClassificationResult,
   ToolExecutionResult,
   TelemetryEvent,
   ClassificationTier,
