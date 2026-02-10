@@ -1,16 +1,10 @@
 // Windows Window Manager Implementation
 
-import { exec } from 'child_process';
-import { promisify } from 'util';
 import { screen } from 'electron';
 import { IWindowManager } from '../index';
 import { WindowInfo } from '../../shared/types';
 import { WINDOW_LAYOUTS } from '../../shared/constants';
-import * as fs from 'fs';
-import * as path from 'path';
-import * as os from 'os';
-
-const execAsync = promisify(exec);
+import { runPowerShell } from './powershell-pool';
 
 /**
  * Escapes a string for safe use in PowerShell single-quoted strings.
@@ -33,143 +27,72 @@ function isValidWindowId(windowId: string): boolean {
 // Track the last focused window that wasn't our own app
 let lastFocusedExternalWindowId: string | null = null;
 
-export class WindowsWindowManager implements IWindowManager {
-  
-  async listWindows(): Promise<WindowInfo[]> {
-    try {
-      // PowerShell script to get all visible windows using Win32 API
-      const script = `
-Add-Type @"
-using System;
-using System.Runtime.InteropServices;
-using System.Text;
-using System.Collections.Generic;
-using System.Diagnostics;
+// TTL cache for window list to avoid expensive re-enumeration in agentic loops
+const WINDOW_LIST_CACHE_TTL_MS = 3000; // 3 seconds
+let windowListCache: WindowInfo[] | null = null;
+let windowListCacheTime = 0;
 
-public class WindowInfo {
-    [DllImport("user32.dll")]
-    public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
-    
-    [DllImport("user32.dll")]
-    public static extern bool IsWindowVisible(IntPtr hWnd);
-    
-    [DllImport("user32.dll")]
-    public static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
-    
-    [DllImport("user32.dll")]
-    public static extern int GetWindowTextLength(IntPtr hWnd);
-    
-    [DllImport("user32.dll")]
-    public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
-    
-    [DllImport("user32.dll")]
-    public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
-    
-    [DllImport("user32.dll")]
-    public static extern bool IsIconic(IntPtr hWnd);
-    
-    [DllImport("user32.dll")]
-    public static extern bool IsZoomed(IntPtr hWnd);
-    
-    [DllImport("user32.dll")]
-    public static extern IntPtr GetForegroundWindow();
-    
-    public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
-    
-    [StructLayout(LayoutKind.Sequential)]
-    public struct RECT {
-        public int Left;
-        public int Top;
-        public int Right;
-        public int Bottom;
+export class WindowsWindowManager implements IWindowManager {
+
+  async listWindows(): Promise<WindowInfo[]> {
+    // Return cached result if still valid
+    const now = Date.now();
+    if (windowListCache && (now - windowListCacheTime) < WINDOW_LIST_CACHE_TTL_MS) {
+      return windowListCache;
     }
-    
-    public static List<object> GetWindows() {
-        var windows = new List<object>();
-        IntPtr foreground = GetForegroundWindow();
-        
-        EnumWindows((hWnd, lParam) => {
-            if (!IsWindowVisible(hWnd)) return true;
-            
-            int length = GetWindowTextLength(hWnd);
-            if (length == 0) return true;
-            
-            StringBuilder sb = new StringBuilder(length + 1);
-            GetWindowText(hWnd, sb, sb.Capacity);
-            string title = sb.ToString();
-            if (string.IsNullOrWhiteSpace(title)) return true;
-            
-            uint processId;
-            GetWindowThreadProcessId(hWnd, out processId);
-            
-            RECT rect;
-            GetWindowRect(hWnd, out rect);
-            
-            bool isMinimized = IsIconic(hWnd);
-            if (!isMinimized && (rect.Right - rect.Left < 50 || rect.Bottom - rect.Top < 50)) return true;
-            
-            string processName = "";
-            try {
-                var proc = Process.GetProcessById((int)processId);
-                processName = proc.ProcessName;
-            } catch { }
-            
-            windows.Add(new {
-                id = hWnd.ToString(),
-                title = title,
-                app = processName,
-                processId = processId,
-                x = rect.Left,
-                y = rect.Top,
-                width = isMinimized ? 0 : rect.Right - rect.Left,
-                height = isMinimized ? 0 : rect.Bottom - rect.Top,
-                isMinimized = isMinimized,
-                isMaximized = IsZoomed(hWnd),
-                isFocused = hWnd == foreground
-            });
-            return true;
-        }, IntPtr.Zero);
-        
-        return windows;
+    try {
+      // Two-phase approach:
+      // 1. If WindowInfo C# type is already compiled (pre-warmed at pool startup),
+      //    use it for full window details (bounds, min/max/focus state).
+      // 2. Otherwise, fall back to pure PowerShell Get-Process (instant, no compilation).
+      const script = `
+if ("WindowInfo" -as [type]) {
+  # Fast path: pre-warmed C# type is available — full window details
+  [WindowInfo]::GetWindows() | ConvertTo-Json -Compress
+} else {
+  # Fallback: pure PowerShell — no compilation needed, returns basic info
+  Get-Process | Where-Object { $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle } | ForEach-Object {
+    [PSCustomObject]@{
+      id = $_.MainWindowHandle.ToString()
+      title = $_.MainWindowTitle
+      processId = $_.Id
+      app = $_.ProcessName
+      x = 0; y = 0; width = 0; height = 0
+      isMinimized = $false
+      isMaximized = $false
+      isFocused = $false
     }
+  } | ConvertTo-Json -Compress
 }
-"@
-[WindowInfo]::GetWindows() | ConvertTo-Json -Compress
 `;
 
-      // Write script to temp file to preserve newlines (required for Add-Type here-string)
-      const tempFile = path.join(os.tmpdir(), `dc-windows-${Date.now()}.ps1`);
-      fs.writeFileSync(tempFile, script, 'utf8');
-      
-      try {
-        const { stdout } = await execAsync(`powershell -NoProfile -ExecutionPolicy Bypass -File "${tempFile}"`, {
-          maxBuffer: 10 * 1024 * 1024,
-        });
+      const { stdout } = await runPowerShell(script, { timeout: 10000 });
 
-        const parsed = JSON.parse(stdout || '[]');
-        const windowsArray = Array.isArray(parsed) ? parsed : [parsed];
+      const parsed = JSON.parse(stdout || '[]');
+      const windowsArray = Array.isArray(parsed) ? parsed : [parsed];
 
-        // Filter out our own app's windows (WinPilot / electron)
-        const filteredWindows = windowsArray.filter((w: any) => {
-          const title = (w.title || '').toLowerCase();
-          const app = (w.app || '').toLowerCase();
-          // Filter out our own window
-          if (title.includes('winpilot')) return false;
-          if (app === 'electron' || app === 'winpilot') return false;
-          return true;
-        });
+      // Filter out our own app's windows (WinPilot / electron)
+      const filteredWindows = windowsArray.filter((w: any) => {
+        const title = (w.title || '').toLowerCase();
+        const app = (w.app || '').toLowerCase();
+        // Filter out our own window
+        if (title.includes('winpilot') || title.includes('desktop commander')) return false;
+        if (app === 'electron' || app === 'desktop-commander') return false;
+        return true;
+      });
 
-        // Find the currently focused external window
-        const focusedExternal = filteredWindows.find((w: any) => w.isFocused);
-        if (focusedExternal) {
-          lastFocusedExternalWindowId = focusedExternal.id;
-        }
+      // Find the currently focused external window
+      const focusedExternal = filteredWindows.find((w: any) => w.isFocused);
+      if (focusedExternal) {
+        lastFocusedExternalWindowId = focusedExternal.id;
+      }
 
-        // Map results and mark the "active" window (last focused external, not Desktop Commander)
-        return filteredWindows.map((w: any) => ({
+      // Map results and mark the "active" window (last focused external, not Desktop Commander)
+      const result = filteredWindows.map((w: any) => {
+        return {
           id: w.id,
           title: w.title,
-          app: w.app,
+          app: w.app || w.title || `pid:${w.processId}`,
           processId: w.processId,
           bounds: {
             x: w.x,
@@ -181,15 +104,25 @@ public class WindowInfo {
           isMaximized: w.isMaximized,
           // Mark as focused if it's the last known focused external window
           isFocused: w.id === lastFocusedExternalWindowId,
-        }));
-      } finally {
-        // Clean up temp file
-        try { fs.unlinkSync(tempFile); } catch { }
-      }
+          isHiddenFromCapture: false, // Disabled to improve speed
+        };
+      });
+
+      // Cache the result
+      windowListCache = result;
+      windowListCacheTime = Date.now();
+
+      return result;
     } catch (error) {
       console.error('Error listing windows:', error);
       return [];
     }
+  }
+
+  /** Invalidate the window list cache after a mutation */
+  private invalidateCache(): void {
+    windowListCache = null;
+    windowListCacheTime = 0;
   }
 
   async focusWindow(params: { windowId?: string; appName?: string; titleContains?: string }): Promise<boolean> {
@@ -216,6 +149,7 @@ public class WindowInfo {
       if (!targetHandle) return false;
 
       const script = `
+        if (-not ("Win32" -as [type])) {
         Add-Type @"
         using System;
         using System.Runtime.InteropServices;
@@ -228,6 +162,7 @@ public class WindowInfo {
             public static extern bool IsIconic(IntPtr hWnd);
         }
 "@
+        }
         $handle = [IntPtr]::new(${targetHandle})
         if ([Win32]::IsIconic($handle)) {
             [Win32]::ShowWindow($handle, 9)
@@ -235,7 +170,8 @@ public class WindowInfo {
         [Win32]::SetForegroundWindow($handle)
       `;
 
-      await execAsync(`powershell -NoProfile -Command "${script.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`);
+      await runPowerShell(script);
+      this.invalidateCache();
       return true;
     } catch (error) {
       console.error('Error focusing window:', error);
@@ -258,6 +194,7 @@ public class WindowInfo {
       const heightVal = params.height !== undefined ? params.height : '($rect.Bottom - $rect.Top)';
       
       const script = `
+if (-not ("Win32Move" -as [type])) {
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
@@ -276,6 +213,7 @@ public class Win32Move {
     public struct RECT { public int Left, Top, Right, Bottom; }
 }
 "@
+}
 $handle = [IntPtr]::new(${params.windowId})
 if ([Win32Move]::IsIconic($handle)) {
     [Win32Move]::ShowWindow($handle, 9) | Out-Null
@@ -294,17 +232,9 @@ $height = ${heightVal}
 [Win32Move]::MoveWindow($handle, $x, $y, $width, $height, $true)
 `;
 
-      // Write script to temp file to preserve newlines for Add-Type here-string
-      const scriptPath = path.join(os.tmpdir(), `move-window-${Date.now()}.ps1`);
-      fs.writeFileSync(scriptPath, script, 'utf8');
-      
-      try {
-        await execAsync(`powershell -NoProfile -ExecutionPolicy Bypass -File "${scriptPath}"`);
-        return true;
-      } finally {
-        // Clean up temp file
-        try { fs.unlinkSync(scriptPath); } catch {}
-      }
+      await runPowerShell(script);
+      this.invalidateCache();
+      return true;
     } catch (error) {
       console.error('Error moving window:', error);
       return false;
@@ -320,6 +250,7 @@ $height = ${heightVal}
           return false;
         }
         const script = `
+if (-not ("Win32Close" -as [type])) {
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
@@ -328,19 +259,16 @@ public class Win32Close {
     public static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
 }
 "@
+}
 [Win32Close]::PostMessage([IntPtr]::new(${params.windowId}), 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)
 `;
-        const scriptPath = path.join(os.tmpdir(), `close-window-${Date.now()}.ps1`);
-        fs.writeFileSync(scriptPath, script, 'utf8');
-        try {
-          await execAsync(`powershell -NoProfile -ExecutionPolicy Bypass -File "${scriptPath}"`);
-        } finally {
-          try { fs.unlinkSync(scriptPath); } catch {}
-        }
+        await runPowerShell(script);
+        this.invalidateCache();
       } else if (params.appName) {
         // Sanitize appName to prevent command injection
         const safeAppName = escapePowerShellString(params.appName);
-        await execAsync(`powershell -NoProfile -Command "Stop-Process -Name '${safeAppName}' -ErrorAction SilentlyContinue"`);
+        await runPowerShell(`Stop-Process -Name '${safeAppName}' -ErrorAction SilentlyContinue`);
+        this.invalidateCache();
       }
       return true;
     } catch (error) {
@@ -358,6 +286,7 @@ public class Win32Close {
       }
 
       const script = `
+if (-not ("Win32Minimize" -as [type])) {
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
@@ -366,15 +295,11 @@ public class Win32Minimize {
     public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 }
 "@
+}
 [Win32Minimize]::ShowWindow([IntPtr]::new(${windowId}), 6)
 `;
-      const scriptPath = path.join(os.tmpdir(), `minimize-window-${Date.now()}.ps1`);
-      fs.writeFileSync(scriptPath, script, 'utf8');
-      try {
-        await execAsync(`powershell -NoProfile -ExecutionPolicy Bypass -File "${scriptPath}"`);
-      } finally {
-        try { fs.unlinkSync(scriptPath); } catch {}
-      }
+      await runPowerShell(script);
+      this.invalidateCache();
       return true;
     } catch (error) {
       console.error('Error minimizing window:', error);
@@ -391,6 +316,7 @@ public class Win32Minimize {
       }
 
       const script = `
+if (-not ("Win32Maximize" -as [type])) {
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
@@ -399,15 +325,11 @@ public class Win32Maximize {
     public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 }
 "@
+}
 [Win32Maximize]::ShowWindow([IntPtr]::new(${windowId}), 3)
 `;
-      const scriptPath = path.join(os.tmpdir(), `maximize-window-${Date.now()}.ps1`);
-      fs.writeFileSync(scriptPath, script, 'utf8');
-      try {
-        await execAsync(`powershell -NoProfile -ExecutionPolicy Bypass -File "${scriptPath}"`);
-      } finally {
-        try { fs.unlinkSync(scriptPath); } catch {}
-      }
+      await runPowerShell(script);
+      this.invalidateCache();
       return true;
     } catch (error) {
       console.error('Error maximizing window:', error);

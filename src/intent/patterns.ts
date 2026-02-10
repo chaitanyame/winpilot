@@ -65,6 +65,13 @@ export const QUERY_PATTERNS: Record<string, QueryPattern[]> = {
     { pattern: /^(clear|empty|delete|wipe).*(clipboard)/i, confidence: 0.98 },
   ],
 
+  // Clipboard History
+  clipboard_history: [
+    { pattern: /^(show|list|view|get).*(clipboard|copy).*(history|previous|past)/i, confidence: 0.98 },
+    { pattern: /^what.*(copied|clipboard)/i, confidence: 0.95 },
+    { pattern: /^(clipboard|copy) history/i, confidence: 0.97 },
+  ],
+
   // Service List
   service_list: [
     { pattern: /^(list|show|get|display).*(service|services)/i, confidence: 0.96 },
@@ -93,6 +100,111 @@ export const QUERY_PATTERNS: Record<string, QueryPattern[]> = {
   productivity_worldclock: [
     { pattern: /^(world clock|time.*(world|zones|cities))/i, confidence: 0.97 },
     { pattern: /^what.*(time|clock).*(world|zones)/i, confidence: 0.96 },
+  ],
+
+  // Media Control
+  media_play: [
+    { pattern: /^play$/i, confidence: 0.95 },
+    { pattern: /^(play|start|resume).*(music|media|song|track|audio)/i, confidence: 0.97 },
+    { pattern: /^(play|start|resume) (it|playback)$/i, confidence: 0.96 },
+  ],
+  media_pause: [
+    { pattern: /^pause$/i, confidence: 0.95 },
+    { pattern: /^(pause|stop).*(music|media|song|track|audio)/i, confidence: 0.97 },
+    { pattern: /^pause (it|playback)$/i, confidence: 0.96 },
+  ],
+  media_play_pause: [
+    { pattern: /^toggle.*(play|music|media|playback)/i, confidence: 0.96 },
+    { pattern: /^(play|pause) toggle$/i, confidence: 0.95 },
+  ],
+  media_next: [
+    { pattern: /^(next|skip)$/i, confidence: 0.94 },
+    { pattern: /^(next|skip).*(track|song)/i, confidence: 0.97 },
+    { pattern: /^skip$/i, confidence: 0.95 },
+  ],
+  media_previous: [
+    { pattern: /^(previous|prev|back)$/i, confidence: 0.94 },
+    { pattern: /^(previous|prev|back).*(track|song)/i, confidence: 0.97 },
+    { pattern: /^go back$/i, confidence: 0.93 },
+  ],
+  media_stop: [
+    { pattern: /^stop.*(music|media|playback|playing)/i, confidence: 0.97 },
+    { pattern: /^stop$/i, confidence: 0.93 },
+  ],
+
+  // Browser - Query patterns
+  browser_refresh: [
+    { pattern: /^refresh$/i, confidence: 0.95 },
+    { pattern: /^reload$/i, confidence: 0.95 },
+    { pattern: /^refresh.*(page|tab|browser)/i, confidence: 0.97 },
+  ],
+  browser_new_tab: [
+    { pattern: /^new tab$/i, confidence: 0.97 },
+    { pattern: /^open.*(new|blank) tab$/i, confidence: 0.96 },
+  ],
+  browser_close_tab: [
+    { pattern: /^close tab$/i, confidence: 0.97 },
+    { pattern: /^close.*(current|this) tab$/i, confidence: 0.96 },
+  ],
+  browser_next_tab: [
+    { pattern: /^next tab$/i, confidence: 0.97 },
+    { pattern: /^switch.*(next|right) tab$/i, confidence: 0.96 },
+  ],
+  browser_prev_tab: [
+    { pattern: /^(previous|prev) tab$/i, confidence: 0.97 },
+    { pattern: /^switch.*(previous|prev|left) tab$/i, confidence: 0.96 },
+  ],
+  browser_bookmark: [
+    { pattern: /^bookmark$/i, confidence: 0.95 },
+    { pattern: /^bookmark.*(page|this|current)/i, confidence: 0.96 },
+    { pattern: /^save.*(bookmark|favorite)/i, confidence: 0.95 },
+  ],
+
+  // Email - Query patterns
+  email_open: [
+    { pattern: /^open.*(email|mail|inbox)/i, confidence: 0.97 },
+    { pattern: /^check.*(email|mail|inbox)/i, confidence: 0.96 },
+    { pattern: /^(email|mail|inbox)$/i, confidence: 0.94 },
+  ],
+
+  // OCR - Query patterns
+  ocr_clipboard: [
+    { pattern: /^(extract|read|get|copy) text.*(clipboard|screen)/i, confidence: 0.97 },
+    { pattern: /^ocr.*(clipboard)/i, confidence: 0.96 },
+    { pattern: /^what.*(text|say).*(clipboard|image)/i, confidence: 0.95 },
+  ],
+  ocr_region: [
+    { pattern: /^(ocr|extract text).*(region|area|selection)/i, confidence: 0.97 },
+    { pattern: /^(select|capture).*(region|area).*text/i, confidence: 0.96 },
+  ],
+
+  // Screen Recording
+  screen_record_start: [
+    { pattern: /^(start|begin) (screen )?recording/i, confidence: 0.97 },
+    { pattern: /^record (my )?(screen|desktop)/i, confidence: 0.96 },
+    { pattern: /^capture (my )?(screen|desktop)/i, confidence: 0.95 },
+    { pattern: /^screen record/i, confidence: 0.97 },
+  ],
+  screen_record_stop: [
+    { pattern: /^stop (screen )?recording/i, confidence: 0.98 },
+    { pattern: /^end (screen )?recording/i, confidence: 0.97 },
+    { pattern: /^finish recording/i, confidence: 0.96 },
+  ],
+  screen_record_status: [
+    { pattern: /^(recording|screen recording) status/i, confidence: 0.97 },
+    { pattern: /^(is|am i) recording/i, confidence: 0.96 },
+    { pattern: /^check recording/i, confidence: 0.95 },
+  ],
+
+  // Audio Recording
+  audio_record_start: [
+    { pattern: /^(start|begin) (audio|voice|sound) recording/i, confidence: 0.97 },
+    { pattern: /^record (audio|my voice|sound)/i, confidence: 0.96 },
+    { pattern: /^(start|begin) recording audio/i, confidence: 0.96 },
+  ],
+  audio_record_stop: [
+    { pattern: /^stop (audio|voice|sound) recording/i, confidence: 0.98 },
+    { pattern: /^end audio recording/i, confidence: 0.97 },
   ],
 };
 
@@ -261,6 +373,25 @@ export const ACTION_PATTERNS: Record<string, ActionPattern[]> = {
     },
   ],
 
+  // Clipboard Restore
+  clipboard_restore: [
+    {
+      pattern: /^(paste|restore|get).*(clipboard|copied).*(from|ago|minutes|hours)/i,
+      extractor: (match) => ({ query: match[0] }),
+      confidence: 0.96,
+    },
+    {
+      pattern: /^paste.*(URL|link|code|text).*(copied|clipboard)/i,
+      extractor: (match) => ({ query: match[1].toLowerCase() }),
+      confidence: 0.95,
+    },
+    {
+      pattern: /^(find|search).*(clipboard|copied).+paste/i,
+      extractor: (match) => ({ query: match[0] }),
+      confidence: 0.94,
+    },
+  ],
+
   // WiFi Control
   system_wifi: [
     {
@@ -342,6 +473,130 @@ export const ACTION_PATTERNS: Record<string, ActionPattern[]> = {
       pattern: /^screenshot$/i,
       extractor: () => ({ region: 'fullscreen' }),
       confidence: 0.97,
+    },
+  ],
+
+  // Browser - Open URL
+  browser_open: [
+    {
+      pattern: /^open (https?:\/\/\S+)/i,
+      extractor: (match) => ({ url: match[1] }),
+      confidence: 0.97,
+    },
+    {
+      pattern: /^open (\S+\.\S+)/i,
+      extractor: (match) => ({ url: match[1] }),
+      confidence: 0.95,
+    },
+    {
+      pattern: /^(go to|navigate to|visit) (https?:\/\/\S+)/i,
+      extractor: (match) => ({ url: match[2] }),
+      confidence: 0.96,
+    },
+    {
+      pattern: /^(go to|navigate to|visit) (\S+\.\S+)/i,
+      extractor: (match) => ({ url: match[2] }),
+      confidence: 0.94,
+    },
+  ],
+
+  // Browser - Search
+  browser_search: [
+    {
+      pattern: /^(search|google|look up) (.+)/i,
+      extractor: (match) => ({ query: match[2], engine: 'google' }),
+      confidence: 0.96,
+    },
+    {
+      pattern: /^(bing|duckduckgo|youtube) search (.+)/i,
+      extractor: (match) => ({ query: match[2], engine: match[1].toLowerCase() }),
+      confidence: 0.97,
+    },
+    {
+      pattern: /^search (.+) on (google|bing|duckduckgo|youtube)/i,
+      extractor: (match) => ({ query: match[1], engine: match[2].toLowerCase() }),
+      confidence: 0.97,
+    },
+  ],
+
+  // Email - Compose
+  email_compose: [
+    {
+      pattern: /^(email|mail|send email to) (\S+@\S+)/i,
+      extractor: (match) => ({ to: match[2] }),
+      confidence: 0.97,
+    },
+    {
+      pattern: /^(compose|write|new) email$/i,
+      extractor: () => ({}),
+      confidence: 0.96,
+    },
+    {
+      pattern: /^email .+ about (.+)/i,
+      extractor: (match) => ({ subject: match[1] }),
+      confidence: 0.94,
+    },
+    {
+      pattern: /^(email|mail) (\S+@\S+) about (.+)/i,
+      extractor: (match) => ({ to: match[2], subject: match[3] }),
+      confidence: 0.96,
+    },
+  ],
+
+  // OCR - Extract from file
+  ocr_extract: [
+    {
+      pattern: /^(ocr|extract text from|read text from) (.+\.(png|jpg|jpeg|bmp|gif))/i,
+      extractor: (match) => ({ imagePath: match[2] }),
+      confidence: 0.97,
+    },
+    {
+      pattern: /^(read|get) text from (.+\.(png|jpg|jpeg|bmp|gif))/i,
+      extractor: (match) => ({ imagePath: match[2] }),
+      confidence: 0.95,
+    },
+  ],
+
+  // Screen Recording with parameters
+  screen_record_start: [
+    {
+      pattern: /^(start|begin|record).*(screen|desktop).*(with|using) (microphone|mic|system audio|no audio)/i,
+      extractor: (match) => {
+        const audioStr = match[4].toLowerCase();
+        let audioSource = 'system';
+        if (audioStr.includes('mic')) audioSource = 'microphone';
+        else if (audioStr.includes('no')) audioSource = 'none';
+        return { audioSource };
+      },
+      confidence: 0.96,
+    },
+    {
+      pattern: /^(start|begin|record).*(screen|desktop).*(\d+)\s*fps/i,
+      extractor: (match) => ({ fps: parseInt(match[3]) }),
+      confidence: 0.95,
+    },
+    {
+      pattern: /^record.*(region|area|selection)/i,
+      extractor: () => ({ region: 'selection' }),
+      confidence: 0.94,
+    },
+  ],
+
+  // Audio Recording with parameters
+  audio_record_start: [
+    {
+      pattern: /^(start|begin|record).*(audio|voice|sound).*(mp3|wav|aac)/i,
+      extractor: (match) => ({ format: match[3].toLowerCase() }),
+      confidence: 0.96,
+    },
+    {
+      pattern: /^record.*(microphone|mic|system audio)/i,
+      extractor: (match) => {
+        const sourceStr = match[1].toLowerCase();
+        const source = sourceStr.includes('system') ? 'system' : 'microphone';
+        return { source };
+      },
+      confidence: 0.95,
     },
   ],
 };

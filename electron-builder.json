@@ -10,6 +10,18 @@
     "resources/**/*",
     "node_modules/better-sqlite3/**/*"
   ],
+  "extraResources": [
+    {
+      "from": "resources/ffmpeg",
+      "to": "ffmpeg",
+      "filter": ["**/*"]
+    },
+    {
+      "from": "resources/invisiwind",
+      "to": "invisiwind",
+      "filter": ["**/*"]
+    }
+  ],
   "win": {
     "target": [
       {
@@ -19,16 +31,6 @@
     ],
     "icon": "resources/icon.ico",
     "signAndEditExecutable": false
-  },
-  "mac": {
-    "target": ["dmg"],
-    "icon": "resources/icon.icns",
-    "category": "public.app-category.utilities"
-  },
-  "linux": {
-    "target": ["AppImage", "deb"],
-    "icon": "resources/icon.png",
-    "category": "Utility"
   },
   "nsis": {
     "oneClick": false,

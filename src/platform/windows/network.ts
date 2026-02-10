@@ -2,6 +2,7 @@
 
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import { runPowerShell } from './powershell-pool';
 import { INetwork } from '../index';
 import type { NetworkInfoData, NetworkTestResult } from '../../shared/types';
 
@@ -9,7 +10,7 @@ const execAsync = promisify(exec);
 
 export class WindowsNetwork implements INetwork {
 
-  async getNetworkInfo(_params: { includeInactive?: boolean }): Promise<NetworkInfoData> {
+  async getNetworkInfo(): Promise<NetworkInfoData> {
     try {
       // Get hostname
       const { stdout: hostnameOutput } = await execAsync('hostname');
@@ -18,7 +19,7 @@ export class WindowsNetwork implements INetwork {
       // Get network interfaces - use single-line PowerShell script
       const interfaceScript = 'Get-NetAdapter | Where-Object { $true } | ForEach-Object { $adapter = $_; $ipConfig = Get-NetIPAddress -InterfaceIndex $adapter.InterfaceIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Select-Object -First 1; [PSCustomObject]@{ Name = $adapter.Name; Type = $adapter.InterfaceDescription; Status = $adapter.Status; IPv4 = if ($ipConfig) { $ipConfig.IPAddress } else { $null }; MAC = $adapter.MacAddress } } | ConvertTo-Json -Compress';
 
-      const { stdout: interfacesOutput } = await execAsync(`powershell -NoProfile -Command "${interfaceScript}"`);
+      const { stdout: interfacesOutput } = await runPowerShell(interfaceScript);
 
       let interfaces = [];
       try {
@@ -57,7 +58,7 @@ export class WindowsNetwork implements INetwork {
 
       let primaryDns: string[] = [];
       try {
-        const { stdout: dnsOutput } = await execAsync(`powershell -NoProfile -Command "${dnsScript.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`);
+        const { stdout: dnsOutput } = await runPowerShell(dnsScript);
         const parsed = JSON.parse(dnsOutput.trim());
         primaryDns = Array.isArray(parsed) ? parsed : [parsed];
       } catch {
@@ -132,7 +133,7 @@ export class WindowsNetwork implements INetwork {
 
           try {
             const script = `Resolve-DnsName -Name ${host} -Type A -ErrorAction Stop | Select-Object -First 1 -Property Name, IPAddress | ConvertTo-Json -Compress`;
-            const { stdout } = await execAsync(`powershell -NoProfile -Command "${script}"`);
+            const { stdout } = await runPowerShell(script);
 
             const result = JSON.parse(stdout.trim());
 
@@ -162,7 +163,7 @@ export class WindowsNetwork implements INetwork {
 
           try {
             const script = `Test-NetConnection -ComputerName ${host} -Port 80 -InformationLevel Quiet`;
-            const { stdout } = await execAsync(`powershell -NoProfile -Command "${script}"`);
+            const { stdout } = await runPowerShell(script);
 
             const success = stdout.trim().toLowerCase() === 'true';
 

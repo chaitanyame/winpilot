@@ -5,6 +5,7 @@ import { CopilotClient, CopilotSession, type SessionEvent, type MCPServerConfig 
 import { desktopCommanderTools } from '../tools';
 import { logger } from '../utils/logger';
 import { getEnabledMcpServers } from '../main/store';
+import { getSkillInstructions } from '../main/skills-registry';
 import { MCPLocalServerConfig, MCPRemoteServerConfig } from '../shared/mcp-types';
 import { setActiveWebContents, getActiveWebContents } from '../main/permission-gate';
 import * as path from 'path';
@@ -93,7 +94,20 @@ export class CopilotController {
   private isComplete = false;
   private isStreaming = false;
   private mcpServersChanged = false;
+  private skillContextChanged = false;
   private isSending = false;
+  private activeSkillContext: { id: string; instructions: string } | null = null;
+  private skillExpiryTimer: NodeJS.Timeout | null = null;
+  private lastSkillActivity = 0;
+  private readonly skillExpiryMs = 5 * 60 * 1000;
+  private readonly skillHysteresisMs = 30 * 1000;
+  private sessionExpiryTimer: NodeJS.Timeout | null = null;
+  private lastSessionActivity = 0;
+  private readonly sessionExpiryMs = 10 * 60 * 1000;
+  private systemPromptCache: { key: string; prompt: string } | null = null;
+  private toolListCache: string | null = null;
+  // Session compaction
+  private compactionSummary: string | null = null;
   // Agentic loop state
   private currentTurnResults: import('../shared/types').ToolExecutionRecord[] = [];
   private currentAssistantResponse = '';
@@ -102,8 +116,14 @@ export class CopilotController {
   private toolExecutionMap = new Map<string, { toolName: string; startTime: number; details?: string }>();
   // Track user message timestamp for action log grouping
   private currentUserMessageTimestamp = 0;
+  // Track whether tools just executed, so we can insert a newline before the next reasoning text
+  private toolsJustExecuted = false;
   // Cleanup interval for stale tool executions
   private cleanupIntervalId: NodeJS.Timeout | null = null;
+  // Cache for formatted tool names to avoid repeated regex ops
+  private toolNameCache = new Map<string, { display: string; description: string }>();
+  // Maximum size for tool execution map to prevent unbounded growth
+  private readonly MAX_TOOL_EXECUTIONS = 100;
 
   constructor() {
     // Check Node.js version for Copilot CLI compatibility
@@ -128,12 +148,40 @@ export class CopilotController {
     const now = Date.now();
     const staleThreshold = 60000; // 60 seconds
 
+    let cleanedCount = 0;
     for (const [id, exec] of this.toolExecutionMap) {
       if (now - exec.startTime > staleThreshold) {
         this.toolExecutionMap.delete(id);
-        logger.copilot(`Cleaned up stale tool execution: ${id} (${exec.toolName})`);
+        cleanedCount++;
       }
     }
+
+    // If map is still too large after cleanup, remove oldest entries
+    if (this.toolExecutionMap.size > this.MAX_TOOL_EXECUTIONS) {
+      const entries = Array.from(this.toolExecutionMap.entries())
+        .sort((a, b) => a[1].startTime - b[1].startTime);
+      const toRemove = entries.slice(0, this.toolExecutionMap.size - this.MAX_TOOL_EXECUTIONS);
+      toRemove.forEach(([id]) => this.toolExecutionMap.delete(id));
+      cleanedCount += toRemove.length;
+    }
+
+    if (cleanedCount > 0) {
+      logger.copilot(`Cleaned up ${cleanedCount} tool executions (current size: ${this.toolExecutionMap.size})`);
+    }
+  }
+
+  /** Get cached formatted tool name to avoid repeated regex operations */
+  private getFormattedToolName(toolName: string): { display: string; description: string } {
+    let cached = this.toolNameCache.get(toolName);
+    if (!cached) {
+      const readable = toolName.replace(/_/g, ' ');
+      cached = {
+        display: readable.replace(/\b\w/g, l => l.toUpperCase()),
+        description: readable,
+      };
+      this.toolNameCache.set(toolName, cached);
+    }
+    return cached;
   }
 
   /**
@@ -150,6 +198,7 @@ export class CopilotController {
   private buildMcpServersConfig(): Record<string, SDKMCPServerConfig> {
     const enabledServers = getEnabledMcpServers();
     const mcpServers: Record<string, SDKMCPServerConfig> = {};
+    const reservedToolNames = new Set(desktopCommanderTools.map(t => t.name));
 
     for (const server of enabledServers) {
       const config = server.config;
@@ -157,6 +206,16 @@ export class CopilotController {
       // SDK requires tools as string[]. The SDK comment says "[] means none, \"*\" means all"
       // So when config.tools is "*" string, convert to ["*"] array
       const toolsArray: string[] = Array.isArray(config.tools) ? config.tools : ['*'];
+
+      if (!toolsArray.includes('*')) {
+        const collisions = toolsArray.filter(name => reservedToolNames.has(name));
+        if (collisions.length > 0) {
+          logger.warn('Copilot', 'MCP tool name collision detected', {
+            serverId: server.id,
+            collisions,
+          });
+        }
+      }
 
       if (config.type === 'local' || config.type === 'stdio') {
         const localConfig = config as MCPLocalServerConfig;
@@ -214,21 +273,127 @@ export class CopilotController {
   }
 
   /**
+   * Set active skill context for JIT prompt injection
+   */
+  setActiveSkill(skillId: string): boolean {
+    const instructions = getSkillInstructions(skillId);
+    if (!instructions) {
+      logger.warn('Skills', 'Failed to load skill instructions', { skillId });
+      return false;
+    }
+    this.activeSkillContext = { id: skillId, instructions };
+    this.skillContextChanged = true;
+    this.touchSkillActivity();
+    logger.copilot('Active skill context set', { skillId });
+    return true;
+  }
+
+  /**
+   * Clear active skill context
+   */
+  clearActiveSkill(): void {
+    if (this.activeSkillContext) {
+      logger.copilot('Clearing active skill context', { skillId: this.activeSkillContext.id });
+      this.activeSkillContext = null;
+      this.skillContextChanged = true;
+      this.clearSkillExpiryTimer();
+    }
+  }
+
+  private touchSkillActivity(): void {
+    this.lastSkillActivity = Date.now();
+    this.scheduleSkillExpiry();
+  }
+
+  private scheduleSkillExpiry(): void {
+    if (this.skillExpiryTimer) {
+      clearTimeout(this.skillExpiryTimer);
+    }
+    const now = Date.now();
+    const expiresAt = this.lastSkillActivity + this.skillExpiryMs;
+    const delay = Math.max(expiresAt - now, 0) + this.skillHysteresisMs;
+    this.skillExpiryTimer = setTimeout(() => {
+      if (!this.activeSkillContext) return;
+      const elapsed = Date.now() - this.lastSkillActivity;
+      if (elapsed >= this.skillExpiryMs) {
+        this.clearActiveSkill();
+      } else {
+        this.scheduleSkillExpiry();
+      }
+    }, delay);
+  }
+
+  private clearSkillExpiryTimer(): void {
+    if (this.skillExpiryTimer) {
+      clearTimeout(this.skillExpiryTimer);
+      this.skillExpiryTimer = null;
+    }
+  }
+
+  private touchSessionActivity(): void {
+    this.lastSessionActivity = Date.now();
+    this.scheduleSessionExpiry();
+  }
+
+  private scheduleSessionExpiry(): void {
+    if (this.sessionExpiryTimer) {
+      clearTimeout(this.sessionExpiryTimer);
+    }
+    const now = Date.now();
+    const expiresAt = this.lastSessionActivity + this.sessionExpiryMs;
+    const delay = Math.max(expiresAt - now, 0);
+    this.sessionExpiryTimer = setTimeout(() => {
+      void this.destroyIdleSession();
+    }, delay);
+  }
+
+  private clearSessionExpiryTimer(): void {
+    if (this.sessionExpiryTimer) {
+      clearTimeout(this.sessionExpiryTimer);
+      this.sessionExpiryTimer = null;
+    }
+  }
+
+  private async destroyIdleSession(): Promise<void> {
+    if (!this.session) return;
+    if (this.isSending) {
+      this.scheduleSessionExpiry();
+      return;
+    }
+    const idleFor = Date.now() - this.lastSessionActivity;
+    if (idleFor < this.sessionExpiryMs) {
+      this.scheduleSessionExpiry();
+      return;
+    }
+    logger.copilot('Session idle timeout, destroying session', { idleMs: idleFor });
+    if (this.unsubscribe) {
+      this.unsubscribe();
+      this.unsubscribe = null;
+    }
+    await this.session.destroy();
+    this.session = null;
+    this.isInitialized = false;
+    this.clearSessionExpiryTimer();
+  }
+
+  /**
    * Initialize the Copilot session with streaming and custom tools
    */
   async initialize(): Promise<void> {
-    if (this.isInitialized && this.session && !this.mcpServersChanged) {
+    if (this.isInitialized && this.session && !this.mcpServersChanged && !this.skillContextChanged) {
       logger.copilot('Already initialized');
       return;
     }
 
-    // If MCP servers changed, destroy existing session first
-    if (this.mcpServersChanged && this.session) {
-      logger.copilot('Reinitializing due to MCP servers change...');
+    // If MCP servers or skill context changed, destroy existing session first
+    if ((this.mcpServersChanged || this.skillContextChanged) && this.session) {
+      logger.copilot('Reinitializing due to MCP servers or skill context change...');
       await this.session.destroy();
       this.session = null;
+      this.clearSessionExpiryTimer();
       this.isInitialized = false;
       this.mcpServersChanged = false;
+      this.skillContextChanged = false;
     }
 
     const toolNames = desktopCommanderTools.map(t => t.name);
@@ -272,10 +437,28 @@ export class CopilotController {
       });
 
       logger.copilot('Session created', { sessionId: this.session.sessionId });
+      this.touchSessionActivity();
+      
+      // Debug: Log available tools
+      if (this.session && 'listTools' in this.session && typeof this.session.listTools === 'function') {
+        try {
+          const availableTools = await (this.session as any).listTools();
+          logger.copilot('Available tools in session:', {
+            count: availableTools.length,
+            tools: availableTools.map((t: any) => t.name || t)
+          });
+        } catch (e) {
+          logger.copilot('Could not list tools:', e);
+        }
+      }
+      
       this.isInitialized = true;
+      this.skillContextChanged = false;
     } catch (error) {
       // Check if error is related to MCP server connection
       const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error('Copilot', 'Session creation failed', error);
+      
       if (errorMessage.includes('MCP') || errorMessage.includes('chrome') || errorMessage.includes('reconnect')) {
         const mcpServerNames = Object.keys(mcpServers).length > 0
           ? Object.keys(mcpServers).join(', ')
@@ -296,7 +479,9 @@ export class CopilotController {
         });
 
         logger.copilot('Session created (without MCP)', { sessionId: this.session.sessionId });
+        this.touchSessionActivity();
         this.isInitialized = true;
+        this.skillContextChanged = false;
       } else {
         logger.error('Copilot', 'Failed to create session', error);
         throw error;
@@ -322,11 +507,32 @@ export class CopilotController {
     // Reset assistant response from previous message to avoid stale reasoning in logs
     this.currentAssistantResponse = '';
     this.currentTurnResults = [];
+    this.toolsJustExecuted = false;
 
     if (!loopConfig.enabled) {
       // If loop disabled, fall back to single-turn
       yield* this.sendMessage(message);
       return;
+    }
+
+    // Check if auto-compact is needed (before sending)
+    if (loopConfig.autoCompactThreshold && loopConfig.autoCompactThreshold > 0) {
+      try {
+        const { getActiveConversationId } = await import('../main/chat-history');
+        const { getMessages } = await import('../main/database');
+        const convId = getActiveConversationId();
+        if (convId) {
+          const msgCount = getMessages(convId).length;
+          if (msgCount >= loopConfig.autoCompactThreshold) {
+            logger.copilot('Auto-compact threshold reached', { msgCount, threshold: loopConfig.autoCompactThreshold });
+            yield { type: 'text' as const, content: '🔄 Auto-compacting long conversation...\n' };
+            await this.compactSession();
+            yield { type: 'text' as const, content: '✅ Context refreshed.\n\n' };
+          }
+        }
+      } catch (e) {
+        logger.copilot('Auto-compact check failed, continuing normally', e);
+      }
     }
 
     logger.copilot('Starting agentic loop', { config: loopConfig });
@@ -465,12 +671,34 @@ export class CopilotController {
       });
 
     } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+
+      // Auto-compact on context overflow
+      if (errorMsg.includes('context_length') ||
+          errorMsg.includes('maximum context') ||
+          errorMsg.includes('token limit') ||
+          errorMsg.includes('too long')) {
+        logger.copilot('Context overflow detected, auto-compacting...');
+        yield { type: 'text' as const, content: '\n\n🔄 Session context full. Compacting...\n' };
+
+        try {
+          await this.compactSession();
+          yield { type: 'text' as const, content: '✅ Session compacted. Retrying your request...\n\n' };
+
+          // Retry the original message in the fresh session
+          yield* this.sendMessage(message);
+          return;
+        } catch {
+          yield { type: 'error' as const, error: 'Failed to compact session. Please start a new conversation.' };
+          return;
+        }
+      }
+
       logger.error('Copilot', 'Error in agentic loop', error);
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       yield {
         type: 'error',
-        error: errorMessage,
-        content: `❌ Error: ${errorMessage}`,
+        error: errorMsg,
+        content: `❌ Error: ${errorMsg}`,
       };
     }
   }
@@ -591,10 +819,14 @@ What should we do next?`;
     }
 
     this.isSending = true;
+    this.touchSessionActivity();
+    if (this.activeSkillContext) {
+      this.touchSkillActivity();
+    }
     
     // Ensure session is initialized
-    if (!this.session) {
-      logger.copilot('No session, initializing...');
+    if (!this.session || this.skillContextChanged) {
+      logger.copilot('No session or skill context changed, initializing...');
       await this.initialize();
     }
 
@@ -674,6 +906,7 @@ What should we do next?`;
    * Handle incoming session events and convert to StreamEvents
    */
   private handleSessionEvent(event: SessionEvent): void {
+    this.touchSessionActivity();
     let streamEvent: StreamEvent | null = null;
 
     switch (event.type) {
@@ -683,14 +916,21 @@ What should we do next?`;
         const deltaData = event.data as MessageDeltaData;
         logger.copilot('Message delta', { content: deltaData.deltaContent?.substring(0, 50) });
 
+        // If tools just executed, prepend a newline so the next reasoning segment starts on its own line
+        let deltaContent = deltaData.deltaContent;
+        if (this.toolsJustExecuted && deltaContent) {
+          deltaContent = '\n' + deltaContent;
+          this.toolsJustExecuted = false;
+        }
+
         // Accumulate assistant response for analysis
-        if (deltaData.deltaContent) {
-          this.currentAssistantResponse += deltaData.deltaContent;
+        if (deltaContent) {
+          this.currentAssistantResponse += deltaContent;
         }
 
         streamEvent = {
           type: 'text',
-          content: deltaData.deltaContent,
+          content: deltaContent,
         };
         break;
       }
@@ -726,18 +966,22 @@ What should we do next?`;
       case 'tool.execution_start': {
         // Tool is being called
         const toolStartData = event.data as ToolExecutionStartData;
-        logger.copilot('Tool execution start', { toolName: toolStartData.toolName, arguments: toolStartData.arguments });
+        logger.copilot('Tool execution start', { toolName: toolStartData.toolName });
 
         const toolArgs = toolStartData.arguments || {};
         const commandDetail = toolStartData.toolName === 'run_shell_command' && typeof toolArgs.command === 'string'
           ? `Command: ${toolArgs.command}`
           : Object.keys(toolArgs).length > 0
-            ? `Args: ${JSON.stringify(toolArgs, null, 2)}`
+            ? `Args: ${JSON.stringify(toolArgs)}`
             : undefined;
         const reasoningDetail = this.currentAssistantResponse?.trim()
           ? `Reasoning: ${this.currentAssistantResponse.trim()}`
           : undefined;
         const details = [commandDetail, reasoningDetail].filter(Boolean).join('\n\n') || undefined;
+
+        // Reset assistant response after capturing reasoning for this tool
+        // so the next tool doesn't get stale/accumulated reasoning text
+        this.currentAssistantResponse = '';
 
         if (toolStartData.toolCallId) {
           this.toolExecutionMap.set(toolStartData.toolCallId, {
@@ -750,12 +994,13 @@ What should we do next?`;
         // Emit action log event
         const webContents = getActiveWebContents();
         if (webContents) {
+          const { display, description } = this.getFormattedToolName(toolStartData.toolName);
           webContents.send('copilot:actionLog', {
             id: `log-${toolStartData.toolCallId}`,
             timestamp: new Date().toLocaleTimeString('en-US', { hour12: false }),
             createdAt: this.currentUserMessageTimestamp,
-            tool: toolStartData.toolName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
-            description: `Executing ${toolStartData.toolName.replace(/_/g, ' ')}...`,
+            tool: display,
+            description: `Executing ${description}...`,
             status: 'pending' as const,
             details,
           });
@@ -771,7 +1016,8 @@ What should we do next?`;
       }
 
       case 'tool.execution_complete': {
-        // Tool execution completed
+        // Tool execution completed - flag so next reasoning text starts on a new line
+        this.toolsJustExecuted = true;
         const toolCompleteData = event.data as ToolExecutionCompleteData;
         logger.copilot('Tool execution complete', { success: toolCompleteData.success, result: toolCompleteData.result, error: toolCompleteData.error });
 
@@ -794,12 +1040,13 @@ What should we do next?`;
         // Emit action log event for completion
         const webContents = getActiveWebContents();
         if (webContents) {
+          const { display, description } = this.getFormattedToolName(toolName);
           webContents.send('copilot:actionLog', {
             id: `log-${toolCompleteData.toolCallId}`,
             timestamp: new Date().toLocaleTimeString('en-US', { hour12: false }),
             createdAt: this.currentUserMessageTimestamp,
-            tool: toolName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
-            description: `Completed ${toolName.replace(/_/g, ' ')}`,
+            tool: display,
+            description: `Completed ${description}`,
             status: toolCompleteData.success ? ('success' as const) : ('error' as const),
             error: toolCompleteData.error?.message,
             duration,
@@ -853,6 +1100,72 @@ What should we do next?`;
   }
 
   /**
+   * Compact the current session by summarizing history and starting fresh.
+   */
+  async compactSession(): Promise<string> {
+    if (!this.session) {
+      throw new Error('No active session to compact');
+    }
+
+    logger.copilot('Compacting session...');
+
+    // Get recent messages for context
+    let contextMessages: Array<{ role: string; content: string }> = [];
+    try {
+      const { getActiveConversationId } = await import('../main/chat-history');
+      const { getMessages } = await import('../main/database');
+      const convId = getActiveConversationId();
+
+      if (convId) {
+        const msgs = getMessages(convId);
+        const recentMsgs = msgs.slice(-20);
+        contextMessages = recentMsgs.map(m => ({ role: m.role, content: m.content }));
+      }
+    } catch {
+      // Chat history may not be available
+    }
+
+    // Build compaction prompt
+    const compactionPrompt = `Please provide a concise summary of our conversation so far. Include:
+- Key topics discussed
+- Decisions made
+- Important context or preferences mentioned
+- Any pending tasks or follow-ups
+
+Conversation to summarize:
+${contextMessages.map(m => `${m.role}: ${m.content.substring(0, 500)}`).join('\n')}
+
+Provide ONLY the summary, no preamble.`;
+
+    // Get summary from current session
+    let summary = '';
+    try {
+      const response = await this.session.sendAndWait({ prompt: compactionPrompt });
+      summary = typeof response === 'string' ? response :
+                (response as { content?: string })?.content || 'Previous conversation context unavailable.';
+    } catch {
+      summary = contextMessages
+        .filter(m => m.role === 'user')
+        .map(m => m.content.substring(0, 200))
+        .join('; ');
+      summary = `Previous topics: ${summary}`;
+    }
+
+    // Destroy old session
+    await this.session.destroy();
+    this.session = null;
+    this.isInitialized = false;
+
+    // Reinitialize with summary context
+    this.compactionSummary = summary;
+    await this.initialize();
+    this.compactionSummary = null;
+
+    logger.copilot('Session compacted', { summaryLength: summary.length });
+    return summary;
+  }
+
+  /**
    * Cancel the current streaming operation
    */
   async cancel(): Promise<void> {
@@ -873,6 +1186,7 @@ What should we do next?`;
       await this.session.destroy();
       this.session = null;
       this.isInitialized = false;
+      this.clearSessionExpiryTimer();
     }
     // Next sendMessage call will reinitialize
   }
@@ -881,19 +1195,29 @@ What should we do next?`;
    * Get the system prompt for Desktop Commander
    */
   private getSystemPrompt(): string {
+    const key = this.getSystemPromptKey();
+    if (this.systemPromptCache?.key === key) {
+      return this.systemPromptCache.prompt;
+    }
     // Build tool list from registered tools
-    const toolList = desktopCommanderTools.map(t => {
+    const toolList = this.toolListCache ?? desktopCommanderTools.map(t => {
       const desc = (t as any).description || '';
       return `- ${t.name}: ${desc}`;
     }).join('\n');
+    this.toolListCache = toolList;
 
-    return `You are Desktop Commander, an AI assistant that helps users control their desktop through natural language commands.
+    const skillSection = this.activeSkillContext
+      ? `\n## Active Skill: ${this.activeSkillContext.id}\n\n${this.activeSkillContext.instructions}\n`
+      : '';
+
+    const prompt = `You are Desktop Commander, an AI assistant that helps users control their desktop through natural language commands.
 
 ## Available Tools
 
 You MUST use these exact tool names when calling tools:
 
 ${toolList}
+${skillSection}
 
 ## Web Access
 
@@ -977,7 +1301,17 @@ When user describes a problem (e.g., "WiFi disconnects", "computer is slow"):
 6. Execute only approved fixes, requesting permission for each sensitive operation
 7. Verify if issue is resolved, iterate if needed
 
-Always explain findings in plain language. Never execute risky fixes without explicit approval.`;
+Always explain findings in plain language. Never execute risky fixes without explicit approval.${this.compactionSummary ? `\n\n## Previous Conversation Context\n${this.compactionSummary}` : ''}`;
+    this.systemPromptCache = { key, prompt };
+    return prompt;
+  }
+
+  private getSystemPromptKey(): string {
+    const skillKey = this.activeSkillContext
+      ? `${this.activeSkillContext.id}:${this.activeSkillContext.instructions}`
+      : 'none';
+    const summaryKey = this.compactionSummary || '';
+    return `${skillKey}::${summaryKey}`;
   }
 
   /**
@@ -988,6 +1322,8 @@ Always explain findings in plain language. Never execute risky fixes without exp
       clearInterval(this.cleanupIntervalId);
       this.cleanupIntervalId = null;
     }
+    this.clearSkillExpiryTimer();
+    this.clearSessionExpiryTimer();
     if (this.unsubscribe) {
       this.unsubscribe();
       this.unsubscribe = null;
@@ -998,7 +1334,12 @@ Always explain findings in plain language. Never execute risky fixes without exp
     }
     await this.client.stop();
     this.toolExecutionMap.clear();
+    this.toolNameCache.clear();
+    this.currentTurnResults = [];
+    this.currentAssistantResponse = '';
+    this.eventQueue = [];
     this.isInitialized = false;
+    logger.copilot('CopilotController destroyed and cleaned up');
   }
 }
 

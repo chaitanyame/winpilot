@@ -74,6 +74,45 @@ const COMPREHENSIVE_TOOLS = [
       'can you close notepad', 'close the current window',
     ]
   },
+  {
+    name: 'window_hide_from_sharing',
+    examples: [
+      'hide this window from screen sharing', 'hide slack from screen share',
+      'exclude chrome from sharing', 'make this window invisible on zoom',
+      'hide browser from screen capture', 'hide this window on teams',
+      'don\'t show this window in screen share', 'block this window from recording',
+      'keep this window private in obs', 'hide this from zoom',
+      'exclude this window from capture', 'make this window invisible in meeting',
+    ]
+  },
+  {
+    name: 'window_show_in_sharing',
+    examples: [
+      'show this window in screen sharing', 'unhide slack from screen share',
+      'make chrome visible in sharing', 'show browser in screen capture',
+      'stop hiding this window', 'unhide this window on zoom',
+      'allow this window in screen share', 'show it again in meeting',
+      'include this window in capture', 'make this window visible to viewers',
+    ]
+  },
+  {
+    name: 'window_list_hidden',
+    examples: [
+      'list hidden windows', 'what windows are hidden',
+      'show hidden windows', 'which windows are excluded from sharing',
+      'what is hidden from screen share', 'list windows excluded from capture',
+      'are any windows hidden', 'show me hidden apps',
+    ]
+  },
+  {
+    name: 'window_hide_all_sensitive',
+    examples: [
+      'hide all sensitive windows', 'hide slack and chrome from sharing',
+      'hide messaging apps from screen share', 'hide email and browser windows',
+      'hide chat apps from screen sharing', 'hide all private windows',
+      'exclude slack and outlook from capture', 'hide work chat from zoom',
+    ]
+  },
 
   {
     name: 'system_info',

@@ -1,11 +1,8 @@
 // Windows Services Implementation
 
-import { exec } from 'child_process';
-import { promisify } from 'util';
 import { IServices } from '../index';
 import type { ServiceInfo } from '../../shared/types';
-
-const execAsync = promisify(exec);
+import { runPowerShell } from './powershell-pool';
 
 export class WindowsServices implements IServices {
 
@@ -38,7 +35,7 @@ export class WindowsServices implements IServices {
         } | ConvertTo-Json -Compress
       `;
 
-      const { stdout } = await execAsync(`powershell -NoProfile -Command "${script.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`);
+      const { stdout } = await runPowerShell(script);
 
       let services = [];
       try {
@@ -82,7 +79,7 @@ export class WindowsServices implements IServices {
           throw new Error(`Unknown action: ${params.action}`);
       }
 
-      const { stdout } = await execAsync(`powershell -NoProfile -Command "${script}"`);
+      const { stdout } = await runPowerShell(script);
 
       // PowerShell returns "True" if successful
       return stdout.trim().toLowerCase() === 'true';

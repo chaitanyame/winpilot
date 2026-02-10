@@ -7,12 +7,13 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 // Plugin to handle native modules correctly in Electron
 function nativeModules() {
+  const externalModules = ['better-sqlite3'];
   return {
     name: 'native-modules',
     resolveId(id: string) {
-      if (id === 'better-sqlite3') {
+      if (externalModules.includes(id)) {
         return {
-          id: 'better-sqlite3',
+          id,
           external: true,
         };
       }

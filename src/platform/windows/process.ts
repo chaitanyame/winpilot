@@ -1,11 +1,8 @@
 // Windows Process Management Implementation
 
-import { exec } from 'child_process';
-import { promisify } from 'util';
 import { IProcess } from '../index';
 import { ProcessInfo } from '../../shared/types';
-
-const execAsync = promisify(exec);
+import { runPowerShell } from './powershell-pool';
 
 export class WindowsProcess implements IProcess {
 
@@ -14,22 +11,20 @@ export class WindowsProcess implements IProcess {
       const sortBy = params?.sortBy || 'memory';
       const limit = params?.limit || 50;
 
-      const sortProperty = sortBy === 'cpu' ? 'CPU' : sortBy === 'memory' ? 'WorkingSet64' : 'ProcessName';
+      const sortProperty = sortBy === 'cpu' ? 'CPU' : sortBy === 'memory' ? 'WS' : 'ProcessName';
       
-      // Use semicolons in hashtable for single-line compatibility
+      // Optimized: Limit to 200 initially (faster), use WS alias, 60s timeout for heavy systems
       const script = `
-        Get-Process | 
-        Select-Object -Property Id, ProcessName, CPU, WorkingSet64, Responding |
+        Get-Process -ErrorAction SilentlyContinue | 
+        Select-Object -First 200 -Property Id, ProcessName, CPU, WS |
         Sort-Object -Property ${sortProperty} -Descending |
         Select-Object -First ${limit} |
         ForEach-Object {
-          @{ pid = $_.Id; name = $_.ProcessName; cpu = [math]::Round($_.CPU, 2); memory = [math]::Round($_.WorkingSet64 / 1MB, 2); status = if($_.Responding) { "running" } else { "stopped" } }
+          @{ pid = $_.Id; name = $_.ProcessName; cpu = if($_.CPU){[math]::Round($_.CPU, 2)}else{0}; memory = [math]::Round($_.WS / 1MB, 2); status = "running" }
         } | ConvertTo-Json -Compress
       `;
 
-      const { stdout } = await execAsync(`powershell -NoProfile -Command "${script.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`, {
-        maxBuffer: 10 * 1024 * 1024,
-      });
+      const { stdout } = await runPowerShell(script, { timeout: 60000 });
 
       if (!stdout.trim()) return [];
 
@@ -71,7 +66,7 @@ export class WindowsProcess implements IProcess {
         return null;
       }
 
-      const { stdout } = await execAsync(`powershell -NoProfile -Command "${script.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`);
+      const { stdout } = await runPowerShell(script, { timeout: 15000 });
       
       if (!stdout.trim()) return null;
 
@@ -94,9 +89,9 @@ export class WindowsProcess implements IProcess {
       const forceFlag = params.force ? '-Force' : '';
 
       if (params.pid) {
-        await execAsync(`powershell -NoProfile -Command "Stop-Process -Id ${params.pid} ${forceFlag} -ErrorAction SilentlyContinue"`);
+        await runPowerShell(`Stop-Process -Id ${params.pid} ${forceFlag} -ErrorAction SilentlyContinue`);
       } else if (params.name) {
-        await execAsync(`powershell -NoProfile -Command "Stop-Process -Name '${params.name}' ${forceFlag} -ErrorAction SilentlyContinue"`);
+        await runPowerShell(`Stop-Process -Name '${params.name}' ${forceFlag} -ErrorAction SilentlyContinue`);
       } else {
         return false;
       }
@@ -113,18 +108,18 @@ export class WindowsProcess implements IProcess {
       const limit = params.limit || 10;
       const sortProperty = params.resource === 'cpu' ? 'CPU' : 'WorkingSet64';
 
-      // Use semicolons in hashtable for single-line compatibility
+      // Optimized: limit initial buffer, 45s timeout
       const script = `
-        Get-Process | 
+        Get-Process -ErrorAction SilentlyContinue | 
         Where-Object { $_.${sortProperty} -gt 0 } |
         Sort-Object -Property ${sortProperty} -Descending |
         Select-Object -First ${limit} |
         ForEach-Object {
-          @{ pid = $_.Id; name = $_.ProcessName; cpu = [math]::Round($_.CPU, 2); memory = [math]::Round($_.WorkingSet64 / 1MB, 2); status = if($_.Responding) { "running" } else { "stopped" } }
+          @{ pid = $_.Id; name = $_.ProcessName; cpu = [math]::Round($_.CPU, 2); memory = [math]::Round($_.WorkingSet64 / 1MB, 2); status = "running" }
         } | ConvertTo-Json -Compress
       `;
 
-      const { stdout } = await execAsync(`powershell -NoProfile -Command "${script.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`);
+      const { stdout } = await runPowerShell(script, { timeout: 45000 });
 
       if (!stdout.trim()) return [];
 

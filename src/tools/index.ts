@@ -6,6 +6,8 @@ import { getUnifiedAdapter } from '../platform/unified-adapter';
 import { logger } from '../utils/logger';
 import { p } from '../utils/zod-wrapper';
 import { requestPermissionForTool } from '../main/permission-gate';
+import { findInstalledAppByName } from '../main/app-indexer';
+import { showNotification } from '../main/notifications';
 import {
   timerManager,
   createTimer,
@@ -21,8 +23,41 @@ import {
 import {
   reminderManager
 } from '../main/reminders';
+import { screenSharePrivacyService } from '../main/screen-share-privacy';
+import {
+  RecordingType,
+  AudioSource
+} from '../shared/types';
+import type { RecordingOptions } from '../main/recording-manager';
+import { createNote, getNote, listNotes, updateNote, deleteNote, deleteAllNotes, searchNotes } from '../main/notes';
+import { createTodo, listTodos, completeTodo, deleteTodo } from '../main/todos';
+import { fetchUrl } from '../main/url-fetch';
+import { speak, stopSpeaking, listVoices, type TTSOptions } from '../platform/windows/tts';
+import { fetchWeather } from '../main/weather';
+import { convertUnit } from '../main/unit-converter';
+import { getMediaStatus } from '../platform/windows/media-status';
+import { showOSD } from '../main/osd-window';
+import { getSkillIndex, refreshSkillIndex } from '../main/skills-registry';
 
 const adapter = getUnifiedAdapter();
+
+// Lazy-loaded heavy modules (deferred until first use)
+let _invisiwind: any = null;
+function getInvisiwind() {
+  if (!_invisiwind) {
+    const { InvisiwindWrapper } = require('../platform/windows/invisiwind');
+    _invisiwind = new InvisiwindWrapper();
+  }
+  return _invisiwind;
+}
+
+let _recordingManager: any = null;
+function getRecordingManager() {
+  if (!_recordingManager) {
+    _recordingManager = require('../main/recording-manager').recordingManager;
+  }
+  return _recordingManager;
+}
 
 // Helper function to parse time strings like "3pm", "15:30", "2:30pm"
 function parseTimeString(timeStr: string, dateStr?: string): Date {
@@ -116,7 +151,8 @@ export const windowListTool = defineTool('window_list', {
         bounds: w.bounds,
         isMinimized: w.isMinimized,
         isMaximized: w.isMaximized,
-        isFocused: w.isFocused
+        isFocused: w.isFocused,
+        isHiddenFromCapture: w.isHiddenFromCapture
       }))
     });
   }
@@ -254,6 +290,191 @@ export const windowArrangeTool = defineTool('window_arrange', {
   }
 });
 
+// ============================================================================
+// Screen Share Privacy Tools
+// ============================================================================
+
+export const windowHideFromSharingTool = defineTool('window_hide_from_sharing', {
+  description: 'Hide a window from screen sharing/capture while keeping it visible to you',
+  parameters: p({
+    windowId: z.string().optional().describe('The window ID to hide'),
+    appName: z.string().optional().describe('The application name to hide'),
+    titleContains: z.string().optional().describe('Part of the window title to match')
+  }),
+  handler: async ({ windowId, appName, titleContains }) => {
+    const decision = await requestPermissionForTool('window_hide_from_sharing', { windowId, appName, titleContains }, [
+      windowId ? `windowId: ${windowId}` : undefined,
+      appName ? `appName: ${appName}` : undefined,
+      titleContains ? `titleContains: ${titleContains}` : undefined,
+    ].filter(Boolean) as string[]);
+    if (!decision.allowed) {
+      return 'Cancelled: permission denied.';
+    }
+
+    const listResult = await adapter.listWindows();
+    if (!listResult.success || !listResult.data) {
+      return `Failed to list windows: ${listResult.error}`;
+    }
+
+    const target = listResult.data.find(w => {
+      if (windowId && w.id === windowId) return true;
+      if (appName && w.app.toLowerCase().includes(appName.toLowerCase())) return true;
+      if (titleContains && w.title.toLowerCase().includes(titleContains.toLowerCase())) return true;
+      return false;
+    });
+
+    if (!target) {
+      return 'Could not find a matching window. Please provide windowId, appName, or titleContains.';
+    }
+
+    const availability = getInvisiwind().isAvailable();
+    if (!availability.available) {
+      return `Invisiwind binaries are missing: ${availability.missing.join(', ')}`;
+    }
+
+    const result = await getInvisiwind().hideWindowsByPid(target.processId);
+    if (!result.success) {
+      return `Failed to hide window: ${result.error}`;
+    }
+
+    screenSharePrivacyService.addHiddenWindow({
+      hwnd: target.id,
+      pid: target.processId,
+      title: target.title,
+      appName: target.app,
+      hiddenAt: Date.now(),
+    });
+
+    return `Hidden "${target.title}" from screen sharing.`;
+  }
+});
+
+export const windowShowInSharingTool = defineTool('window_show_in_sharing', {
+  description: 'Show a previously hidden window in screen sharing/capture again',
+  parameters: p({
+    windowId: z.string().optional().describe('The window ID to show'),
+    appName: z.string().optional().describe('The application name to show'),
+    all: z.boolean().optional().describe('Show all hidden windows')
+  }),
+  handler: async ({ windowId, appName, all }) => {
+    const decision = await requestPermissionForTool('window_show_in_sharing', { windowId, appName, all }, [
+      windowId ? `windowId: ${windowId}` : undefined,
+      appName ? `appName: ${appName}` : undefined,
+      all ? 'all: true' : undefined,
+    ].filter(Boolean) as string[]);
+    if (!decision.allowed) {
+      return 'Cancelled: permission denied.';
+    }
+
+    const availability = getInvisiwind().isAvailable();
+    if (!availability.available) {
+      return `Invisiwind binaries are missing: ${availability.missing.join(', ')}`;
+    }
+
+    if (all) {
+      const hidden = screenSharePrivacyService.listHiddenWindows();
+      for (const entry of hidden) {
+        await getInvisiwind().unhideWindowsByPid(entry.pid);
+      }
+      screenSharePrivacyService.clear();
+      return 'All hidden windows are now visible in screen sharing.';
+    }
+
+    const listResult = await adapter.listWindows();
+    if (!listResult.success || !listResult.data) {
+      return `Failed to list windows: ${listResult.error}`;
+    }
+
+    const target = listResult.data.find(w => {
+      if (windowId && w.id === windowId) return true;
+      if (appName && w.app.toLowerCase().includes(appName.toLowerCase())) return true;
+      return false;
+    });
+
+    if (!target) {
+      return 'Could not find a matching window. Please provide windowId or appName.';
+    }
+
+    const result = await getInvisiwind().unhideWindowsByPid(target.processId);
+    if (!result.success) {
+      return `Failed to show window: ${result.error}`;
+    }
+
+    screenSharePrivacyService.removeHiddenWindowsByPid(target.processId);
+    return `Window "${target.title}" is now visible in screen sharing.`;
+  }
+});
+
+export const windowListHiddenTool = defineTool('window_list_hidden', {
+  description: 'List windows currently hidden from screen sharing/capture',
+  parameters: p({}),
+  handler: async () => {
+    const hidden = screenSharePrivacyService.listHiddenWindows();
+    if (hidden.length === 0) {
+      return 'No windows are hidden from screen sharing.';
+    }
+    return JSON.stringify({
+      count: hidden.length,
+      windows: hidden.map(entry => ({
+        hwnd: entry.hwnd,
+        pid: entry.pid,
+        title: entry.title,
+        appName: entry.appName,
+        hiddenAt: entry.hiddenAt,
+      })),
+    });
+  }
+});
+
+export const windowHideAllSensitiveTool = defineTool('window_hide_all_sensitive', {
+  description: 'Hide multiple windows from screen sharing at once by app name',
+  parameters: p({
+    apps: z.array(z.string()).describe('Application names to hide (e.g., "slack", "chrome")')
+  }),
+  handler: async ({ apps }) => {
+    const decision = await requestPermissionForTool('window_hide_all_sensitive', { apps }, [
+      `apps: ${apps.join(', ')}`
+    ]);
+    if (!decision.allowed) {
+      return 'Cancelled: permission denied.';
+    }
+
+    const availability = getInvisiwind().isAvailable();
+    if (!availability.available) {
+      return `Invisiwind binaries are missing: ${availability.missing.join(', ')}`;
+    }
+
+    const listResult = await adapter.listWindows();
+    if (!listResult.success || !listResult.data) {
+      return `Failed to list windows: ${listResult.error}`;
+    }
+
+    const lowerApps = apps.map(app => app.toLowerCase());
+    const targets = listResult.data.filter(w => lowerApps.some(app => w.app.toLowerCase().includes(app)));
+
+    if (targets.length === 0) {
+      return 'No matching windows found to hide.';
+    }
+
+    const handledPids = new Set<number>();
+    for (const target of targets) {
+      if (handledPids.has(target.processId)) continue;
+      const result = await getInvisiwind().hideWindowsByPid(target.processId);
+      if (result.success) {
+        handledPids.add(target.processId);
+        screenSharePrivacyService.addHiddenWindow({
+          hwnd: target.id,
+          pid: target.processId,
+          title: target.title,
+          appName: target.app,
+          hiddenAt: Date.now(),
+        });
+      }
+    }
+
+    return `Hidden ${handledPids.size} app(s) from screen sharing.`;
+  }
+});
 // ============================================================================
 // File System Tools
 // ============================================================================
@@ -506,6 +727,17 @@ export const appsLaunchTool = defineTool('apps_launch', {
   }),
   handler: async ({ name, path, args }) => {
     logger.tool('apps_launch called', { name, path, args });
+    if (name && !path) {
+      const match = findInstalledAppByName(name);
+      if (!match) {
+        showNotification({
+          title: 'App not installed',
+          message: `"${name}" is not installed on this device.`,
+          type: 'error',
+        });
+        return `"${name}" is not installed on this device.`;
+      }
+    }
     const result = await adapter.launchApp({ name, path, args });
     logger.tool('apps_launch result', result);
     return result.success
@@ -552,16 +784,46 @@ export const appsSwitchTool = defineTool('apps_switch', {
 export const systemVolumeTool = defineTool('system_volume', {
   description: 'Get or set the system volume',
   parameters: p({
-    action: z.enum(['get', 'set', 'mute', 'unmute']).describe('Action to perform'),
-    level: z.number().min(0).max(100).optional().describe('Volume level (0-100)')
+    action: z.enum(['get', 'set', 'increase', 'decrease', 'mute', 'unmute']).describe('Action to perform'),
+    level: z.number().min(0).max(100).optional().describe('Volume level (0-100) for set, or delta for increase/decrease')
   }),
   handler: async ({ action, level }) => {
+    // Handle relative changes (increase/decrease)
+    if (action === 'increase' || action === 'decrease') {
+      const currentResult = await adapter.controlVolume({ action: 'get' });
+      if (!currentResult.success || currentResult.data?.level === undefined) {
+        return `Failed to get current volume: ${currentResult.error}`;
+      }
+      
+      const delta = level ?? 10; // Default: 10% change
+      const newLevel = action === 'increase' 
+        ? Math.min(100, currentResult.data.level + delta)
+        : Math.max(0, currentResult.data.level - delta);
+      
+      const result = await adapter.controlVolume({ action: 'set', level: newLevel });
+      if (!result.success) {
+        return `Failed to ${action} volume: ${result.error}`;
+      }
+      
+      showOSD({ type: 'volume', value: newLevel });
+      return `Volume ${action}d to ${newLevel}% (was ${currentResult.data.level}%)`;
+    }
+    
+    // Handle absolute operations (get/set/mute/unmute)
     const result = await adapter.controlVolume({ action, level });
     if (!result.success) {
       return `Failed to control volume: ${result.error}`;
     }
     if (action === 'get') {
       return `Current volume: ${result.data?.level}%`;
+    }
+    // Show OSD feedback
+    if (action === 'set' && level !== undefined) {
+      showOSD({ type: 'volume', value: level });
+    } else if (action === 'mute') {
+      showOSD({ type: 'mute', value: 1 });
+    } else if (action === 'unmute') {
+      showOSD({ type: 'mute', value: 0 });
     }
     return `Volume ${action === 'set' ? `set to ${level}%` : action === 'mute' ? 'muted' : 'unmuted'}`;
   }
@@ -580,6 +842,10 @@ export const systemBrightnessTool = defineTool('system_brightness', {
     }
     if (action === 'get') {
       return `Current brightness: ${result.data?.level}%`;
+    }
+    // Show OSD feedback
+    if (action === 'set' && level !== undefined) {
+      showOSD({ type: 'brightness', value: level });
     }
     return `Brightness set to ${level}%`;
   }
@@ -787,6 +1053,94 @@ export const clipboardClearTool = defineTool('clipboard_clear', {
     return result.success
       ? 'Clipboard cleared'
       : `Failed to clear clipboard: ${result.error}`;
+  }
+});
+
+// ============================================================================
+// Clipboard History Tools
+// ============================================================================
+
+export const clipboardHistoryTool = defineTool('clipboard_history', {
+  description: 'Get clipboard history with optional search query. Shows previously copied text items.',
+  parameters: p({
+    query: z.string().optional().describe('Search query to filter clipboard history'),
+    limit: z.number().optional().describe('Maximum number of results to return (default 10)'),
+  }),
+  handler: async ({ query, limit = 10 }) => {
+    const { clipboardMonitor } = await import('../main/clipboard-monitor');
+    const results = query
+      ? clipboardMonitor.searchHistory(query)
+      : clipboardMonitor.getHistory();
+
+    const limited = results.slice(0, limit);
+
+    if (limited.length === 0) {
+      return query
+        ? `No clipboard entries found matching "${query}"`
+        : 'Clipboard history is empty';
+    }
+
+    const formatted = limited.map((entry, i) => {
+      const time = new Date(entry.timestamp).toLocaleString();
+      const pinned = entry.pinned ? ' [pinned]' : '';
+      let preview: string;
+      switch (entry.type) {
+        case 'text':
+          preview = entry.content.length > 100
+            ? entry.content.slice(0, 100) + '...'
+            : entry.content;
+          break;
+        case 'image':
+          preview = `[Image ${entry.width}x${entry.height} ${entry.format.toUpperCase()}]`;
+          break;
+        case 'files':
+          preview = `[${entry.files.length} file(s): ${entry.files.slice(0, 3).map(f => f.name).join(', ')}${entry.files.length > 3 ? '...' : ''}]`;
+          break;
+        default:
+          preview = '[Unknown type]';
+      }
+      return `${i + 1}. [${time}]${pinned}\n${preview}\n`;
+    }).join('\n');
+
+    return `Clipboard History (${limited.length} items):\n\n${formatted}`;
+  }
+});
+
+export const clipboardRestoreTool = defineTool('clipboard_restore', {
+  description: 'Restore a clipboard entry by searching for content. Finds the most recent match and puts it back in the clipboard.',
+  parameters: p({
+    query: z.string().describe('Search for clipboard entry containing this text'),
+  }),
+  handler: async ({ query }) => {
+    const { clipboardMonitor } = await import('../main/clipboard-monitor');
+    const results = clipboardMonitor.searchHistory(query);
+
+    if (results.length === 0) {
+      return `No clipboard entry found containing "${query}"`;
+    }
+
+    // Restore the most recent match
+    const entry = results[0];
+    clipboardMonitor.restoreToClipboard(entry.id);
+
+    let preview: string;
+    switch (entry.type) {
+      case 'text':
+        preview = entry.content.length > 100
+          ? entry.content.slice(0, 100) + '...'
+          : entry.content;
+        break;
+      case 'image':
+        preview = `[Image ${entry.width}x${entry.height} ${entry.format.toUpperCase()}]`;
+        break;
+      case 'files':
+        preview = `[${entry.files.length} file(s): ${entry.files.map(f => f.name).join(', ')}]`;
+        break;
+      default:
+        preview = '[Unknown type]';
+    }
+
+    return `Restored to clipboard:\n${preview}`;
   }
 });
 
@@ -1901,8 +2255,789 @@ export const shellTool = defineTool('run_shell_command', {
 });
 
 // ============================================================================
+// Media Control Tools
+// ============================================================================
+
+export const mediaPlayTool = defineTool('media_play', {
+  description: 'Play or resume media playback (works with Spotify, VLC, YouTube, etc.)',
+  parameters: p({}),
+  handler: async () => {
+    const result = await adapter.mediaPlay();
+    return result.success
+      ? 'Media playback started'
+      : `Failed to play media: ${result.error}`;
+  }
+});
+
+export const mediaPauseTool = defineTool('media_pause', {
+  description: 'Pause media playback',
+  parameters: p({}),
+  handler: async () => {
+    const result = await adapter.mediaPause();
+    return result.success
+      ? 'Media paused'
+      : `Failed to pause media: ${result.error}`;
+  }
+});
+
+export const mediaPlayPauseTool = defineTool('media_play_pause', {
+  description: 'Toggle play/pause for media playback',
+  parameters: p({}),
+  handler: async () => {
+    const result = await adapter.mediaPlayPause();
+    return result.success
+      ? 'Media play/pause toggled'
+      : `Failed to toggle play/pause: ${result.error}`;
+  }
+});
+
+export const mediaNextTool = defineTool('media_next', {
+  description: 'Skip to the next track',
+  parameters: p({}),
+  handler: async () => {
+    const result = await adapter.mediaNext();
+    return result.success
+      ? 'Skipped to next track'
+      : `Failed to skip track: ${result.error}`;
+  }
+});
+
+export const mediaPreviousTool = defineTool('media_previous', {
+  description: 'Go back to the previous track',
+  parameters: p({}),
+  handler: async () => {
+    const result = await adapter.mediaPrevious();
+    return result.success
+      ? 'Went to previous track'
+      : `Failed to go to previous track: ${result.error}`;
+  }
+});
+
+export const mediaStopTool = defineTool('media_stop', {
+  description: 'Stop media playback completely',
+  parameters: p({}),
+  handler: async () => {
+    const result = await adapter.mediaStop();
+    return result.success
+      ? 'Media stopped'
+      : `Failed to stop media: ${result.error}`;
+  }
+});
+
+// ============================================================================
+// Browser Automation Tools
+// ============================================================================
+
+export const browserOpenTool = defineTool('browser_open', {
+  description: 'Open a URL in the default web browser',
+  parameters: p({
+    url: z.string().describe('The URL to open (e.g., "google.com", "https://github.com")'),
+    browser: z.string().optional().describe('Specific browser to use (chrome, firefox, edge, brave)')
+  }),
+  handler: async ({ url, browser }) => {
+    const result = await adapter.browserOpenUrl({ url, browser });
+    return result.success
+      ? `Opened ${url} in ${browser || 'default'} browser`
+      : `Failed to open URL: ${result.error}`;
+  }
+});
+
+export const browserSearchTool = defineTool('browser_search', {
+  description: 'Search the web using a search engine',
+  parameters: p({
+    query: z.string().describe('The search query'),
+    engine: z.enum(['google', 'bing', 'duckduckgo', 'youtube', 'github']).optional().describe('Search engine to use (default: google)')
+  }),
+  handler: async ({ query, engine }) => {
+    const result = await adapter.browserSearch({ query, engine });
+    return result.success
+      ? `Searching for "${query}" on ${engine || 'google'}`
+      : `Failed to search: ${result.error}`;
+  }
+});
+
+export const browserNewTabTool = defineTool('browser_new_tab', {
+  description: 'Open a new browser tab, optionally with a URL',
+  parameters: p({
+    url: z.string().optional().describe('URL to open in the new tab')
+  }),
+  handler: async ({ url }) => {
+    const result = await adapter.browserNewTab({ url });
+    return result.success
+      ? url ? `Opened new tab with ${url}` : 'Opened new tab'
+      : `Failed to open new tab: ${result.error}`;
+  }
+});
+
+export const browserCloseTabTool = defineTool('browser_close_tab', {
+  description: 'Close the current browser tab',
+  parameters: p({}),
+  handler: async () => {
+    const result = await adapter.browserCloseTab();
+    return result.success
+      ? 'Closed current tab'
+      : `Failed to close tab: ${result.error}`;
+  }
+});
+
+export const browserNextTabTool = defineTool('browser_next_tab', {
+  description: 'Switch to the next browser tab',
+  parameters: p({}),
+  handler: async () => {
+    const result = await adapter.browserNextTab();
+    return result.success
+      ? 'Switched to next tab'
+      : `Failed to switch tab: ${result.error}`;
+  }
+});
+
+export const browserPrevTabTool = defineTool('browser_prev_tab', {
+  description: 'Switch to the previous browser tab',
+  parameters: p({}),
+  handler: async () => {
+    const result = await adapter.browserPreviousTab();
+    return result.success
+      ? 'Switched to previous tab'
+      : `Failed to switch tab: ${result.error}`;
+  }
+});
+
+export const browserRefreshTool = defineTool('browser_refresh', {
+  description: 'Refresh the current browser page',
+  parameters: p({}),
+  handler: async () => {
+    const result = await adapter.browserRefresh();
+    return result.success
+      ? 'Refreshed page'
+      : `Failed to refresh: ${result.error}`;
+  }
+});
+
+export const browserBookmarkTool = defineTool('browser_bookmark', {
+  description: 'Bookmark the current page in the browser',
+  parameters: p({}),
+  handler: async () => {
+    const result = await adapter.browserBookmark();
+    return result.success
+      ? 'Bookmarked current page'
+      : `Failed to bookmark: ${result.error}`;
+  }
+});
+
+// ============================================================================
+// Email Tools
+// ============================================================================
+
+export const emailComposeTool = defineTool('email_compose', {
+  description: 'Compose a new email using the default mail client',
+  parameters: p({
+    to: z.string().optional().describe('Recipient email address'),
+    cc: z.string().optional().describe('CC recipients'),
+    bcc: z.string().optional().describe('BCC recipients'),
+    subject: z.string().optional().describe('Email subject'),
+    body: z.string().optional().describe('Email body text')
+  }),
+  handler: async ({ to, cc, bcc, subject, body }) => {
+    const result = await adapter.emailCompose({ to, cc, bcc, subject, body });
+    if (!result.success) {
+      return `Failed to compose email: ${result.error}`;
+    }
+    let msg = 'Opened email composer';
+    if (to) msg += ` to ${to}`;
+    if (subject) msg += ` with subject "${subject}"`;
+    return msg;
+  }
+});
+
+export const emailOpenTool = defineTool('email_open', {
+  description: 'Open the default email client/inbox',
+  parameters: p({}),
+  handler: async () => {
+    const result = await adapter.emailOpen();
+    return result.success
+      ? 'Opened email client'
+      : `Failed to open email: ${result.error}`;
+  }
+});
+
+// ============================================================================
+// OCR & Annotation Tools
+// ============================================================================
+
+export const ocrExtractTool = defineTool('ocr_extract', {
+  description: 'Extract text from an image file using OCR (Windows 10/11 built-in)',
+  parameters: p({
+    imagePath: z.string().describe('Path to the image file (PNG, JPG, BMP)')
+  }),
+  handler: async ({ imagePath }) => {
+    const result = await adapter.ocrExtractText({ imagePath });
+    if (!result.success) {
+      return `Failed to extract text: ${result.error}`;
+    }
+    const text = result.data?.text || '';
+    if (!text) {
+      return 'No text found in image';
+    }
+    return `Extracted text:\n\n${text}`;
+  }
+});
+
+export const ocrClipboardTool = defineTool('ocr_clipboard', {
+  description: 'Extract text from an image currently in the clipboard',
+  parameters: p({}),
+  handler: async () => {
+    const result = await adapter.ocrExtractFromClipboard();
+    if (!result.success) {
+      return `Failed to extract text from clipboard: ${result.error}`;
+    }
+    const text = result.data?.text || '';
+    if (!text) {
+      return 'No text found in clipboard image';
+    }
+    return `Extracted text from clipboard:\n\n${text}`;
+  }
+});
+
+export const ocrRegionTool = defineTool('ocr_region', {
+  description: 'Capture a screen region and extract text from it',
+  parameters: p({}),
+  handler: async () => {
+    const result = await adapter.ocrExtractFromRegion();
+    if (!result.success) {
+      return `Failed to extract text from region: ${result.error}`;
+    }
+    const text = result.data?.text || '';
+    if (!text) {
+      return 'No text found in selected region';
+    }
+    return `Extracted text from region:\n\n${text}`;
+  }
+});
+
+export const screenshotAnnotateTool = defineTool('screenshot_annotate', {
+  description: 'Add annotations (rectangles, arrows, text, highlights) to a screenshot',
+  parameters: p({
+    imagePath: z.string().describe('Path to the screenshot file'),
+    annotations: z.array(z.object({
+      type: z.enum(['rectangle', 'arrow', 'text', 'highlight']).describe('Annotation type'),
+      x: z.number().describe('X coordinate'),
+      y: z.number().describe('Y coordinate'),
+      width: z.number().optional().describe('Width (for rectangle/highlight)'),
+      height: z.number().optional().describe('Height (for rectangle/highlight)'),
+      endX: z.number().optional().describe('End X (for arrow)'),
+      endY: z.number().optional().describe('End Y (for arrow)'),
+      color: z.string().optional().describe('Color name (Red, Blue, Green, Yellow, etc.)'),
+      text: z.string().optional().describe('Text content (for text annotation)'),
+      thickness: z.number().optional().describe('Line thickness')
+    })).describe('Array of annotations to add')
+  }),
+  handler: async ({ imagePath, annotations }) => {
+    const result = await adapter.screenshotAnnotate({ imagePath, annotations });
+    if (!result.success) {
+      return `Failed to annotate screenshot: ${result.error}`;
+    }
+    return `Annotated screenshot saved to: ${result.data?.path}`;
+  }
+});
+
+// ============================================================================
+// Recording Tools (FFmpeg-based)
+// ============================================================================
+
+export const screenRecordStartTool = defineTool('screen_record_start', {
+  description: 'Start recording the screen. Optionally capture audio from system, microphone, or both. Can record full screen or a specific region.',
+  parameters: p({
+    audioSource: z.enum(['none', 'system', 'microphone', 'both']).optional()
+      .describe('Audio source: none, system (desktop audio), microphone, or both'),
+    fps: z.number().optional().describe('Frames per second (default: 30, options: 15, 30, 60)'),
+    region: z.object({
+      x: z.number().describe('X offset of the capture region'),
+      y: z.number().describe('Y offset of the capture region'),
+      width: z.number().describe('Width of the capture region'),
+      height: z.number().describe('Height of the capture region')
+    }).optional().describe('Capture a specific screen region instead of full screen'),
+    filename: z.string().optional().describe('Custom filename for the recording (default: screen_timestamp.mp4)')
+  }),
+  handler: async ({ audioSource, fps, region, filename }) => {
+    // Check FFmpeg availability
+    const ffmpegStatus = getRecordingManager().getFFmpegStatus();
+    if (!ffmpegStatus.available) {
+      return `Recording is not available: ${ffmpegStatus.error}`;
+    }
+
+    // Request permission
+    const permissionGranted = await requestPermissionForTool('screen_record_start', {
+      audioSource: audioSource || 'system',
+      fps: fps || 30,
+      region: region ? `${region.width}x${region.height} at (${region.x}, ${region.y})` : 'full screen'
+    });
+
+    if (!permissionGranted) {
+      return 'Permission denied for screen recording';
+    }
+
+    try {
+      const options: RecordingOptions = {
+        audioSource: audioSource ? (audioSource as AudioSource) : AudioSource.SYSTEM,
+        fps: fps || 30,
+        region,
+        filename
+      };
+
+      const recording = await getRecordingManager().startScreenRecording(options);
+      return JSON.stringify({
+        success: true,
+        message: 'Screen recording started',
+        id: recording.id,
+        outputPath: recording.outputPath,
+        fps: recording.fps,
+        audioSource: recording.audioSource,
+        region: recording.region || 'full screen'
+      });
+    } catch (error) {
+      return `Failed to start screen recording: ${error instanceof Error ? error.message : String(error)}`;
+    }
+  }
+});
+
+export const screenRecordStopTool = defineTool('screen_record_stop', {
+  description: 'Stop the current screen recording and save the video file',
+  parameters: p({}),
+  handler: async () => {
+    try {
+      const recording = await getRecordingManager().stopRecording(RecordingType.SCREEN);
+      if (!recording) {
+        return 'No active screen recording to stop';
+      }
+
+      return JSON.stringify({
+        success: true,
+        message: 'Screen recording stopped',
+        id: recording.id,
+        outputPath: recording.outputPath,
+        duration: `${recording.duration.toFixed(1)} seconds`,
+        fileSize: formatFileSize(recording.fileSize)
+      });
+    } catch (error) {
+      return `Failed to stop screen recording: ${error instanceof Error ? error.message : String(error)}`;
+    }
+  }
+});
+
+export const screenRecordStatusTool = defineTool('screen_record_status', {
+  description: 'Get the current status of screen recording (is recording active, duration, file size)',
+  parameters: p({}),
+  handler: async () => {
+    const ffmpegStatus = getRecordingManager().getFFmpegStatus();
+    if (!ffmpegStatus.available) {
+      return JSON.stringify({
+        ffmpegAvailable: false,
+        error: ffmpegStatus.error,
+        recording: null
+      });
+    }
+
+    const recording = getRecordingManager().getStatus(RecordingType.SCREEN);
+    if (!recording) {
+      return JSON.stringify({
+        ffmpegAvailable: true,
+        recording: null,
+        message: 'No active screen recording'
+      });
+    }
+
+    return JSON.stringify({
+      ffmpegAvailable: true,
+      recording: {
+        id: recording.id,
+        status: recording.status,
+        duration: `${recording.duration.toFixed(1)} seconds`,
+        fileSize: formatFileSize(recording.fileSize),
+        outputPath: recording.outputPath,
+        audioSource: recording.audioSource,
+        fps: recording.fps
+      }
+    });
+  }
+});
+
+export const audioRecordStartTool = defineTool('audio_record_start', {
+  description: 'Start audio-only recording from microphone or system audio',
+  parameters: p({
+    source: z.enum(['system', 'microphone']).optional()
+      .describe('Audio source: system (desktop audio) or microphone (default: microphone)'),
+    format: z.enum(['mp3', 'wav', 'aac']).optional()
+      .describe('Audio format: mp3, wav, or aac (default: mp3)'),
+    filename: z.string().optional().describe('Custom filename for the recording')
+  }),
+  handler: async ({ source, format, filename }) => {
+    // Check FFmpeg availability
+    const ffmpegStatus = getRecordingManager().getFFmpegStatus();
+    if (!ffmpegStatus.available) {
+      return `Recording is not available: ${ffmpegStatus.error}`;
+    }
+
+    // Request permission
+    const permissionGranted = await requestPermissionForTool('audio_record_start', {
+      source: source || 'microphone',
+      format: format || 'mp3'
+    });
+
+    if (!permissionGranted) {
+      return 'Permission denied for audio recording';
+    }
+
+    try {
+      const options: RecordingOptions = {
+        audioSource: source === 'system' ? AudioSource.SYSTEM : AudioSource.MICROPHONE,
+        format: format || 'mp3',
+        filename
+      };
+
+      const recording = await getRecordingManager().startAudioRecording(options);
+      return JSON.stringify({
+        success: true,
+        message: 'Audio recording started',
+        id: recording.id,
+        outputPath: recording.outputPath,
+        audioSource: recording.audioSource
+      });
+    } catch (error) {
+      return `Failed to start audio recording: ${error instanceof Error ? error.message : String(error)}`;
+    }
+  }
+});
+
+export const audioRecordStopTool = defineTool('audio_record_stop', {
+  description: 'Stop the current audio recording and save the audio file',
+  parameters: p({}),
+  handler: async () => {
+    try {
+      const recording = await getRecordingManager().stopRecording(RecordingType.AUDIO);
+      if (!recording) {
+        return 'No active audio recording to stop';
+      }
+
+      return JSON.stringify({
+        success: true,
+        message: 'Audio recording stopped',
+        id: recording.id,
+        outputPath: recording.outputPath,
+        duration: `${recording.duration.toFixed(1)} seconds`,
+        fileSize: formatFileSize(recording.fileSize)
+      });
+    } catch (error) {
+      return `Failed to stop audio recording: ${error instanceof Error ? error.message : String(error)}`;
+    }
+  }
+});
+
+// Helper function to format file size
+function formatFileSize(bytes: number): string {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`;
+}
+
+// ============================================================================
 // Export all tools
 // ============================================================================
+
+// ============================================================================
+// Notes Tools
+// ============================================================================
+
+export const notesCreateTool = defineTool('notes_create', {
+  description: 'Create a new note with a title and optional content',
+  parameters: p({
+    title: z.string().describe('Title of the note'),
+    content: z.string().optional().describe('Content/body of the note'),
+  }),
+  handler: async ({ title, content }: { title: string; content?: string }) => {
+    const note = createNote(title, content);
+    return `Created note "${note.title}" (ID: ${note.id})`;
+  },
+});
+
+export const notesListTool = defineTool('notes_list', {
+  description: 'List all notes, optionally limited to a count',
+  parameters: p({
+    limit: z.number().optional().describe('Max notes to return (default 20)'),
+  }),
+  handler: async ({ limit }: { limit?: number }) => {
+    const notes = listNotes(limit || 20);
+    if (notes.length === 0) return 'No notes found.';
+    return notes.map(n => `- [${n.id}] ${n.title} (${new Date(n.updated_at).toLocaleDateString()})`).join('\n');
+  },
+});
+
+export const notesGetTool = defineTool('notes_get', {
+  description: 'Get a note by ID',
+  parameters: p({
+    id: z.string().describe('Note ID'),
+  }),
+  handler: async ({ id }: { id: string }) => {
+    const note = getNote(id);
+    if (!note) return `Note ${id} not found.`;
+    return `Title: ${note.title}\nContent: ${note.content}\nCreated: ${new Date(note.created_at).toLocaleString()}\nUpdated: ${new Date(note.updated_at).toLocaleString()}`;
+  },
+});
+
+export const notesUpdateTool = defineTool('notes_update', {
+  description: 'Update a note title and/or content',
+  parameters: p({
+    id: z.string().describe('Note ID'),
+    title: z.string().optional().describe('New title'),
+    content: z.string().optional().describe('New content'),
+  }),
+  handler: async ({ id, title, content }: { id: string; title?: string; content?: string }) => {
+    const note = updateNote(id, title, content);
+    if (!note) return `Note ${id} not found.`;
+    return `Updated note "${note.title}"`;
+  },
+});
+
+export const notesSearchTool = defineTool('notes_search', {
+  description: 'Search notes by title or content',
+  parameters: p({
+    query: z.string().describe('Search query'),
+    limit: z.number().optional().describe('Max results (default 10)'),
+  }),
+  handler: async ({ query, limit }: { query: string; limit?: number }) => {
+    const notes = searchNotes(query, limit || 10);
+    if (notes.length === 0) return `No notes matching "${query}".`;
+    return notes.map(n => `- [${n.id}] ${n.title}`).join('\n');
+  },
+});
+
+export const notesDeleteTool = defineTool('notes_delete', {
+  description: 'Delete a note by ID',
+  parameters: p({
+    id: z.string().describe('Note ID'),
+  }),
+  handler: async ({ id }: { id: string }) => {
+    const success = deleteNote(id);
+    return success ? `Deleted note ${id}.` : `Note ${id} not found.`;
+  },
+});
+
+export const notesDeleteAllTool = defineTool('notes_delete_all', {
+  description: 'Delete all notes. Requires user confirmation.',
+  parameters: p({}),
+  handler: async () => {
+    const permitted = await requestPermissionForTool('notes_delete_all', {}, ['This action cannot be undone', 'All notes will be permanently deleted']);
+    if (!permitted) return 'User denied permission to delete all notes.';
+    const count = deleteAllNotes();
+    return `Deleted ${count} notes.`;
+  },
+});
+
+// ============================================================================
+// Todo Tools
+// ============================================================================
+
+export const todosCreateTool = defineTool('todos_create', {
+  description: 'Create a new todo item',
+  parameters: p({
+    text: z.string().describe('Todo text'),
+  }),
+  handler: async ({ text }: { text: string }) => {
+    const todo = createTodo(text);
+    return `Created todo: "${todo.text}" (ID: ${todo.id})`;
+  },
+});
+
+export const todosListTool = defineTool('todos_list', {
+  description: 'List todos, optionally filtered by status',
+  parameters: p({
+    filter: z.enum(['all', 'active', 'completed']).optional().describe('Filter: all, active, or completed (default: all)'),
+  }),
+  handler: async ({ filter }: { filter?: 'all' | 'active' | 'completed' }) => {
+    const todos = listTodos(filter || 'all');
+    if (todos.length === 0) return `No ${filter || ''} todos found.`;
+    return todos.map(t => `- [${t.completed ? 'x' : ' '}] ${t.text} (${t.id})`).join('\n');
+  },
+});
+
+export const todosCompleteTool = defineTool('todos_complete', {
+  description: 'Mark a todo as completed',
+  parameters: p({
+    id: z.string().describe('Todo ID'),
+  }),
+  handler: async ({ id }: { id: string }) => {
+    const todo = completeTodo(id);
+    if (!todo) return `Todo ${id} not found.`;
+    return `Completed: "${todo.text}"`;
+  },
+});
+
+export const todosDeleteTool = defineTool('todos_delete', {
+  description: 'Delete a todo item',
+  parameters: p({
+    id: z.string().describe('Todo ID'),
+  }),
+  handler: async ({ id }: { id: string }) => {
+    const success = deleteTodo(id);
+    return success ? `Deleted todo ${id}.` : `Todo ${id} not found.`;
+  },
+});
+
+// ============================================================================
+// URL Fetch Tool
+// ============================================================================
+
+export const webFetchUrlTool = defineTool('web_fetch_url', {
+  description: 'Fetch a web page and return its text content. Use this to look up information from URLs.',
+  parameters: p({
+    url: z.string().describe('The URL to fetch'),
+    max_length: z.number().optional().describe('Max characters to return (default 2000)'),
+  }),
+  handler: async ({ url, max_length }: { url: string; max_length?: number }) => {
+    const result = await fetchUrl(url, max_length);
+    if (!result.success) {
+      return `Failed to fetch ${url}: ${result.error}`;
+    }
+    const parts = [];
+    if (result.title) parts.push(`Title: ${result.title}`);
+    parts.push(`URL: ${result.url}`);
+    if (result.contentLength && result.contentLength > (max_length || 2000)) {
+      parts.push(`(Showing first ${max_length || 2000} of ${result.contentLength} characters)`);
+    }
+    parts.push('');
+    parts.push(result.content || '(No content)');
+    return parts.join('\n');
+  },
+});
+
+// ============================================================================
+// TTS Tools
+// ============================================================================
+
+export const speakTextTool = defineTool('speak_text', {
+  description: 'Speak text aloud using the system text-to-speech engine. Works offline, no API key needed.',
+  parameters: p({
+    text: z.string().describe('The text to speak aloud'),
+    voice: z.string().optional().describe('Voice name (e.g., "Microsoft David Desktop")'),
+    rate: z.number().optional().describe('Speech rate from -10 (slowest) to 10 (fastest). Default 0.'),
+    volume: z.number().optional().describe('Volume 0-100. Default 100.'),
+  }),
+  handler: async ({ text, voice, rate, volume }: { text: string; voice?: string; rate?: number; volume?: number }) => {
+    const options: TTSOptions = {};
+    if (voice) options.voice = voice;
+    if (rate !== undefined) options.rate = rate;
+    if (volume !== undefined) options.volume = volume;
+    const success = await speak(text, options);
+    return success
+      ? `Spoke: "${text.substring(0, 100)}${text.length > 100 ? '...' : ''}"`
+      : 'Failed to speak text. Check available voices with list_voices.';
+  },
+});
+
+export const stopSpeakingTool = defineTool('stop_speaking', {
+  description: 'Stop any ongoing text-to-speech playback',
+  parameters: p({}),
+  handler: async () => {
+    await stopSpeaking();
+    return 'Speech stopped.';
+  },
+});
+
+export const listVoicesTool = defineTool('list_voices', {
+  description: 'List available text-to-speech voices on this system',
+  parameters: p({}),
+  handler: async () => {
+    const voices = await listVoices();
+    if (voices.length === 0) return 'No TTS voices found on this system.';
+    return voices.map(v => `- ${v.name} (${v.culture}, ${v.gender})`).join('\n');
+  },
+});
+
+// ============================================================================
+// Weather Tool
+// ============================================================================
+
+export const weatherGetTool = defineTool('weather_get', {
+  description: 'Get current weather and forecast for a location',
+  parameters: p({
+    location: z.string().describe('City name, e.g. "London", "New York", "Tokyo"'),
+    detailed: z.boolean().optional().describe('Show 3-day forecast (default: brief current conditions)'),
+  }),
+  handler: async ({ location, detailed }: { location: string; detailed?: boolean }) => {
+    return await fetchWeather(location, detailed || false);
+  },
+});
+
+// ============================================================================
+// Unit Converter Tool
+// ============================================================================
+
+export const convertUnitTool = defineTool('convert_unit', {
+  description: 'Convert between units of measurement (length, weight, temperature, volume, area, speed)',
+  parameters: p({
+    value: z.number().describe('The numeric value to convert'),
+    from: z.string().describe('Source unit (e.g. "km", "lb", "celsius", "gallon")'),
+    to: z.string().describe('Target unit (e.g. "miles", "kg", "fahrenheit", "liter")'),
+  }),
+  handler: async ({ value, from, to }: { value: number; from: string; to: string }) => {
+    const result = convertUnit(value, from, to);
+    if (result.error) return result.error;
+    return `${value} ${from} = ${result.value} ${to}`;
+  },
+});
+
+// ============================================================================
+// Media Status Tool
+// ============================================================================
+
+export const mediaStatusTool = defineTool('media_status', {
+  description: 'Get current media playback status (track name, artist, play state)',
+  parameters: p({}),
+  handler: async () => {
+    const status = await getMediaStatus();
+    if (!status.title && !status.isPlaying) {
+      return 'No media is currently playing.';
+    }
+    const parts = [];
+    parts.push(`Status: ${status.isPlaying ? 'Playing' : 'Paused'}`);
+    if (status.title) parts.push(`Title: ${status.title}`);
+    if (status.artist) parts.push(`Artist: ${status.artist}`);
+    if (status.album) parts.push(`Album: ${status.album}`);
+    if (status.app) parts.push(`App: ${status.app}`);
+    return parts.join('\n');
+  },
+});
+
+// ============================================================================
+// Skills
+// ============================================================================
+
+export const skillsListTool = defineTool('skills_list', {
+  description: 'List available agent skills loaded from SKILL.md directories',
+  parameters: p({}),
+  handler: async () => {
+    const skills = getSkillIndex();
+    if (skills.length === 0) {
+      return 'No skills found. Add SKILL.md files under ~/.claude/skills/<skill-name>/SKILL.md.';
+    }
+    return skills
+      .map(skill => {
+        const license = skill.license ? ` (license: ${skill.license})` : '';
+        return `- ${skill.id}: ${skill.description} [${skill.source}]${license}`;
+      })
+      .join('\n');
+  },
+});
+
+export const skillsRefreshTool = defineTool('skills_refresh', {
+  description: 'Reload agent skills from disk',
+  parameters: p({}),
+  handler: async () => {
+    const skills = refreshSkillIndex();
+    return `Skills refreshed. Found ${skills.length} skill(s).`;
+  },
+});
 
 export const desktopCommanderTools = [
   // Window Management
@@ -1914,6 +3049,10 @@ export const desktopCommanderTools = [
   windowMinimizeTool,
   windowMaximizeTool,
   windowArrangeTool,
+  windowHideFromSharingTool,
+  windowShowInSharingTool,
+  windowListHiddenTool,
+  windowHideAllSensitiveTool,
   // File System
   filesListTool,
   filesSearchTool,
@@ -1959,6 +3098,8 @@ export const desktopCommanderTools = [
   clipboardReadTool,
   clipboardWriteTool,
   clipboardClearTool,
+  clipboardHistoryTool,
+  clipboardRestoreTool,
   // Office
   officeCreateTool,
   powerpointCreateTool,
@@ -1974,5 +3115,63 @@ export const desktopCommanderTools = [
   webSearchTool,
   // Troubleshooting
   troubleshootStartTool,
-  troubleshootProposeFix
+  troubleshootProposeFix,
+  // Media Control
+  mediaPlayTool,
+  mediaPauseTool,
+  mediaPlayPauseTool,
+  mediaNextTool,
+  mediaPreviousTool,
+  mediaStopTool,
+  // Browser Automation
+  browserOpenTool,
+  browserSearchTool,
+  browserNewTabTool,
+  browserCloseTabTool,
+  browserNextTabTool,
+  browserPrevTabTool,
+  browserRefreshTool,
+  browserBookmarkTool,
+  // Email
+  emailComposeTool,
+  emailOpenTool,
+  // OCR & Annotation
+  ocrExtractTool,
+  ocrClipboardTool,
+  ocrRegionTool,
+  screenshotAnnotateTool,
+  // Recording (FFmpeg-based)
+  screenRecordStartTool,
+  screenRecordStopTool,
+  screenRecordStatusTool,
+  audioRecordStartTool,
+  audioRecordStopTool,
+  // Notes
+  notesCreateTool,
+  notesListTool,
+  notesGetTool,
+  notesUpdateTool,
+  notesSearchTool,
+  notesDeleteTool,
+  notesDeleteAllTool,
+  // Todos
+  todosCreateTool,
+  todosListTool,
+  todosCompleteTool,
+  todosDeleteTool,
+  // URL Fetch
+  webFetchUrlTool,
+  // TTS
+  speakTextTool,
+  stopSpeakingTool,
+  listVoicesTool,
+  // Weather
+  weatherGetTool,
+  // Unit Converter
+  convertUnitTool,
+  // Media Status
+  mediaStatusTool,
+  // Skills
+  skillsListTool,
+  skillsRefreshTool,
 ];

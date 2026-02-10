@@ -1,7 +1,8 @@
-import React, { useEffect, useMemo, useRef, useState, memo, useCallback } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState, memo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { User, Bot, Loader2, CheckCircle, XCircle, ChevronDown, ChevronRight,
+import { User, Bot, Loader2, CheckCircle, XCircle, ChevronDown,
   MonitorUp, FolderOpen, AppWindow, Volume2, Clipboard, Cpu, FileText, AlertTriangle } from 'lucide-react';
+import { parseReasoning } from '../utils/actionLogMapper';
 
 /**
  * Helper: get date separator label for a message
@@ -24,6 +25,7 @@ interface Props {
   messages: Message[];
   isLoading: boolean;
   actionLogs?: ActionLog[];
+  completedMessageIds?: Set<string>;
 }
 
 // Friendly tool names and icons
@@ -72,7 +74,15 @@ function getToolInfo(toolName: string) {
  */
 const renderContent = (content: string): React.ReactNode => {
   const elements: React.ReactNode[] = [];
-  const lines = content.split('\n');
+
+  // Pre-process: collapse completed tool blocks into single-line markers
+  // A completed block has both <!--tool:start:NAME--> and <!--tool:end:STATUS-->
+  const processed = content.replace(
+    /<!--tool:start:(.+?)-->[\s\S]*?<!--tool:end:(.+?)-->/g,
+    '<!--tool:done:$1:$2-->'
+  );
+
+  const lines = processed.split('\n');
   let inCodeBlock = false;
   let codeBlockContent: string[] = [];
   let listItems: string[] = [];
@@ -212,6 +222,50 @@ const renderContent = (content: string): React.ReactNode => {
       continue;
     }
 
+    // Collapsible tool block: completed (collapsed by default)
+    const doneMatch = line.match(/^<!--tool:done:(.+?):(.+?)-->$/);
+    if (doneMatch) {
+      flushList();
+      flushTable();
+      const toolName = doneMatch[1];
+      const status = doneMatch[2];
+      const isSuccess = status.includes('✅');
+      elements.push(
+        <details key={`tool-${i}`} className="my-1.5 rounded-lg bg-dark-100/60 dark:bg-dark-700/40 border border-dark-200/50 dark:border-dark-600/50 overflow-hidden">
+          <summary className="cursor-pointer px-3 py-1.5 text-xs flex items-center gap-2 text-dark-500 dark:text-dark-400 select-none hover:bg-dark-200/40 dark:hover:bg-dark-600/30 transition-colors">
+            {isSuccess
+              ? <CheckCircle className="w-3.5 h-3.5 text-green-500 flex-shrink-0" />
+              : <XCircle className="w-3.5 h-3.5 text-red-400 flex-shrink-0" />}
+            <span className="capitalize">{toolName}</span>
+          </summary>
+        </details>
+      );
+      continue;
+    }
+
+    // Collapsible tool block: in-progress (expanded with spinner)
+    const startMatch = line.match(/^<!--tool:start:(.+?)-->$/);
+    if (startMatch) {
+      flushList();
+      flushTable();
+      const toolName = startMatch[1];
+      elements.push(
+        <details key={`tool-${i}`} open className="my-1.5 rounded-lg bg-dark-100/60 dark:bg-dark-700/40 border border-blue-300/30 dark:border-blue-500/20 overflow-hidden">
+          <summary className="cursor-pointer px-3 py-1.5 text-xs flex items-center gap-2 text-dark-500 dark:text-dark-400 select-none">
+            <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-400 flex-shrink-0" />
+            <span className="capitalize">{toolName}</span>
+          </summary>
+          <div className="px-3 pb-2 text-xs text-dark-400 dark:text-dark-500">Running...</div>
+        </details>
+      );
+      continue;
+    }
+
+    // Skip orphaned end markers (already consumed by pre-processing)
+    if (line.match(/^<!--tool:end:.+?-->$/)) {
+      continue;
+    }
+
     // Table handling - check if this looks like a table row
     if (line.includes('|') && !line.startsWith('>')) {
       flushList();
@@ -323,79 +377,125 @@ const MemoizedMessageContent = memo(({ content }: { content: string }) => {
 MemoizedMessageContent.displayName = 'MemoizedMessageContent';
 
 // Collapsible tool calls component (memoized to prevent re-renders)
-const ToolCallsDisplay = memo(({ toolCalls }: { toolCalls: Message['toolCalls'] }) => {
+const ToolCallsDisplay = memo(({
+  toolCalls,
+  isExecutionComplete
+}: {
+  toolCalls: Message['toolCalls'];
+  isExecutionComplete?: boolean;
+}) => {
   const [expanded, setExpanded] = useState(false);
-  
+  const [manuallyExpanded, setManuallyExpanded] = useState(false);
+
   if (!toolCalls || toolCalls.length === 0) return null;
 
   const hasRunning = toolCalls.some(t => t.status === 'running');
   const allSuccess = toolCalls.every(t => t.status === 'success');
   const hasError = toolCalls.some(t => t.status === 'error');
+  const allComplete = toolCalls.length > 0 && toolCalls.every(
+    t => t.status === 'success' || t.status === 'error'
+  );
+  const errorCount = toolCalls.filter(t => t.status === 'error').length;
 
-  // Show expanded if any are running
-  const showExpanded = expanded || hasRunning;
+  // Auto-expand when tools are running
+  useEffect(() => {
+    if (hasRunning) {
+      setExpanded(true);
+    }
+  }, [hasRunning]);
 
-  // Get the current/last tool for the summary
-  const currentTool = toolCalls.find(t => t.status === 'running') || toolCalls[toolCalls.length - 1];
-  const info = getToolInfo(currentTool.name);
-  const Icon = info.icon;
+  // Auto-collapse when all tools complete, unless user manually expanded
+  useEffect(() => {
+    if ((allComplete || isExecutionComplete) && !manuallyExpanded) {
+      setExpanded(false);
+    }
+  }, [allComplete, isExecutionComplete, manuallyExpanded]);
+
+  const showExpanded = expanded;
+
+  // Get top tool names for summary (up to 3)
+  const topToolNames = toolCalls
+    .slice(0, 3)
+    .map(t => t.name)
+    .join(', ');
+
+  const handleToggleExpand = () => {
+    setExpanded(prev => !prev);
+    setManuallyExpanded(true);
+  };
 
   return (
-    <div className="mb-2">
-      {/* Collapsed summary */}
-      {!showExpanded && toolCalls.length > 0 && (
+    <div className="mb-2 space-y-2">
+      {/* Summary button */}
+      {toolCalls.length > 0 && (
         <button
-          onClick={() => setExpanded(true)}
+          onClick={handleToggleExpand}
           className="flex items-center gap-2 text-xs text-dark-500 dark:text-dark-400 hover:text-dark-700 dark:hover:text-dark-300 transition-colors group"
         >
           <div className={`flex items-center gap-1.5 px-2 py-1 rounded-md ${
-            hasError 
+            hasError
               ? 'bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400'
-              : allSuccess 
+              : allSuccess
                 ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400'
                 : 'bg-dark-100 dark:bg-dark-700'
           }`}>
+            <ChevronDown
+              className={`w-3.5 h-3.5 transition-transform ${expanded ? 'rotate-0' : '-rotate-90'}`}
+            />
             {hasError ? (
               <XCircle className="w-3.5 h-3.5" />
             ) : allSuccess ? (
               <CheckCircle className="w-3.5 h-3.5" />
             ) : (
-              <Icon className="w-3.5 h-3.5" />
+              <AlertTriangle className="w-3.5 h-3.5" />
             )}
-            <span>{toolCalls.length === 1 ? 'Action completed' : `${toolCalls.length} actions completed`}</span>
-            <ChevronRight className="w-3 h-3 opacity-50 group-hover:opacity-100" />
+            <span>
+              {toolCalls.length === 1 ? 'Action completed' : `${toolCalls.length} actions completed`}
+              {errorCount > 0 && ` (${errorCount} failed)`}
+            </span>
+            {toolCalls.length > 0 && (
+              <>
+                <span className="text-dark-400 dark:text-dark-500">·</span>
+                <span className="font-mono text-[10px] text-dark-400 dark:text-dark-500">{topToolNames}</span>
+              </>
+            )}
           </div>
         </button>
       )}
 
-      {/* Expanded view */}
+      {/* Expanded view - show each tool with its reasoning */}
       <AnimatePresence>
         {showExpanded && (
           <motion.div
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: 'auto' }}
             exit={{ opacity: 0, height: 0 }}
-            className="space-y-1"
+            transition={{ duration: 0.2 }}
+            className="space-y-2"
           >
-            {!hasRunning && toolCalls.length > 1 && (
-              <button
-                onClick={() => setExpanded(false)}
-                className="flex items-center gap-1 text-xs text-dark-400 hover:text-dark-600 dark:hover:text-dark-300 mb-1"
-              >
-                <ChevronDown className="w-3 h-3" />
-                <span>Collapse</span>
-              </button>
-            )}
             {toolCalls.map((tool) => {
               const toolMeta = getToolInfo(tool.name);
               const ToolIcon = toolMeta.icon;
-              
+              const { command, reasoning } = parseReasoning(
+                typeof tool.result === 'string' ? tool.result : undefined
+              );
+
               return (
                 <motion.div
                   key={tool.id}
                   initial={{ opacity: 0, x: -10 }}
                   animate={{ opacity: 1, x: 0 }}
-                  className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs ${
+                  className="space-y-1"
+                >
+                  {/* Reasoning - on its own line above tool */}
+                  {reasoning && (
+                    <div className="text-[11px] text-stone-500 dark:text-stone-400 italic leading-relaxed border-l-2 border-stone-300 dark:border-stone-600 pl-2">
+                      {reasoning}
+                    </div>
+                  )}
+
+                  {/* Tool execution card */}
+                  <div className={`flex flex-col gap-1.5 px-2.5 py-1.5 rounded-lg text-xs ${
                     tool.status === 'running'
                       ? 'bg-purple-500/10 dark:bg-purple-500/10 text-purple-700 dark:text-purple-300 border border-purple-500/20 dark:border-purple-500/20'
                       : tool.status === 'success'
@@ -403,18 +503,35 @@ const ToolCallsDisplay = memo(({ toolCalls }: { toolCalls: Message['toolCalls'] 
                         : tool.status === 'error'
                           ? 'bg-rose-500/10 dark:bg-rose-500/10 text-rose-700 dark:text-rose-400 border border-rose-500/20 dark:border-rose-500/20'
                           : 'bg-stone-100 dark:bg-stone-800 text-stone-600 dark:text-stone-400'
-                  }`}
-                >
-                  {tool.status === 'running' ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  ) : tool.status === 'success' ? (
-                    <CheckCircle className="w-3.5 h-3.5" />
-                  ) : tool.status === 'error' ? (
-                    <XCircle className="w-3.5 h-3.5" />
-                  ) : (
-                    <ToolIcon className="w-3.5 h-3.5" />
-                  )}
-                  <span className="font-medium">{toolMeta.verb}</span>
+                  }`}>
+                    {/* Tool status line */}
+                    <div className="flex items-center gap-2">
+                      {tool.status === 'running' ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : tool.status === 'success' ? (
+                        <CheckCircle className="w-3.5 h-3.5" />
+                      ) : tool.status === 'error' ? (
+                        <XCircle className="w-3.5 h-3.5" />
+                      ) : (
+                        <ToolIcon className="w-3.5 h-3.5" />
+                      )}
+                      <span className="font-medium">{toolMeta.verb}</span>
+                    </div>
+
+                    {/* Command details (if available) */}
+                    {command && (
+                      <div className="text-[10px] font-mono text-stone-500 dark:text-stone-400 bg-stone-950/10 dark:bg-stone-950/40 px-2 py-1 rounded">
+                        {command}
+                      </div>
+                    )}
+
+                    {/* Error message */}
+                    {tool.error && (
+                      <div className="text-[10px] text-rose-600 dark:text-rose-400 bg-rose-950/20 px-2 py-1 rounded">
+                        {tool.error}
+                      </div>
+                    )}
+                  </div>
                 </motion.div>
               );
             })}
@@ -431,12 +548,14 @@ const MessageItem = memo(({
   message,
   isLoading,
   isLastMessage,
-  inlineLogs
+  inlineLogs,
+  isExecutionComplete
 }: {
   message: Message;
   isLoading: boolean;
   isLastMessage: boolean;
   inlineLogs: ActionLog[];
+  isExecutionComplete: boolean;
 }) => {
   return (
     <motion.div
@@ -464,8 +583,10 @@ const MessageItem = memo(({
               : 'message-assistant p-5 border-stone-700/60 bg-stone-900/40'
           }`}
         >
-          {/* Tool calls display */}
-          <ToolCallsDisplay toolCalls={message.toolCalls} />
+          {/* Tool calls display - only for assistant messages (future use) */}
+          {message.role === 'assistant' && message.toolCalls && (
+            <ToolCallsDisplay toolCalls={message.toolCalls} />
+          )}
 
           {/* Message content */}
           {message.content && (
@@ -486,9 +607,20 @@ const MessageItem = memo(({
           )}
         </div>
 
+        {/* Tool calls for user messages - display below bubble */}
+        {message.role === 'user' && message.toolCalls && message.toolCalls.length > 0 && (
+          <div className="w-full mt-2">
+            <ToolCallsDisplay
+              toolCalls={message.toolCalls}
+              isExecutionComplete={isExecutionComplete}
+            />
+          </div>
+        )}
+
+        {/* InlineLogs - keep for backward compatibility, can be removed later */}
         {message.role === 'user' && inlineLogs.length > 0 && (
           <div className="w-full mt-2">
-            <InlineLogs logs={inlineLogs} />
+            <InlineLogs logs={inlineLogs} isExecutionComplete={isExecutionComplete} />
           </div>
         )}
       </div>
@@ -509,21 +641,23 @@ const DateSeparator = memo(({ label }: { label: string }) => (
 ));
 DateSeparator.displayName = 'DateSeparator';
 
-export function MessageStream({ messages, isLoading, actionLogs = [] }: Props) {
+const MessageStream = memo(function MessageStream({ messages, isLoading, actionLogs = [], completedMessageIds = new Set() }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   
-  // === SCROLL STATE MANAGEMENT (R1-R4) ===
-  const [isAtBottom, setIsAtBottom] = useState(true);
+  // === SCROLL STATE MANAGEMENT ===
   const [showScrollButton, setShowScrollButton] = useState(false);
-  const [userScrolledAway, setUserScrolledAway] = useState(false); // R2: Manual override flag
+  const [userScrolledAway, setUserScrolledAway] = useState(false);
   const prevMessageCountRef = useRef(messages.length);
   const prevIsLoadingRef = useRef(isLoading);
   const scrollParentRef = useRef<HTMLElement | null>(null);
+  const lastUserMessageIdRef = useRef<string | null>(null);
+  // scrollMode: 'follow-bottom' = auto-scroll to bottom, 'pinned' = don't auto-scroll
+  const scrollModeRef = useRef<'follow-bottom' | 'pinned'>('follow-bottom');
   
   // Threshold constants
-  const BOTTOM_THRESHOLD_PX = 20; // R1: Within 20px = "at bottom"
-  const SCROLL_AWAY_THRESHOLD_PX = 20; // R2: User must scroll 20px+ to detach
+  const BOTTOM_THRESHOLD_PX = 20;
+  const SCROLL_AWAY_THRESHOLD_PX = 20;
 
   const userMessageTimestamps = useMemo(() =>
     messages
@@ -569,6 +703,13 @@ export function MessageStream({ messages, isLoading, actionLogs = [] }: Props) {
     return distanceFromBottom <= BOTTOM_THRESHOLD_PX;
   }, [BOTTOM_THRESHOLD_PX]);
 
+  // Helper: check if content is shorter than scroll container (new conversation)
+  const isContentShorterThanViewport = useCallback((): boolean => {
+    const scrollParent = scrollParentRef.current;
+    if (!scrollParent) return true;
+    return scrollParent.scrollHeight <= scrollParent.clientHeight + BOTTOM_THRESHOLD_PX;
+  }, [BOTTOM_THRESHOLD_PX]);
+
   // R1 & R2: Track scroll position and detect user manual scroll
   useEffect(() => {
     const container = containerRef.current;
@@ -581,91 +722,164 @@ export function MessageStream({ messages, isLoading, actionLogs = [] }: Props) {
     let lastScrollTop = scrollParent.scrollTop;
     let lastScrollHeight = scrollParent.scrollHeight;
 
-    const handleScroll = () => {
+    let ticking = false;
+    const updateScrollState = () => {
       const currentScrollTop = scrollParent.scrollTop;
       const currentScrollHeight = scrollParent.scrollHeight;
       const atBottom = checkIsAtBottom(scrollParent);
-      
-      // Detect if content grew (new tokens) vs user scrolled
+
       const contentGrew = currentScrollHeight > lastScrollHeight;
       const userScrolledUp = currentScrollTop < lastScrollTop - SCROLL_AWAY_THRESHOLD_PX;
-      
-      // R2: If user manually scrolls up during loading, detach auto-scroll
+
+      // If user manually scrolls up during loading, switch to pinned mode
       if (isLoading && userScrolledUp && !contentGrew) {
         setUserScrolledAway(true);
+        scrollModeRef.current = 'pinned';
       }
-      
-      // If user scrolls back to bottom, re-attach
-      if (atBottom) {
-        setUserScrolledAway(false);
+
+      // If user scrolls back to bottom, re-enable follow mode
+      if (atBottom && scrollModeRef.current === 'pinned') {
+        // Only switch back to follow if user deliberately scrolled to bottom
+        // (not just because content is short)
+        if (currentScrollHeight > scrollParent.clientHeight + BOTTOM_THRESHOLD_PX) {
+          scrollModeRef.current = 'follow-bottom';
+          setUserScrolledAway(false);
+        }
       }
-      
-      setIsAtBottom(atBottom);
-      // R3: Show button when not at bottom
-      setShowScrollButton(!atBottom && messages.length > 0);
-      
+
+      const contentOverflows = scrollParent.scrollHeight > scrollParent.clientHeight + BOTTOM_THRESHOLD_PX;
+      const showButton = !atBottom && contentOverflows && messages.length > 0;
+      setShowScrollButton(prev => (prev === showButton ? prev : showButton));
+
       lastScrollTop = currentScrollTop;
       lastScrollHeight = currentScrollHeight;
     };
 
-    scrollParent.addEventListener('scroll', handleScroll, { passive: true });
-    handleScroll();
-    return () => scrollParent.removeEventListener('scroll', handleScroll);
-  }, [findScrollParent, checkIsAtBottom, messages.length, isLoading, SCROLL_AWAY_THRESHOLD_PX]);
+    const handleScroll = () => {
+      if (ticking) return;
+      ticking = true;
+      requestAnimationFrame(() => {
+        updateScrollState();
+        ticking = false;
+      });
+    };
 
-  // R1: Auto-scroll when at bottom and content changes (streaming)
+    // Respond to window resize — recalculate scroll state for responsive layout
+    const handleResize = () => {
+      requestAnimationFrame(updateScrollState);
+    };
+
+    scrollParent.addEventListener('scroll', handleScroll, { passive: true });
+    window.addEventListener('resize', handleResize, { passive: true });
+    handleScroll();
+    return () => {
+      scrollParent.removeEventListener('scroll', handleScroll);
+      window.removeEventListener('resize', handleResize);
+    };
+  }, [findScrollParent, checkIsAtBottom, messages.length, isLoading, SCROLL_AWAY_THRESHOLD_PX, BOTTOM_THRESHOLD_PX]);
+
+  // Auto-scroll: follow bottom when in follow mode and content changes
   useEffect(() => {
+    if (scrollModeRef.current !== 'follow-bottom') return;
+    if (userScrolledAway) return;
+
     const scrollParent = scrollParentRef.current;
     if (!scrollParent) return;
 
     const lastMsg = messages[messages.length - 1];
     if (!lastMsg) return;
 
-    const isNewMessage = messages.length > prevMessageCountRef.current;
-    const isUserMessage = lastMsg.role === 'user';
+    // Don't auto-scroll for user messages - handled separately
+    if (lastMsg.role === 'user' && messages.length > prevMessageCountRef.current) return;
 
-    // When user sends a new message, always scroll to bottom (confirms action - R1 table)
-    if (isNewMessage && isUserMessage) {
-      setUserScrolledAway(false); // Reset detach state
+    const contentOverflows = !isContentShorterThanViewport();
+    if (contentOverflows) {
       requestAnimationFrame(() => {
-        bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+        if (scrollModeRef.current === 'follow-bottom') {
+          bottomRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' });
+        }
       });
     }
-    // For assistant messages or streaming updates
-    else if (!userScrolledAway) {
-      // Only auto-scroll if user hasn't manually scrolled away (R2)
-      if (isAtBottom || isNewMessage) {
-        requestAnimationFrame(() => {
-          bottomRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' });
-        });
-      }
-    }
+  }, [messages, messages.length, userScrolledAway]);
 
-    prevMessageCountRef.current = messages.length;
-  }, [messages, messages.length, isAtBottom, userScrolledAway]);
-
-  // R4: When stream completes, don't force scroll - stay at current position
+  // When stream completes, reset to follow-bottom for next interaction
   useEffect(() => {
     if (prevIsLoadingRef.current && !isLoading) {
-      // Stream just finished - reset the detach flag for next interaction
-      // but don't scroll (R4)
+      scrollModeRef.current = 'follow-bottom';
       setUserScrolledAway(false);
     }
     prevIsLoadingRef.current = isLoading;
   }, [isLoading]);
 
-  // Initial scroll to bottom on mount (R10: land at bottom of history)
+  // Initial scroll
   useEffect(() => {
     const timer = setTimeout(() => {
-      bottomRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' });
+      if (!scrollParentRef.current && containerRef.current) {
+        scrollParentRef.current = findScrollParent(containerRef.current);
+      }
+      if (messages.length > 5) {
+        bottomRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' });
+      } else if (scrollParentRef.current) {
+        scrollParentRef.current.scrollTop = 0;
+      }
     }, 50);
     return () => clearTimeout(timer);
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Track message count for auto-scroll new-message detection
+  useEffect(() => {
+    prevMessageCountRef.current = messages.length;
+  }, [messages]);
+
+  // useLayoutEffect: detect new user messages AND scroll them to top, all in one hook.
+  // useLayoutEffect runs BEFORE useEffect and before browser paint,
+  // so we must set pinned mode here (not in a separate useEffect).
+  // The actual smooth scroll happens in a rAF after layout commits.
+  useLayoutEffect(() => {
+    const lastMsg = messages[messages.length - 1];
+    if (!lastMsg || lastMsg.role !== 'user') return;
+    if (lastMsg.id === lastUserMessageIdRef.current) return;
+
+    // New user message detected — pin immediately so auto-scroll won't interfere
+    lastUserMessageIdRef.current = lastMsg.id;
+    scrollModeRef.current = 'pinned';
+
+    const scrollParent = scrollParentRef.current;
+    if (!scrollParent || !containerRef.current) return;
+
+    const msgEl = containerRef.current.querySelector(`[data-message-id="${lastMsg.id}"]`) as HTMLElement;
+    if (!msgEl) return;
+
+    // Calculate target scroll position: user message 16px from top
+    const msgRect = msgEl.getBoundingClientRect();
+    const parentRect = scrollParent.getBoundingClientRect();
+    const targetScrollTop = scrollParent.scrollTop + (msgRect.top - parentRect.top) - 16;
+
+    // Use rAF to smooth-scroll after layout commits
+    requestAnimationFrame(() => {
+      scrollParent.scrollTo({ top: targetScrollTop, behavior: 'smooth' });
+    });
+  }, [messages]);
 
   const scrollToBottom = useCallback(() => {
     setUserScrolledAway(false);
+    scrollModeRef.current = 'follow-bottom';
     bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }, []);
+
+  // Track scroll parent height for the bottom spacer
+  const [scrollParentHeight, setScrollParentHeight] = useState(0);
+
+  // Keep scroll parent height updated
+  useEffect(() => {
+    const sp = scrollParentRef.current;
+    if (!sp) return;
+    const update = () => setScrollParentHeight(sp.clientHeight);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(sp);
+    return () => ro.disconnect();
+  }, [scrollParentRef.current]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div ref={containerRef} className="p-6 space-y-5 relative">
@@ -690,13 +904,16 @@ export function MessageStream({ messages, isLoading, actionLogs = [] }: Props) {
           ? actionLogs.filter(log => log.createdAt >= messageTimestamp && log.createdAt < nextUserTimestamp)
           : [];
 
+        const isExecutionComplete = message.role === 'user' && completedMessageIds.has(message.id);
+
         return (
-          <div key={message.id}>
+          <div key={message.id} data-message-role={message.role} data-message-id={message.id}>
             <MessageItem
               message={message}
               isLoading={isLoading}
               isLastMessage={item.index === messages.length - 1}
               inlineLogs={inlineLogs}
+              isExecutionComplete={isExecutionComplete}
             />
           </div>
         );
@@ -726,6 +943,12 @@ export function MessageStream({ messages, isLoading, actionLogs = [] }: Props) {
         </motion.div>
       )}
 
+      {/* Spacer: creates enough scroll room so any message can be scrolled to the top.
+          This is how Claude/ChatGPT allow scrolling the last message to the top of the viewport. */}
+      {messages.length > 0 && scrollParentHeight > 0 && (
+        <div style={{ height: `${Math.max(scrollParentHeight - 150, 0)}px` }} aria-hidden />
+      )}
+
       <div ref={bottomRef} />
 
       {/* R3: "Jump to Latest" button when user scrolled away */}
@@ -749,73 +972,144 @@ export function MessageStream({ messages, isLoading, actionLogs = [] }: Props) {
       </AnimatePresence>
     </div>
   );
+});
+MessageStream.displayName = 'MessageStream';
+
+// LogsSummary component - shows collapsed summary of action logs
+interface LogsSummaryProps {
+  actionLogs: ActionLog[];
+  isExpanded: boolean;
+  onToggle: () => void;
 }
 
-const InlineLogs = memo(({ logs }: { logs: ActionLog[] }) => {
-  const [expanded, setExpanded] = useState(true);
+const LogsSummary: React.FC<LogsSummaryProps> = memo(({ actionLogs, isExpanded, onToggle }) => {
+  const totalActions = actionLogs.length;
+  const hasError = actionLogs.some(log => log.status === 'error');
+  const errorCount = actionLogs.filter(log => log.status === 'error').length;
+
+  // Extract unique top-level tool names
+  const toolNames = Array.from(new Set(actionLogs.map(log => log.tool)));
+  const displayToolNames = toolNames.slice(0, 3);
+  const hasMore = toolNames.length > 3;
+
+  const toolsText = hasMore
+    ? `${displayToolNames.join(', ')}, +${toolNames.length - 3} more`
+    : displayToolNames.join(', ');
+
+  return (
+    <button
+      onClick={onToggle}
+      className="flex items-center gap-2 text-xs text-stone-400 hover:text-stone-200 transition-colors mb-2 px-2 py-1.5 rounded hover:bg-stone-800/30 w-full"
+    >
+      <ChevronDown
+        className={`h-3.5 w-3.5 transition-transform ${isExpanded ? 'rotate-0' : '-rotate-90'}`}
+      />
+      <span className="font-medium">
+        {totalActions} action{totalActions !== 1 ? 's' : ''} completed
+        {hasError && ` (${errorCount} failed)`}
+      </span>
+      {toolNames.length > 0 && (
+        <>
+          <span className="text-stone-500">·</span>
+          <span className="font-mono text-[10px] text-stone-500">{toolsText}</span>
+        </>
+      )}
+    </button>
+  );
+});
+LogsSummary.displayName = 'LogsSummary';
+
+const InlineLogs = memo(({ logs, isExecutionComplete }: { logs: ActionLog[]; isExecutionComplete: boolean }) => {
+  const [isExpanded, setIsExpanded] = useState(() => logs.some(log => log.status === 'pending'));
+  const [manuallyToggled, setManuallyToggled] = useState(false);
 
   const hasRunning = logs.some(log => log.status === 'pending');
-  const hasError = logs.some(log => log.status === 'error');
-  const allSuccess = logs.length > 0 && logs.every(log => log.status === 'success');
+  const allComplete = logs.length > 0 && logs.every(
+    log => log.status === 'success' || log.status === 'error'
+  );
+
+  // Auto-collapse when execution completes, but only if user hasn't manually expanded
+  useEffect(() => {
+    if ((isExecutionComplete || allComplete) && !manuallyToggled) {
+      setIsExpanded(false);
+    }
+  }, [isExecutionComplete, allComplete, manuallyToggled]);
+
+  // Keep expanded while execution is running
+  useEffect(() => {
+    if (hasRunning) {
+      setIsExpanded(true);
+    }
+  }, [hasRunning]);
+
+  const handleToggle = () => {
+    setIsExpanded(prev => !prev);
+    setManuallyToggled(true);
+  };
+
+  if (logs.length === 0) return null;
 
   return (
     <div className="mt-4">
-      <button
-        onClick={() => setExpanded(prev => !prev)}
-        className="flex items-center gap-2 text-[11px] text-stone-400 dark:text-stone-400 hover:text-stone-200 transition-colors"
-      >
-        {expanded ? (
-          <ChevronDown className="w-3.5 h-3.5" />
-        ) : (
-          <ChevronRight className="w-3.5 h-3.5" />
-        )}
-        <span className="flex items-center gap-1.5">
-          Logs & Actions
-          {hasError ? (
-            <XCircle className="w-3.5 h-3.5 text-rose-400" />
-          ) : hasRunning ? (
-            <Loader2 className="w-3.5 h-3.5 text-amber-400 animate-spin" />
-          ) : allSuccess ? (
-            <CheckCircle className="w-3.5 h-3.5 text-emerald-400" />
-          ) : (
-            <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
-          )}
-        </span>
-      </button>
+      <LogsSummary
+        actionLogs={logs}
+        isExpanded={isExpanded}
+        onToggle={handleToggle}
+      />
 
-      {expanded && (
-        <div className="mt-2 space-y-2">
-          {logs.map(log => (
-            <div key={log.id} className="p-2.5 rounded-lg bg-stone-900/50 border border-stone-700/60">
-              <div className="flex items-center gap-2 text-xs">
-                {log.status === 'success' ? (
-                  <CheckCircle className="w-3.5 h-3.5 text-emerald-400" />
-                ) : log.status === 'error' ? (
-                  <XCircle className="w-3.5 h-3.5 text-rose-400" />
-                ) : log.status === 'pending' ? (
-                  <Loader2 className="w-3.5 h-3.5 text-amber-400 animate-spin" />
-                ) : (
-                  <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
-                )}
-                <span className="text-stone-400 font-mono">{log.timestamp}</span>
-                <span className="text-stone-200 font-medium">{log.tool}</span>
-              </div>
-              <div className="text-[11px] text-stone-300 mt-1">{log.description}</div>
-              {log.details && (
-                <div className="text-[10px] text-stone-400 font-mono whitespace-pre-wrap mt-1 rounded-md bg-stone-950/40 border border-stone-800/60 p-2">
-                  {log.details}
-                </div>
-              )}
-              {log.error && (
-                <div className="text-[10px] text-rose-400 font-mono break-all mt-1 rounded-md bg-rose-950/30 border border-rose-900/40 p-2">
-                  {log.error}
-                </div>
-              )}
+      <AnimatePresence>
+        {isExpanded && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="overflow-hidden"
+          >
+            <div className="space-y-2">
+              {logs.map(log => {
+                const { reasoning } = parseReasoning(log.details);
+                
+                return (
+                  <div key={log.id} className="space-y-1">
+                    {/* Reasoning - on its own line above tool */}
+                    {reasoning && (
+                      <div className="text-[11px] text-stone-500 dark:text-stone-400 italic leading-relaxed border-l-2 border-stone-300 dark:border-stone-600 pl-2">
+                        {reasoning}
+                      </div>
+                    )}
+                    {/* Tool execution card */}
+                    <div className="p-2.5 rounded-lg bg-stone-900/50 border border-stone-700/60">
+                      <div className="flex items-center gap-2 text-xs">
+                        {log.status === 'success' ? (
+                          <CheckCircle className="w-3.5 h-3.5 text-emerald-400" />
+                        ) : log.status === 'error' ? (
+                          <XCircle className="w-3.5 h-3.5 text-rose-400" />
+                        ) : log.status === 'pending' ? (
+                          <Loader2 className="w-3.5 h-3.5 text-amber-400 animate-spin" />
+                        ) : (
+                          <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+                        )}
+                        <span className="text-stone-400 font-mono">{log.timestamp}</span>
+                        <span className="text-stone-200 font-medium">{log.tool}</span>
+                      </div>
+                      <div className="text-[11px] text-stone-300 mt-1">{log.description}</div>
+                      {log.error && (
+                        <div className="text-[10px] text-rose-400 font-mono break-all mt-1 rounded-md bg-rose-950/30 border border-rose-900/40 p-2">
+                          {log.error}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
-          ))}
-        </div>
-      )}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 });
 InlineLogs.displayName = 'InlineLogs';
+
+export { MessageStream };

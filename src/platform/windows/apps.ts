@@ -5,6 +5,7 @@ import { promisify } from 'util';
 import { IApps } from '../index';
 import { AppInfo } from '../../shared/types';
 import { logger } from '../../utils/logger';
+import { runPowerShell } from './powershell-pool';
 
 const execAsync = promisify(exec);
 
@@ -22,24 +23,35 @@ export class WindowsApps implements IApps {
 
   async listApps(filter?: 'running' | 'installed' | 'all'): Promise<AppInfo[]> {
     try {
-      const apps: AppInfo[] = [];
+      const needRunning = filter === 'running' || filter === 'all' || !filter;
+      const needInstalled = filter === 'installed' || filter === 'all';
 
-      if (filter === 'running' || filter === 'all' || !filter) {
-        const runningApps = await this.getRunningApps();
-        apps.push(...runningApps);
-      }
-
-      if (filter === 'installed' || filter === 'all') {
-        const installedApps = await this.getInstalledApps();
-        // Avoid duplicates
+      if (needRunning && needInstalled) {
+        // Fetch both in parallel
+        const [runningApps, installedApps] = await Promise.all([
+          this.getRunningApps(),
+          this.getInstalledApps(),
+        ]);
+        const apps: AppInfo[] = [...runningApps];
+        // Use Set for O(1) duplicate lookup instead of O(n) find()
+        const seen = new Set(runningApps.map(a => a.name));
         for (const app of installedApps) {
-          if (!apps.find(a => a.name === app.name)) {
+          if (!seen.has(app.name)) {
+            seen.add(app.name);
             apps.push(app);
           }
         }
+        return apps;
       }
 
-      return apps;
+      if (needRunning) {
+        return await this.getRunningApps();
+      }
+      if (needInstalled) {
+        return await this.getInstalledApps();
+      }
+
+      return [];
     } catch (error) {
       console.error('Error listing apps:', error);
       return [];
@@ -65,7 +77,7 @@ export class WindowsApps implements IApps {
         } | ConvertTo-Json -Compress
       `;
 
-      const { stdout } = await execAsync(`powershell -NoProfile -Command "${script.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`);
+      const { stdout } = await runPowerShell(script);
       
       if (!stdout.trim()) return [];
 
@@ -109,9 +121,7 @@ export class WindowsApps implements IApps {
         $apps | Sort-Object { $_.name } -Unique | Select-Object -First 200 | ConvertTo-Json -Compress
       `;
 
-      const { stdout } = await execAsync(`powershell -NoProfile -Command "${script.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`, {
-        maxBuffer: 10 * 1024 * 1024,
-      });
+      const { stdout } = await runPowerShell(script);
 
       if (!stdout.trim()) return [];
 
@@ -191,7 +201,8 @@ export class WindowsApps implements IApps {
     try {
       const safeName = escapePowerShellString(params.name);
       const forceFlag = params.force ? '-Force' : '';
-      await execAsync(`powershell -NoProfile -Command "Stop-Process -Name '${safeName}' ${forceFlag} -ErrorAction SilentlyContinue"`);
+      const script = `Stop-Process -Name '${safeName}' ${forceFlag} -ErrorAction SilentlyContinue`;
+      await runPowerShell(script);
       return true;
     } catch (error) {
       console.error('Error quitting app:', error);
@@ -203,10 +214,11 @@ export class WindowsApps implements IApps {
     try {
       const safeName = escapePowerShellString(name);
       const script = `
+        if (-not ("Win32AppSwitch" -as [type])) {
         Add-Type @"
         using System;
         using System.Runtime.InteropServices;
-        public class Win32 {
+        public class Win32AppSwitch {
             [DllImport("user32.dll")]
             public static extern bool SetForegroundWindow(IntPtr hWnd);
             [DllImport("user32.dll")]
@@ -215,20 +227,21 @@ export class WindowsApps implements IApps {
             public static extern bool IsIconic(IntPtr hWnd);
         }
 "@
+        }
         $proc = Get-Process -Name '${safeName}' -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($proc -and $proc.MainWindowHandle -ne 0) {
             $handle = $proc.MainWindowHandle
-            if ([Win32]::IsIconic($handle)) {
-                [Win32]::ShowWindow($handle, 9)
+            if ([Win32AppSwitch]::IsIconic($handle)) {
+                [Win32AppSwitch]::ShowWindow($handle, 9)
             }
-            [Win32]::SetForegroundWindow($handle)
+            [Win32AppSwitch]::SetForegroundWindow($handle)
             Write-Output "true"
         } else {
             Write-Output "false"
         }
       `;
 
-      const { stdout } = await execAsync(`powershell -NoProfile -Command "${script.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`);
+      const { stdout } = await runPowerShell(script);
       return stdout.trim() === 'true';
     } catch (error) {
       console.error('Error switching to app:', error);
@@ -318,10 +331,7 @@ try {
 }
 `;
 
-      const { stdout, stderr } = await execAsync(
-        `powershell -NoProfile -ExecutionPolicy Bypass -Command "${script.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`,
-        { timeout: 60000 }
-      );
+      const { stdout, stderr } = await runPowerShell(script);
 
       logger.platform('createPowerPoint result', { stdout: stdout.trim(), stderr: stderr?.trim() });
       return stdout.trim() === 'SUCCESS';

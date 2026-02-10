@@ -7,7 +7,7 @@
  * Usage: npm run train:generate-data
  */
 
-import { desktopCommanderTools } from '../src/tools/index.js';
+import { desktopCommanderTools } from '../src/tools/index';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -105,6 +105,36 @@ function generateExamples(tool: ToolInfo): string[] {
     examples.push('switch to notepad');
     examples.push('bring up firefox');
     examples.push('show calculator');
+  }
+
+  if (baseName === 'window_hide_from_sharing') {
+    examples.push('hide this window from screen sharing');
+    examples.push('hide slack from screen share');
+    examples.push('exclude chrome from sharing');
+    examples.push('make this window invisible on zoom');
+    examples.push('hide browser from screen capture');
+  }
+
+  if (baseName === 'window_show_in_sharing') {
+    examples.push('show this window in screen sharing');
+    examples.push('unhide slack from screen share');
+    examples.push('make chrome visible in sharing');
+    examples.push('show browser in screen capture');
+    examples.push('stop hiding this window');
+  }
+
+  if (baseName === 'window_list_hidden') {
+    examples.push('list hidden windows');
+    examples.push('what windows are hidden');
+    examples.push('show hidden windows');
+    examples.push('which windows are excluded from sharing');
+  }
+
+  if (baseName === 'window_hide_all_sensitive') {
+    examples.push('hide all sensitive windows');
+    examples.push('hide slack and chrome from sharing');
+    examples.push('hide messaging apps from screen share');
+    examples.push('hide email and browser windows');
   }
 
   if (baseName === 'productivity_countdown') {
@@ -220,6 +250,51 @@ async function main() {
     }
 
     console.log(`  Generated ${examples.length} examples`);
+  }
+
+  const skillIntentExamples = [
+    {
+      intent: 'document-creation-pptx',
+      examples: [
+        'create a PowerPoint presentation',
+        'make a slide deck about quarterly results',
+        'build a presentation with 5 slides',
+        'create slides for a product launch',
+      ],
+    },
+    {
+      intent: 'document-creation-docx',
+      examples: [
+        'write a Word document',
+        'create a report in Word',
+        'draft a project proposal document',
+        'generate a formatted document',
+      ],
+    },
+    {
+      intent: 'document-creation-pdf',
+      examples: [
+        'create a PDF report',
+        'export this as a PDF',
+        'generate a PDF summary',
+        'make a PDF with charts',
+      ],
+    },
+    {
+      intent: 'document-creation-xlsx',
+      examples: [
+        'create an Excel spreadsheet',
+        'make a spreadsheet with sales data',
+        'build an xlsx file from this data',
+        'generate a budget spreadsheet',
+      ],
+    },
+  ];
+
+  for (const skill of skillIntentExamples) {
+    for (const example of skill.examples) {
+      trainingData.push(`__label__${skill.intent} ${example}`);
+    }
   }
 
   console.log(`\nTotal training examples: ${trainingData.length}`);

@@ -45,6 +45,11 @@ export interface ISystem {
   lockScreen(): Promise<boolean>;
   sleep(): Promise<boolean>;
   getSystemInfo(params: { sections?: string[] }): Promise<SystemInfoData>;
+  simulatePaste(targetHwnd?: number): Promise<boolean>;
+  getForegroundWindowHandle(): Promise<number>;
+  setForegroundWindow(hwnd: number): Promise<boolean>;
+  getActiveWindowInfo(): Promise<{ appName: string; windowTitle: string; processId: number } | null>;
+  captureSelectedText?(): Promise<string | null>;
 }
 
 // Process Interface
@@ -77,6 +82,55 @@ export interface IServices {
   controlService(params: { service: string; action: 'start' | 'stop' | 'restart' }): Promise<boolean>;
 }
 
+// Media Control Interface
+export interface IMedia {
+  play(): Promise<boolean>;
+  pause(): Promise<boolean>;
+  playPause(): Promise<boolean>;
+  next(): Promise<boolean>;
+  previous(): Promise<boolean>;
+  stop(): Promise<boolean>;
+}
+
+// Browser Automation Interface
+export interface IBrowser {
+  openUrl(url: string, browser?: string): Promise<boolean>;
+  search(query: string, engine?: string): Promise<boolean>;
+  newTab(url?: string): Promise<boolean>;
+  closeTab(): Promise<boolean>;
+  nextTab(): Promise<boolean>;
+  previousTab(): Promise<boolean>;
+  refreshTab(): Promise<boolean>;
+  bookmark(): Promise<boolean>;
+}
+
+// Email Interface
+export interface IEmail {
+  compose(params: { to?: string; cc?: string; bcc?: string; subject?: string; body?: string }): Promise<boolean>;
+  openMailClient(): Promise<boolean>;
+}
+
+// OCR Interface
+export interface Annotation {
+  type: 'rectangle' | 'arrow' | 'text' | 'highlight';
+  x: number;
+  y: number;
+  width?: number;
+  height?: number;
+  endX?: number;
+  endY?: number;
+  color?: string;
+  text?: string;
+  thickness?: number;
+}
+
+export interface IOcr {
+  extractText(imagePath: string): Promise<string>;
+  extractTextFromClipboard(): Promise<string>;
+  extractTextFromRegion(): Promise<string>;
+  annotateScreenshot(imagePath: string, annotations: Annotation[]): Promise<string>;
+}
+
 // Complete Platform Adapter Interface
 export interface IPlatformAdapter {
   readonly platform: 'windows' | 'macos' | 'linux';
@@ -88,6 +142,10 @@ export interface IPlatformAdapter {
   readonly network: INetwork;
   readonly services: IServices;
   readonly wifi: IWifi;
+  readonly media: IMedia;
+  readonly browser: IBrowser;
+  readonly email: IEmail;
+  readonly ocr: IOcr;
 }
 
 // Import all platform adapters statically

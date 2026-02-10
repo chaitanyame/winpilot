@@ -80,7 +80,9 @@ export function updateTrayMenu(): void {
       click: () => {
         showCommandWindow();
         const window = getCommandWindow();
-        window?.webContents.send('ui:openSettings');
+        if (window && !window.isDestroyed() && window.webContents && !window.webContents.isDestroyed()) {
+          window.webContents.send('ui:openSettings');
+        }
       },
     },
     {
@@ -88,7 +90,9 @@ export function updateTrayMenu(): void {
       click: () => {
         showCommandWindow();
         const window = getCommandWindow();
-        window?.webContents.send('ui:openHistory');
+        if (window && !window.isDestroyed() && window.webContents && !window.webContents.isDestroyed()) {
+          window.webContents.send('ui:openHistory');
+        }
       },
     },
     { type: 'separator' },

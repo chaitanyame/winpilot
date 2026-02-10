@@ -53,8 +53,67 @@ export class ParameterExtractor {
       case 'clipboard_write':
         return this.extractClipboardParams(normalizedQuery);
 
+      case 'clipboard_history':
+        return this.extractClipboardHistoryParams(normalizedQuery);
+
+      case 'clipboard_restore':
+        return this.extractClipboardRestoreParams(normalizedQuery);
+
       case 'system_screenshot':
         return this.extractScreenshotParams(normalizedQuery);
+
+      // Media Control - no parameters needed
+      case 'media_play':
+      case 'media_pause':
+      case 'media_play_pause':
+      case 'media_next':
+      case 'media_previous':
+      case 'media_stop':
+        return {};
+
+      // Browser Actions
+      case 'browser_open':
+        return this.extractBrowserOpenParams(normalizedQuery);
+
+      case 'browser_search':
+        return this.extractBrowserSearchParams(normalizedQuery);
+
+      case 'browser_new_tab':
+      case 'browser_close_tab':
+      case 'browser_next_tab':
+      case 'browser_prev_tab':
+      case 'browser_refresh':
+      case 'browser_bookmark':
+        return {};
+
+      // Email Actions
+      case 'email_compose':
+        return this.extractEmailComposeParams(normalizedQuery);
+
+      case 'email_open':
+        return {};
+
+      // OCR Actions
+      case 'ocr_extract':
+        return this.extractOcrParams(normalizedQuery);
+
+      case 'ocr_clipboard':
+      case 'ocr_region':
+        return {};
+
+      // Recording
+      case 'screen_record_start':
+        return this.extractScreenRecordParams(normalizedQuery);
+
+      case 'screen_record_stop':
+      case 'screen_record_status':
+        return {};
+
+      case 'audio_record_start':
+        return this.extractAudioRecordParams(normalizedQuery);
+
+      case 'audio_record_stop':
+        return {};
 
       default:
         return {};
@@ -270,6 +329,55 @@ export class ParameterExtractor {
   }
 
   /**
+   * Extract clipboard history parameters
+   */
+  private extractClipboardHistoryParams(query: string): ExtractedParams {
+    // Extract search query if present
+    const searchMatch = query.match(/(?:search|find|with|containing)\s+["']?([^"']+)["']?/i);
+    if (searchMatch) {
+      return { query: searchMatch[1] };
+    }
+
+    // Extract time-based queries
+    const timeMatch = query.match(/(\d+)\s+(minute|hour|day)s?\s+ago/i);
+    if (timeMatch) {
+      // Return as metadata for filtering
+      return { timeframe: `${timeMatch[1]} ${timeMatch[2]}s ago` };
+    }
+
+    return {};
+  }
+
+  /**
+   * Extract clipboard restore parameters
+   */
+  private extractClipboardRestoreParams(query: string): ExtractedParams {
+    // Extract what to search for
+    const quotedMatch = query.match(/["'](.+)["']/);
+    if (quotedMatch) {
+      return { query: quotedMatch[1] };
+    }
+
+    // Extract URL pattern
+    if (query.toLowerCase().includes('url') || query.toLowerCase().includes('link')) {
+      return { query: 'http' }; // Search for URLs
+    }
+
+    // Extract code pattern
+    if (query.toLowerCase().includes('code')) {
+      return { query: 'function' }; // Search for code
+    }
+
+    // Extract "from X minutes ago"
+    const timeMatch = query.match(/from\s+(\d+)\s+(minute|hour)s?\s+ago/i);
+    if (timeMatch) {
+      return { timeframe: `${timeMatch[1]} ${timeMatch[2]}s` };
+    }
+
+    return {};
+  }
+
+  /**
    * Extract screenshot parameters
    */
   private extractScreenshotParams(query: string): ExtractedParams {
@@ -319,5 +427,153 @@ export class ParameterExtractor {
       cleanQuery = cleanQuery.replace(regex, '');
     }
     return cleanQuery.trim() || null;
+  }
+
+  /**
+   * Extract browser open URL parameters
+   */
+  private extractBrowserOpenParams(query: string): ExtractedParams {
+    // Extract URL from query
+    const urlMatch = query.match(/(https?:\/\/\S+)/i);
+    if (urlMatch) {
+      return { url: urlMatch[1] };
+    }
+
+    // Try to extract domain-like strings (e.g., google.com)
+    const domainMatch = query.match(/(?:open|go to|visit|navigate to)\s+(\S+\.\S+)/i);
+    if (domainMatch) {
+      return { url: domainMatch[1] };
+    }
+
+    // Check for specific browser
+    const browserMatch = query.match(/in (chrome|firefox|edge|brave)/i);
+    if (browserMatch) {
+      const params: ExtractedParams = {};
+      if (domainMatch) params.url = domainMatch[1];
+      params.browser = browserMatch[1].toLowerCase();
+      return params;
+    }
+
+    return {};
+  }
+
+  /**
+   * Extract browser search parameters
+   */
+  private extractBrowserSearchParams(query: string): ExtractedParams {
+    // Check for specific engine
+    const engineMatch = query.match(/(google|bing|duckduckgo|youtube|github)/i);
+    const engine = engineMatch ? engineMatch[1].toLowerCase() : 'google';
+
+    // Extract search query
+    let searchQuery = query
+      .replace(/^(search|google|bing|duckduckgo|youtube|github|look up)\s*/i, '')
+      .replace(/\s*(on|using|with)\s*(google|bing|duckduckgo|youtube|github)/i, '')
+      .replace(/\s*search$/i, '')
+      .trim();
+
+    // Handle "search for X" pattern
+    const forMatch = query.match(/search\s+(?:for\s+)?(.+?)(?:\s+on|\s*$)/i);
+    if (forMatch) {
+      searchQuery = forMatch[1].trim();
+    }
+
+    return { query: searchQuery, engine };
+  }
+
+  /**
+   * Extract email compose parameters
+   */
+  private extractEmailComposeParams(query: string): ExtractedParams {
+    const params: ExtractedParams = {};
+
+    // Extract email address
+    const emailMatch = query.match(/(\S+@\S+\.\S+)/i);
+    if (emailMatch) {
+      params.to = emailMatch[1];
+    }
+
+    // Extract subject from "about X" pattern
+    const aboutMatch = query.match(/about\s+(.+?)(?:\s*$|(?=\s+to\s+))/i);
+    if (aboutMatch) {
+      params.subject = aboutMatch[1].trim();
+    }
+
+    // Extract body if quoted
+    const bodyMatch = query.match(/(?:saying|body|message)\s*["'](.+?)["']/i);
+    if (bodyMatch) {
+      params.body = bodyMatch[1];
+    }
+
+    return params;
+  }
+
+  /**
+   * Extract OCR parameters
+   */
+  private extractOcrParams(query: string): ExtractedParams {
+    // Extract file path
+    const pathMatch = query.match(/(\S+\.(png|jpg|jpeg|bmp|gif))/i);
+    if (pathMatch) {
+      return { imagePath: pathMatch[1] };
+    }
+
+    return {};
+  }
+
+  /**
+   * Extract screen recording parameters
+   */
+  private extractScreenRecordParams(query: string): ExtractedParams {
+    const params: ExtractedParams = {};
+
+    // Extract audio source
+    if (/(no audio|silent|mute)/i.test(query)) {
+      params.audioSource = 'none';
+    } else if (/(microphone|mic)/i.test(query)) {
+      params.audioSource = 'microphone';
+    } else if (/(both|all audio)/i.test(query)) {
+      params.audioSource = 'both';
+    } else if (/(system audio|desktop audio)/i.test(query)) {
+      params.audioSource = 'system';
+    }
+
+    // Extract FPS
+    const fpsMatch = query.match(/(\d+)\s*fps/i);
+    if (fpsMatch) {
+      const fps = parseInt(fpsMatch[1]);
+      if ([15, 30, 60].includes(fps)) {
+        params.fps = fps;
+      }
+    }
+
+    // Check for region capture
+    if (/(region|area|selection|part)/i.test(query)) {
+      params.region = 'selection';
+    }
+
+    return params;
+  }
+
+  /**
+   * Extract audio recording parameters
+   */
+  private extractAudioRecordParams(query: string): ExtractedParams {
+    const params: ExtractedParams = {};
+
+    // Extract source
+    if (/(system audio|desktop audio|stereo mix)/i.test(query)) {
+      params.source = 'system';
+    } else if (/(microphone|mic|voice)/i.test(query)) {
+      params.source = 'microphone';
+    }
+
+    // Extract format
+    const formatMatch = query.match(/\b(mp3|wav|aac)\b/i);
+    if (formatMatch) {
+      params.format = formatMatch[1].toLowerCase();
+    }
+
+    return params;
   }
 }

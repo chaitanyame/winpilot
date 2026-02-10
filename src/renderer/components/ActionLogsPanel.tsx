@@ -8,10 +8,31 @@ interface Props {
   onClose: () => void;
   logs: ActionLog[];
   onClearAll: () => void;
+  variant?: 'modal' | 'sidebar';
 }
 
-export function ActionLogsPanel({ isOpen, onClose, logs, onClearAll }: Props) {
+export function ActionLogsPanel({ isOpen, onClose, logs, onClearAll, variant = 'modal' }: Props) {
   if (!isOpen) return null;
+
+  if (variant === 'sidebar') {
+    return (
+      <div className="h-full w-[420px] bg-[color:var(--app-surface)] border-l border-[color:var(--app-border)] flex flex-col">
+        <div className="px-5 py-4 border-b border-[color:var(--app-border)] flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-[color:var(--app-text)]">Logs & Actions</h2>
+          <button
+            onClick={onClose}
+            className="p-1.5 rounded-lg hover:bg-[color:var(--app-surface-2)] text-[color:var(--app-text-muted)] hover:text-[color:var(--app-text)] transition-colors"
+            title="Close"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        <div className="flex-1 overflow-hidden">
+          <CanvasTab logs={logs} onClearAll={onClearAll} />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <motion.div

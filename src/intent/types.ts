@@ -51,6 +51,14 @@ export interface RouteResult {
   confidence?: number;
   tier?: ClassificationTier;
   reason?: string;
+  /** Tool that was attempted but failed (for LLM fallback context) */
+  failedToolName?: string;
+  /** Error from the failed tool execution */
+  failedError?: string;
+  /** Which tier attempted execution before failing */
+  originalTier?: ClassificationTier;
+  /** Skill ID for JIT context injection */
+  skillId?: string;
 }
 
 /**

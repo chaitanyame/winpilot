@@ -2,6 +2,7 @@
 
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import { runPowerShell } from './powershell-pool';
 
 const execAsync = promisify(exec);
 
@@ -32,7 +33,7 @@ export class WindowsWiFi {
         (Get-NetAdapter | Where-Object { $_.Status -eq 'Up' -and $_.Virtual -eq $false } |
         Where-Object { $_.Name -like '*Wi-Fi*' -or $_.Name -like '*Wireless*' -or $_.Name -like '*WLAN*' }).Name
       `;
-      const { stdout } = await execAsync(`powershell -NoProfile -Command "${script}"`);
+      const { stdout } = await runPowerShell(script);
       const name = stdout.trim();
       return name || WindowsWiFi.WIFI_INTERFACE_NAME;
     } catch {
@@ -80,7 +81,7 @@ export class WindowsWiFi {
         }
       `;
 
-      const { stdout } = await execAsync(`powershell -NoProfile -Command "${script.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`);
+      const { stdout } = await runPowerShell(script);
 
       // Parse the PowerShell output
       const lines = stdout.trim().split('\n');

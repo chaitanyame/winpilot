@@ -1,8 +1,8 @@
 // Electron Store for Settings
 
 import Store from 'electron-store';
-import { Settings, ScheduledTask, TaskLog, Timer } from '../shared/types';
-import { DEFAULT_SETTINGS, DEFAULT_MCP_SERVERS } from '../shared/constants';
+import { Settings, ScheduledTask, TaskLog, Timer, ClipboardEntry } from '../shared/types';
+import { DEFAULT_SETTINGS, getDefaultMcpServers } from '../shared/constants';
 import { StoredMCPServer, MCPServerConfig } from '../shared/mcp-types';
 
 interface StoreSchema {
@@ -20,6 +20,7 @@ interface StoreSchema {
   scheduledTasks: ScheduledTask[];
   taskLogs: TaskLog[];
   activeTimers: Timer[];
+  clipboardHistory: ClipboardEntry[];
 }
 
 let store: Store<StoreSchema>;
@@ -38,6 +39,7 @@ export function initStore(): Store<StoreSchema> {
       scheduledTasks: [],
       taskLogs: [],
       activeTimers: [],
+      clipboardHistory: [],
     },
   });
 
@@ -56,14 +58,11 @@ function ensureDefaultMcpServers(): void {
   const existingIds = new Set(existing.map(s => s.id));
   let added = false;
 
-  for (const defaultServer of DEFAULT_MCP_SERVERS) {
+  const defaultServers = getDefaultMcpServers(); // Get fresh copy each time
+
+  for (const defaultServer of defaultServers) {
     if (!existingIds.has(defaultServer.id)) {
-      // Create with fresh timestamps
-      existing.push({
-        ...defaultServer,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-      });
+      existing.push(defaultServer);
       added = true;
     }
   }
@@ -99,20 +98,92 @@ export function getSettings(): Settings {
     needsUpdate = true;
   }
 
-  // Migrate legacy "whisper" provider (API-based) to local whisper.cpp provider.
-  if (settings.voiceInput?.provider === ('whisper' as any)) {
-    settings.voiceInput.provider = 'whisper_cpp';
+  if (!settings.appearanceMode) {
+    const legacyTheme = (settings as { theme?: Settings['appearanceMode'] }).theme;
+    settings.appearanceMode = legacyTheme || DEFAULT_SETTINGS.appearanceMode;
     needsUpdate = true;
   }
 
-  // Ensure whisper.cpp config exists.
-  if (!settings.voiceInput?.whisperCpp) {
-    settings.voiceInput.whisperCpp = DEFAULT_SETTINGS.voiceInput.whisperCpp;
+  if (!settings.themeId) {
+    settings.themeId = DEFAULT_SETTINGS.themeId;
+    needsUpdate = true;
+  }
+
+  if (!settings.screenSharePrivacy) {
+    settings.screenSharePrivacy = DEFAULT_SETTINGS.screenSharePrivacy;
+    needsUpdate = true;
+  }
+
+  // Migrate browser provider to local_whisper (browser doesn't work in Electron)
+  if (settings.voiceInput?.provider === 'browser') {
+    settings.voiceInput.provider = 'local_whisper';
+    needsUpdate = true;
+  }
+
+  // Ensure localWhisper config exists
+  if (!settings.voiceInput?.localWhisper) {
+    settings.voiceInput.localWhisper = DEFAULT_SETTINGS.voiceInput.localWhisper;
+    needsUpdate = true;
+  }
+
+  // Ensure openaiWhisper config exists.
+  if (!settings.voiceInput?.openaiWhisper) {
+    settings.voiceInput.openaiWhisper = DEFAULT_SETTINGS.voiceInput.openaiWhisper;
+    needsUpdate = true;
+  }
+
+  // Remove old whisperCpp/fasterWhisper config if it exists
+  if (settings.voiceInput && ('whisperCpp' in settings.voiceInput || 'fasterWhisper' in settings.voiceInput)) {
+    delete (settings.voiceInput as any).whisperCpp;
+    delete (settings.voiceInput as any).fasterWhisper;
     needsUpdate = true;
   }
 
   if (settings.ui?.menuBarMode === undefined) {
     settings.ui.menuBarMode = DEFAULT_SETTINGS.ui.menuBarMode;
+    needsUpdate = true;
+  }
+
+  if (settings.ui?.onboardingSeen === undefined) {
+    settings.ui.onboardingSeen = DEFAULT_SETTINGS.ui.onboardingSeen;
+    needsUpdate = true;
+  }
+
+  if (!settings.recording) {
+    settings.recording = DEFAULT_SETTINGS.recording;
+    needsUpdate = true;
+  }
+
+  // Add hotkeys section if missing
+  if (!settings.hotkeys) {
+    settings.hotkeys = DEFAULT_SETTINGS.hotkeys;
+    needsUpdate = true;
+  }
+
+  // Migrate voiceCommand from C to G and add chat hotkey if missing
+  if (settings.hotkeys) {
+    let hotkeysUpdated = false;
+
+    // Add chat hotkey if missing
+    if (!settings.hotkeys.chat) {
+      settings.hotkeys.chat = DEFAULT_SETTINGS.hotkeys.chat;
+      hotkeysUpdated = true;
+    }
+
+    // Migrate voiceCommand from C to G
+    if (settings.hotkeys.voiceCommand === 'CommandOrControl+Shift+C') {
+      settings.hotkeys.voiceCommand = DEFAULT_SETTINGS.hotkeys.voiceCommand;
+      hotkeysUpdated = true;
+    }
+
+    if (hotkeysUpdated) {
+      needsUpdate = true;
+    }
+  }
+
+  // Add contextAwareness section if missing
+  if (!settings.contextAwareness) {
+    settings.contextAwareness = DEFAULT_SETTINGS.contextAwareness;
     needsUpdate = true;
   }
 

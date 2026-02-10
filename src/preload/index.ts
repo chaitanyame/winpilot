@@ -3,16 +3,23 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import { IPC_CHANNELS } from '../shared/types';
 import { MCP_IPC_CHANNELS } from '../shared/mcp-types';
-import type { PermissionRequest, PermissionResponse, ActionLog } from '../shared/types';
+import type { PermissionRequest, PermissionResponse, ActionLog, ClipboardEntry, Recording, WindowInfo, HiddenWindow, ActiveWindowContext } from '../shared/types';
 
 // Expose protected methods to the renderer process
 contextBridge.exposeInMainWorld('electronAPI', {
   // App control
   getSettings: () => ipcRenderer.invoke('app:getSettings'),
   setSettings: (settings: Record<string, unknown>) => ipcRenderer.invoke('app:setSettings', settings),
+  onSettingsUpdated: (callback: (settings: import('../shared/types').Settings) => void) => {
+    const handler = (_: unknown, settings: import('../shared/types').Settings) => callback(settings);
+    ipcRenderer.on(IPC_CHANNELS.APP_SETTINGS_UPDATED, handler);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.APP_SETTINGS_UPDATED, handler);
+  },
   getHistory: () => ipcRenderer.invoke('app:getHistory'),
   clearHistory: () => ipcRenderer.invoke('app:clearHistory'),
   hide: () => ipcRenderer.send('app:hide'),
+  show: () => ipcRenderer.send('app:show'),
+  setAutoHideSuppressed: (value: boolean) => ipcRenderer.invoke('app:autoHideSuppressed', value),
   resize: (height: number) => ipcRenderer.send('app:resize', height),
   minimize: () => ipcRenderer.send(IPC_CHANNELS.APP_WINDOW_MINIMIZE),
   maximize: () => ipcRenderer.send(IPC_CHANNELS.APP_WINDOW_MAXIMIZE),
@@ -26,6 +33,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   windowMinimize: (windowId: string) => ipcRenderer.invoke(IPC_CHANNELS.WINDOW_MINIMIZE, windowId),
   windowMaximize: (windowId: string) => ipcRenderer.invoke(IPC_CHANNELS.WINDOW_MAXIMIZE, windowId),
   windowArrange: (params: unknown) => ipcRenderer.invoke(IPC_CHANNELS.WINDOW_ARRANGE, params),
+
+  // Screen share privacy
+  screenSharePrivacyListWindows: () => ipcRenderer.invoke(IPC_CHANNELS.SCREEN_SHARE_PRIVACY_LIST_WINDOWS),
+  screenSharePrivacyHide: (windowId: string) => ipcRenderer.invoke(IPC_CHANNELS.SCREEN_SHARE_PRIVACY_HIDE, { windowId }),
+  screenSharePrivacyShow: (windowId: string) => ipcRenderer.invoke(IPC_CHANNELS.SCREEN_SHARE_PRIVACY_SHOW, { windowId }),
+  screenSharePrivacyShowAll: () => ipcRenderer.invoke(IPC_CHANNELS.SCREEN_SHARE_PRIVACY_SHOW, { all: true }),
+  screenSharePrivacyListHidden: () => ipcRenderer.invoke(IPC_CHANNELS.SCREEN_SHARE_PRIVACY_LIST_HIDDEN),
+  screenSharePrivacyGetAutoHide: () => ipcRenderer.invoke(IPC_CHANNELS.SCREEN_SHARE_PRIVACY_GET_AUTO_HIDE),
+  screenSharePrivacySetAutoHide: (value: boolean) => ipcRenderer.invoke(IPC_CHANNELS.SCREEN_SHARE_PRIVACY_SET_AUTO_HIDE, value),
 
   // Files
   filesList: (params: unknown) => ipcRenderer.invoke(IPC_CHANNELS.FILES_LIST, params),
@@ -60,9 +76,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Clipboard
   clipboardRead: (format?: string) => ipcRenderer.invoke(IPC_CHANNELS.CLIPBOARD_READ, format),
-  clipboardWrite: (content: string, format?: string) => 
+  clipboardWrite: (content: string, format?: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.CLIPBOARD_WRITE, { content, format }),
   clipboardClear: () => ipcRenderer.invoke(IPC_CHANNELS.CLIPBOARD_CLEAR),
+
+  // Clipboard History
+  clipboardHistoryGet: () => ipcRenderer.invoke(IPC_CHANNELS.CLIPBOARD_HISTORY_GET),
+  clipboardHistoryDelete: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.CLIPBOARD_HISTORY_DELETE, id),
+  clipboardHistoryClear: () => ipcRenderer.invoke(IPC_CHANNELS.CLIPBOARD_HISTORY_CLEAR),
+  clipboardHistoryPin: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.CLIPBOARD_HISTORY_PIN, id),
+  clipboardHistoryRestore: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.CLIPBOARD_HISTORY_RESTORE, id),
+  clipboardHistorySearch: (query: string) => ipcRenderer.invoke(IPC_CHANNELS.CLIPBOARD_HISTORY_SEARCH, query),
+  clipboardHistoryGetImage: (imagePath: string) => ipcRenderer.invoke(IPC_CHANNELS.CLIPBOARD_HISTORY_GET_IMAGE, imagePath),
+  pasteClipboardItem: (entryId: string) => ipcRenderer.invoke('clipboard:pasteItem', entryId),
 
   // Copilot
   sendMessage: (message: string) => ipcRenderer.invoke(IPC_CHANNELS.COPILOT_SEND_MESSAGE, message),
@@ -106,6 +132,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   mcpDelete: (id: string) => ipcRenderer.invoke(MCP_IPC_CHANNELS.MCP_DELETE, id),
   mcpToggle: (id: string) => ipcRenderer.invoke(MCP_IPC_CHANNELS.MCP_TOGGLE, id),
 
+  // Skills
+  skillsList: () => ipcRenderer.invoke(IPC_CHANNELS.SKILLS_LIST),
+  skillsRefresh: () => ipcRenderer.invoke(IPC_CHANNELS.SKILLS_REFRESH),
+
   // Scheduled Tasks
   taskList: () => ipcRenderer.invoke('task:list'),
   taskAdd: (task: unknown) => ipcRenderer.invoke('task:add', task),
@@ -144,6 +174,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
   voiceIsRecording: () => ipcRenderer.invoke('voice:isRecording'),
   voiceTranscribe: (params: { audio: ArrayBuffer; mimeType: string; language?: string }) =>
     ipcRenderer.invoke('voice:transcribe', params),
+  voiceGetApiKeyStatus: () => ipcRenderer.invoke('voice:getApiKeyStatus'),
+  voiceSetApiKey: (apiKey: string) => ipcRenderer.invoke('voice:setApiKey', apiKey),
+  voiceClearApiKey: () => ipcRenderer.invoke('voice:clearApiKey'),
+
+  // Voice-to-clipboard API (Ctrl+Shift+W)
+  voiceToClipboardTranscribe: (params: { audio: ArrayBuffer; mimeType: string; language?: string }) =>
+    ipcRenderer.invoke('voiceToClipboard:transcribe', params),
+  voiceToClipboardIsRecording: () => ipcRenderer.invoke('voiceToClipboard:isRecording'),
+  voiceToClipboardPaste: () => ipcRenderer.invoke('voiceToClipboard:paste'),
+  
+  onVoiceToClipboardStop: (callback: () => void) => {
+    const handler = () => callback();
+    ipcRenderer.on('voiceToClipboard:stop', handler);
+    return () => ipcRenderer.removeListener('voiceToClipboard:stop', handler);
+  },
 
   onVoiceRecordingStarted: (callback: () => void) => {
     const handler = () => callback();
@@ -167,6 +212,65 @@ contextBridge.exposeInMainWorld('electronAPI', {
     const handler = (_: unknown, error: string) => callback(error);
     ipcRenderer.on('voice:error', handler);
     return () => ipcRenderer.removeListener('voice:error', handler);
+  },
+
+  // Audio capture helper window API (for getUserMedia workaround)
+  // Main renderer uses these to request audio capture
+  startAudioCapture: () => ipcRenderer.invoke('audioCapture:startCapture'),
+  stopAudioCapture: () => ipcRenderer.invoke('audioCapture:stopCapture'),
+  
+  // Audio capture helper window uses these to communicate back
+  onAudioCaptureStart: (callback: () => void) => {
+    const handler = () => callback();
+    ipcRenderer.on('audioCapture:start', handler);
+    return () => ipcRenderer.removeListener('audioCapture:start', handler);
+  },
+  onAudioCaptureStop: (callback: () => void) => {
+    const handler = () => callback();
+    ipcRenderer.on('audioCapture:stop', handler);
+    return () => ipcRenderer.removeListener('audioCapture:stop', handler);
+  },
+  audioCaptureWindowReady: () => ipcRenderer.send('audioCapture:windowReady'),
+  audioCaptureReady: (sampleRate: number) => ipcRenderer.send('audioCapture:ready', sampleRate),
+  audioCaptureStopped: (samples: Float32Array[], sampleRate: number) => {
+    // Convert Float32Arrays to regular arrays for IPC serialization
+    const serializedSamples = samples.map(arr => Array.from(arr));
+    ipcRenderer.send('audioCapture:stopped', serializedSamples, sampleRate);
+  },
+  audioCaptureError: (error: string) => ipcRenderer.send('audioCapture:error', error),
+  
+  // Listen for audio data from the audio capture helper window
+  onAudioCaptureData: (callback: (data: { samples: number[][]; sampleRate: number }) => void) => {
+    const handler = (_: unknown, data: { samples: number[][]; sampleRate: number }) => callback(data);
+    ipcRenderer.on('audioCapture:data', handler);
+    return () => ipcRenderer.removeListener('audioCapture:data', handler);
+  },
+
+  // Hotkey events
+  onHotkeyClipboardHistory: (callback: () => void) => {
+    const handler = () => callback();
+    ipcRenderer.on('hotkey:clipboardHistory', handler);
+    return () => ipcRenderer.removeListener('hotkey:clipboardHistory', handler);
+  },
+  onHotkeyVoiceTranscribe: (callback: () => void) => {
+    const handler = () => callback();
+    ipcRenderer.on('hotkey:voiceTranscribe', handler);
+    return () => ipcRenderer.removeListener('hotkey:voiceTranscribe', handler);
+  },
+  onHotkeyVoiceCommand: (callback: () => void) => {
+    const handler = () => callback();
+    ipcRenderer.on('hotkey:voiceCommand', handler);
+    return () => ipcRenderer.removeListener('hotkey:voiceCommand', handler);
+  },
+  onHotkeyAudioRecording: (callback: () => void) => {
+    const handler = () => callback();
+    ipcRenderer.on('hotkey:audioRecording', handler);
+    return () => ipcRenderer.removeListener('hotkey:audioRecording', handler);
+  },
+  onHotkeyVideoRecording: (callback: () => void) => {
+    const handler = () => callback();
+    ipcRenderer.on('hotkey:videoRecording', handler);
+    return () => ipcRenderer.removeListener('hotkey:videoRecording', handler);
   },
 
   // Action log export
@@ -256,15 +360,80 @@ contextBridge.exposeInMainWorld('electronAPI', {
   menubarHide: () => ipcRenderer.invoke('menubar:hide'),
   menubarToggle: () => ipcRenderer.invoke('menubar:toggle'),
   menubarIsActive: () => ipcRenderer.invoke('menubar:isActive'),
+
+  // Dialog API
+  selectFolder: (options?: { title?: string; defaultPath?: string }) =>
+    ipcRenderer.invoke('dialog:selectFolder', options),
+  getAppPath: () => ipcRenderer.invoke('app:getAppPath'),
+
+  // Recording API
+  recordingList: () => ipcRenderer.invoke(IPC_CHANNELS.RECORDING_LIST),
+  recordingGet: (idOrType?: string) => ipcRenderer.invoke(IPC_CHANNELS.RECORDING_GET, idOrType),
+  recordingDelete: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.RECORDING_DELETE, id),
+  recordingOpen: (filePath: string) => ipcRenderer.invoke(IPC_CHANNELS.RECORDING_OPEN, filePath),
+  recordingOpenFolder: (filePath: string) => ipcRenderer.invoke(IPC_CHANNELS.RECORDING_OPEN_FOLDER, filePath),
+  recordingStop: (idOrType?: string) => ipcRenderer.invoke(IPC_CHANNELS.RECORDING_STOP, idOrType),
+  onRecordingProgress: (callback: (recording: Recording) => void) => {
+    const handler = (_: unknown, recording: Recording) => callback(recording);
+    ipcRenderer.on(IPC_CHANNELS.RECORDING_PROGRESS, handler);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.RECORDING_PROGRESS, handler);
+  },
+  onRecordingUpdated: (callback: (recording: Recording) => void) => {
+    const handler = (_: unknown, recording: Recording) => callback(recording);
+    ipcRenderer.on(IPC_CHANNELS.RECORDING_UPDATED, handler);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.RECORDING_UPDATED, handler);
+  },
+  subscribeToRecordings: () => ipcRenderer.send(IPC_CHANNELS.RECORDING_SUBSCRIBE),
+
+  // Context Awareness API
+  getActiveContext: () => ipcRenderer.invoke(IPC_CHANNELS.CONTEXT_GET),
+  clearActiveContext: () => ipcRenderer.invoke(IPC_CHANNELS.CONTEXT_CLEAR),
+
+  // Notes API
+  notesList: (limit?: number) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_LIST, limit),
+  notesGet: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_GET, id),
+  notesCreate: (params: { title: string; content?: string }) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_CREATE, params),
+  notesUpdate: (params: { id: string; title?: string; content?: string }) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_UPDATE, params),
+  notesDelete: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_DELETE, id),
+  notesSearch: (params: { query: string; limit?: number }) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_SEARCH, params),
+
+  // Todos API
+  todosList: (filter?: 'all' | 'active' | 'completed') => ipcRenderer.invoke(IPC_CHANNELS.TODOS_LIST, filter),
+  todosCreate: (text: string) => ipcRenderer.invoke(IPC_CHANNELS.TODOS_CREATE, text),
+  todosComplete: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.TODOS_COMPLETE, id),
+  todosDelete: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.TODOS_DELETE, id),
+
+  // Session Compaction API
+  copilotCompactSession: () => ipcRenderer.invoke(IPC_CHANNELS.COPILOT_COMPACT_SESSION),
+
+  // OSD events (renderer listens)
+  onOSDUpdate: (callback: (data: { type: string; value: number; label?: string }) => void) => {
+    const handler = (_: unknown, data: { type: string; value: number; label?: string }) => callback(data);
+    ipcRenderer.on('osd:update', handler);
+    return () => ipcRenderer.removeListener('osd:update', handler);
+  },
+  onOSDHide: (callback: () => void) => {
+    const handler = () => callback();
+    ipcRenderer.on('osd:hide', handler);
+    return () => ipcRenderer.removeListener('osd:hide', handler);
+  },
+
+  // TTS API
+  ttsSpeakText: (params: { text: string; voice?: string; rate?: number; volume?: number }) =>
+    ipcRenderer.invoke(IPC_CHANNELS.TTS_SPEAK, params),
+  ttsStop: () => ipcRenderer.invoke(IPC_CHANNELS.TTS_STOP),
+  ttsListVoices: () => ipcRenderer.invoke(IPC_CHANNELS.TTS_LIST_VOICES),
 });
 
 // Type definitions for the exposed API
 export interface ElectronAPI {
   getSettings: () => Promise<unknown>;
   setSettings: (settings: Record<string, unknown>) => Promise<unknown>;
+  onSettingsUpdated: (callback: (settings: import('../shared/types').Settings) => void) => () => void;
   getHistory: () => Promise<unknown>;
   clearHistory: () => Promise<void>;
   hide: () => void;
+  show: () => void;
   resize: (height: number) => void;
   minimize: () => void;
   maximize: () => void;
@@ -277,6 +446,13 @@ export interface ElectronAPI {
   windowMinimize: (windowId: string) => Promise<unknown>;
   windowMaximize: (windowId: string) => Promise<unknown>;
   windowArrange: (params: unknown) => Promise<unknown>;
+  screenSharePrivacyListWindows: () => Promise<WindowInfo[]>;
+  screenSharePrivacyHide: (windowId: string) => Promise<{ success: boolean; error?: string }>;
+  screenSharePrivacyShow: (windowId: string) => Promise<{ success: boolean; error?: string }>;
+  screenSharePrivacyShowAll: () => Promise<{ success: boolean; error?: string }>;
+  screenSharePrivacyListHidden: () => Promise<HiddenWindow[]>;
+  screenSharePrivacyGetAutoHide: () => Promise<boolean>;
+  screenSharePrivacySetAutoHide: (value: boolean) => Promise<boolean>;
   
   filesList: (params: unknown) => Promise<unknown>;
   filesSearch: (params: unknown) => Promise<unknown>;
@@ -308,7 +484,16 @@ export interface ElectronAPI {
   clipboardRead: (format?: string) => Promise<string>;
   clipboardWrite: (content: string, format?: string) => Promise<boolean>;
   clipboardClear: () => Promise<boolean>;
-  
+
+  clipboardHistoryGet: () => Promise<ClipboardEntry[]>;
+  clipboardHistoryDelete: (id: string) => Promise<boolean>;
+  clipboardHistoryClear: () => Promise<boolean>;
+  clipboardHistoryPin: (id: string) => Promise<boolean>;
+  clipboardHistoryRestore: (id: string) => Promise<boolean>;
+  clipboardHistorySearch: (query: string) => Promise<ClipboardEntry[]>;
+  clipboardHistoryGetImage: (imagePath: string) => Promise<string | null>;
+  pasteClipboardItem: (entryId: string) => Promise<{ success: boolean; error?: string }>;
+
   sendMessage: (message: string) => Promise<void>;
   cancelMessage: () => Promise<void>;
   clearSession: () => Promise<void>;
@@ -330,6 +515,9 @@ export interface ElectronAPI {
   mcpDelete: (id: string) => Promise<boolean>;
   mcpToggle: (id: string) => Promise<unknown>;
 
+  skillsList: () => Promise<import('../shared/types').SkillSummary[]>;
+  skillsRefresh: () => Promise<import('../shared/types').SkillSummary[]>;
+
   taskList: () => Promise<unknown>;
   taskAdd: (task: unknown) => Promise<unknown>;
   taskUpdate: (id: string, updates: unknown) => Promise<unknown>;
@@ -346,11 +534,32 @@ export interface ElectronAPI {
 
   voiceTest: () => Promise<{ success: boolean }>;
   voiceIsRecording: () => Promise<boolean>;
+  setAutoHideSuppressed: (value: boolean) => Promise<void>;
   onVoiceRecordingStarted: (callback: () => void) => () => void;
   onVoiceRecordingStopped: (callback: () => void) => () => void;
   onVoiceTranscript: (callback: (transcript: string) => void) => () => void;
   onVoiceError: (callback: (error: string) => void) => () => void;
   voiceTranscribe: (params: { audio: ArrayBuffer; mimeType: string; language?: string }) => Promise<{ success: boolean; transcript?: string; error?: string }>;
+  voiceGetApiKeyStatus: () => Promise<{ hasKey: boolean }>;
+  voiceSetApiKey: (apiKey: string) => Promise<{ success: boolean }>;
+  voiceClearApiKey: () => Promise<{ success: boolean }>;
+
+  // Voice-to-clipboard API (Ctrl+Shift+W)
+  voiceToClipboardTranscribe: (params: { audio: ArrayBuffer; mimeType: string; language?: string }) => Promise<{ success: boolean; transcript?: string; error?: string }>;
+  voiceToClipboardIsRecording: () => Promise<boolean>;
+  voiceToClipboardPaste: () => Promise<{ success: boolean; error?: string }>;
+  onVoiceToClipboardStop: (callback: () => void) => () => void;
+
+  // Audio capture helper window API
+  startAudioCapture: () => Promise<{ success: boolean; sampleRate?: number; error?: string }>;
+  stopAudioCapture: () => Promise<{ success: boolean; samples?: number[][]; sampleRate?: number; error?: string }>;
+
+  // Hotkey event listeners
+  onHotkeyClipboardHistory: (callback: () => void) => () => void;
+  onHotkeyVoiceTranscribe: (callback: () => void) => () => void;
+  onHotkeyVoiceCommand: (callback: () => void) => () => void;
+  onHotkeyAudioRecording: (callback: () => void) => () => void;
+  onHotkeyVideoRecording: (callback: () => void) => () => void;
 
   exportActionLogs: (payload: { logs: ActionLog[]; suggestedName?: string }) => Promise<{ success: boolean; path?: string; cancelled?: boolean; error?: string }>;
   onOpenSettings: (callback: () => void) => () => void;
@@ -392,6 +601,49 @@ export interface ElectronAPI {
   menubarHide: () => Promise<void>;
   menubarToggle: () => Promise<void>;
   menubarIsActive: () => Promise<boolean>;
+
+  selectFolder: (options?: { title?: string; defaultPath?: string }) => Promise<{ cancelled: boolean; path?: string }>;
+  getAppPath: () => Promise<string>;
+
+  recordingList: () => Promise<Recording[]>;
+  recordingGet: (idOrType?: string) => Promise<Recording | null>;
+  recordingDelete: (id: string) => Promise<{ success: boolean; error?: string }>;
+  recordingOpen: (filePath: string) => Promise<{ success: boolean; error?: string }>;
+  recordingOpenFolder: (filePath: string) => Promise<{ success: boolean }>;
+  recordingStop: (idOrType?: string) => Promise<{ success: boolean; recording?: Recording; error?: string }>;
+  onRecordingProgress: (callback: (recording: Recording) => void) => () => void;
+  onRecordingUpdated: (callback: (recording: Recording) => void) => () => void;
+  subscribeToRecordings: () => void;
+
+  // Context Awareness API
+  getActiveContext: () => Promise<ActiveWindowContext | null>;
+  clearActiveContext: () => Promise<void>;
+
+  // Notes API
+  notesList: (limit?: number) => Promise<import('../shared/types').Note[]>;
+  notesGet: (id: string) => Promise<import('../shared/types').Note | null>;
+  notesCreate: (params: { title: string; content?: string }) => Promise<import('../shared/types').Note>;
+  notesUpdate: (params: { id: string; title?: string; content?: string }) => Promise<import('../shared/types').Note | null>;
+  notesDelete: (id: string) => Promise<boolean>;
+  notesSearch: (params: { query: string; limit?: number }) => Promise<import('../shared/types').Note[]>;
+
+  // Todos API
+  todosList: (filter?: 'all' | 'active' | 'completed') => Promise<import('../shared/types').Todo[]>;
+  todosCreate: (text: string) => Promise<import('../shared/types').Todo>;
+  todosComplete: (id: string) => Promise<import('../shared/types').Todo | null>;
+  todosDelete: (id: string) => Promise<boolean>;
+
+  // Session Compaction API
+  copilotCompactSession: () => Promise<{ success: boolean; summary?: string; error?: string }>;
+
+  // OSD events
+  onOSDUpdate: (callback: (data: { type: string; value: number; label?: string }) => void) => () => void;
+  onOSDHide: (callback: () => void) => () => void;
+
+  // TTS API
+  ttsSpeakText: (params: { text: string; voice?: string; rate?: number; volume?: number }) => Promise<boolean>;
+  ttsStop: () => Promise<void>;
+  ttsListVoices: () => Promise<Array<{ name: string; culture: string; gender: string }>>;
 }
 
 declare global {

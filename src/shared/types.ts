@@ -18,6 +18,7 @@ export interface WindowInfo {
   isMinimized: boolean;
   isMaximized: boolean;
   isFocused: boolean;
+  isHiddenFromCapture: boolean;
 }
 
 export interface Bounds {
@@ -25,6 +26,15 @@ export interface Bounds {
   y: number;
   width: number;
   height: number;
+}
+
+// Active Window Context
+export interface ActiveWindowContext {
+  appName: string;        // e.g., "chrome", "Code", "explorer"
+  windowTitle: string;    // e.g., "GitHub - Google Chrome"
+  processId?: number;
+  selectedText?: string;  // Optional: captured via clipboard trick
+  capturedAt: number;     // Timestamp
 }
 
 // File system types
@@ -134,6 +144,16 @@ export interface ToolCall {
   error?: string;
 }
 
+export interface SkillSummary {
+  id: string;
+  name: string;
+  description: string;
+  source: 'builtin' | 'user';
+  license?: string;
+  triggers?: string[];
+  path: string;
+}
+
 // Permission request
 export interface PermissionRequest {
   id: string;
@@ -150,10 +170,19 @@ export interface PermissionResponse {
   options?: Record<string, unknown>;
 }
 
+// Appearance settings
+export type AppearanceMode = 'light' | 'dark' | 'system';
+export type ThemeId = 'twitter' | 'claude' | 'neo-brutalism' | 'retro-arcade' | 'aurora' | 'business';
+
 // Settings
 export interface Settings {
   hotkey: string;
-  theme: 'light' | 'dark' | 'system';
+  appearanceMode: AppearanceMode;
+  themeId: ThemeId;
+  screenSharePrivacy: {
+    enabled: boolean;
+    autoHideOnShare: boolean;
+  };
   permissions: {
     defaultLevel: PermissionLevel;
     rememberChoices: boolean;
@@ -168,6 +197,7 @@ export interface Settings {
     floatingWindow: boolean;
     toastNotifications: boolean;
     menuBarMode: boolean;
+    onboardingSeen: boolean;
   };
   safety: {
     maxFilesPerOperation: number;
@@ -189,15 +219,45 @@ export interface Settings {
   voiceInput: {
     enabled: boolean;
     hotkey: string;
-    provider: 'browser' | 'whisper_cpp';
-    whisperCpp: {
-      /** Path to whisper.cpp CLI executable (e.g. whisper-cli/main). */
-      binaryPath: string;
-      /** Path to a ggml/gguf model file (e.g. ggml-base.en.bin). */
-      modelPath: string;
+    provider: 'browser' | 'openai_whisper' | 'local_whisper';
+    openaiWhisper: {
+      /** OpenAI API key for Whisper API. */
+      apiKey: string;
+      /** Model name (default: whisper-1). */
+      model: string;
+    };
+    localWhisper: {
+      /** Model size: tiny, base, small, medium, large */
+      modelSize: 'tiny' | 'base' | 'small' | 'medium' | 'large';
     };
     language: string;
     showVisualFeedback: boolean;
+    /** Auto-paste transcription after voice-to-clipboard (Ctrl+Shift+W) */
+    autoPasteOnTranscribe?: boolean;
+  };
+  recording: {
+    /** Output folder for recordings. Empty string means app directory. */
+    outputPath: string;
+  };
+  hotkeys: {
+    /** Hotkey to open clipboard history (default: Ctrl+Shift+H) */
+    clipboardHistory: string;
+    /** Hotkey for speech-to-text transcription only (default: Ctrl+Shift+T) */
+    voiceTranscribe: string;
+    /** Hotkey for speech-to-command execution (default: Ctrl+Shift+G) */
+    voiceCommand: string;
+    /** Hotkey to open the chat panel (default: Ctrl+Shift+C) */
+    chat: string;
+    /** Hotkey to start/stop audio recording (default: Ctrl+Shift+A) */
+    audioRecording: string;
+    /** Hotkey to start/stop video recording (default: Ctrl+Shift+R) */
+    videoRecording: string;
+  };
+  contextAwareness: {
+    enabled: boolean;
+    captureSelectedText: boolean;
+    showContextBadge: boolean;
+    injectionStyle: 'visible' | 'hidden';  // visible = prepend to message, hidden = system prompt
   };
 }
 
@@ -248,10 +308,20 @@ export const IPC_CHANNELS = {
   CLIPBOARD_WRITE: 'clipboard:write',
   CLIPBOARD_CLEAR: 'clipboard:clear',
 
+  // Clipboard History
+  CLIPBOARD_HISTORY_GET: 'clipboard:history:get',
+  CLIPBOARD_HISTORY_DELETE: 'clipboard:history:delete',
+  CLIPBOARD_HISTORY_CLEAR: 'clipboard:history:clear',
+  CLIPBOARD_HISTORY_PIN: 'clipboard:history:pin',
+  CLIPBOARD_HISTORY_RESTORE: 'clipboard:history:restore',
+  CLIPBOARD_HISTORY_SEARCH: 'clipboard:history:search',
+  CLIPBOARD_HISTORY_GET_IMAGE: 'clipboard:history:getImage',
+
   // App control
   APP_TOGGLE_WINDOW: 'app:toggleWindow',
   APP_GET_SETTINGS: 'app:getSettings',
   APP_SET_SETTINGS: 'app:setSettings',
+  APP_SETTINGS_UPDATED: 'app:settingsUpdated',
   APP_PERMISSION_REQUEST: 'app:permissionRequest',
   APP_PERMISSION_RESPONSE: 'app:permissionResponse',
 
@@ -267,7 +337,64 @@ export const IPC_CHANNELS = {
   COPILOT_CANCEL: 'copilot:cancel',
   COPILOT_CLEAR_SESSION: 'copilot:clearSession',
   COPILOT_ACTION_LOG: 'copilot:actionLog',
+
+  // Recording
+  RECORDING_LIST: 'recording:list',
+  RECORDING_GET: 'recording:get',
+  RECORDING_DELETE: 'recording:delete',
+  RECORDING_OPEN: 'recording:open',
+  RECORDING_OPEN_FOLDER: 'recording:openFolder',
+  RECORDING_STOP: 'recording:stop',
+  RECORDING_SUBSCRIBE: 'recording:subscribe',
+  RECORDING_UPDATED: 'recording:updated',
+  RECORDING_PROGRESS: 'recording:progress',
+
+  // Screen share privacy
+  SCREEN_SHARE_PRIVACY_LIST_WINDOWS: 'screen-share-privacy:list-windows',
+  SCREEN_SHARE_PRIVACY_HIDE: 'screen-share-privacy:hide',
+  SCREEN_SHARE_PRIVACY_SHOW: 'screen-share-privacy:show',
+  SCREEN_SHARE_PRIVACY_LIST_HIDDEN: 'screen-share-privacy:list-hidden',
+  SCREEN_SHARE_PRIVACY_GET_AUTO_HIDE: 'screen-share-privacy:get-auto-hide',
+  SCREEN_SHARE_PRIVACY_SET_AUTO_HIDE: 'screen-share-privacy:set-auto-hide',
+
+  // Context Awareness
+  CONTEXT_GET: 'context:get',
+  CONTEXT_CLEAR: 'context:clear',
+
+  // Skills
+  SKILLS_LIST: 'skills:list',
+  SKILLS_REFRESH: 'skills:refresh',
+
+  // Notes
+  NOTES_LIST: 'notes:list',
+  NOTES_GET: 'notes:get',
+  NOTES_CREATE: 'notes:create',
+  NOTES_UPDATE: 'notes:update',
+  NOTES_DELETE: 'notes:delete',
+  NOTES_SEARCH: 'notes:search',
+
+  // Todos
+  TODOS_LIST: 'todos:list',
+  TODOS_CREATE: 'todos:create',
+  TODOS_COMPLETE: 'todos:complete',
+  TODOS_DELETE: 'todos:delete',
+
+  // Session Compaction
+  COPILOT_COMPACT_SESSION: 'copilot:compactSession',
+
+  // TTS
+  TTS_SPEAK: 'tts:speak',
+  TTS_STOP: 'tts:stop',
+  TTS_LIST_VOICES: 'tts:listVoices',
 } as const;
+
+export interface HiddenWindow {
+  hwnd: string;
+  pid: number;
+  title: string;
+  appName: string;
+  hiddenAt: number;
+}
 
 // Tool definitions for Copilot
 export interface ToolDefinition {
@@ -315,6 +442,7 @@ export interface AgenticLoopConfig {
   maxTotalTimeMinutes: number;
   iterationTimeoutSeconds: number;
   model?: AIModel;
+  autoCompactThreshold: number;
 }
 
 // Tool execution record for agentic loop
@@ -404,4 +532,111 @@ export interface ActionLog {
   duration?: number; // milliseconds
   details?: string;
   error?: string;
+}
+
+// Clipboard History types
+export type ClipboardContentType = 'text' | 'image' | 'files';
+
+interface ClipboardEntryBase {
+  id: string;
+  timestamp: number;
+  pinned: boolean;
+  size: number;
+  type: ClipboardContentType;
+}
+
+export interface TextClipboardEntry extends ClipboardEntryBase {
+  type: 'text';
+  content: string;
+}
+
+export interface ImageClipboardEntry extends ClipboardEntryBase {
+  type: 'image';
+  thumbnailPath: string;
+  imagePath: string;
+  width: number;
+  height: number;
+  format: 'png' | 'jpeg';
+}
+
+export interface ClipboardFileReference {
+  path: string;
+  name: string;
+  extension: string;
+  isDirectory: boolean;
+}
+
+export interface FilesClipboardEntry extends ClipboardEntryBase {
+  type: 'files';
+  files: ClipboardFileReference[];
+}
+
+export type ClipboardEntry = TextClipboardEntry | ImageClipboardEntry | FilesClipboardEntry;
+
+// Recording Status
+export enum RecordingStatus {
+  IDLE = 'idle',
+  RECORDING = 'recording',
+  PAUSED = 'paused',
+  STOPPING = 'stopping',
+  COMPLETED = 'completed',
+  ERROR = 'error'
+}
+
+// Recording Type
+export enum RecordingType {
+  SCREEN = 'screen',
+  AUDIO = 'audio',
+  WEBCAM = 'webcam'
+}
+
+// Audio Source
+export enum AudioSource {
+  NONE = 'none',
+  SYSTEM = 'system',
+  MICROPHONE = 'microphone',
+  BOTH = 'both'
+}
+
+// Recording interface
+export interface Recording {
+  id: string;
+  type: RecordingType;
+  status: RecordingStatus;
+  audioSource: AudioSource;
+  filename: string;
+  outputPath: string;
+  startTime: number;
+  endTime?: number;
+  duration: number;
+  fileSize: number;
+  fps?: number;
+  region?: { x: number; y: number; width: number; height: number };
+  error?: string;
+}
+
+// Recording Region
+export interface RecordingRegion {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+// Notes
+export interface Note {
+  id: string;
+  title: string;
+  content: string;
+  created_at: number;
+  updated_at: number;
+}
+
+// Todos
+export interface Todo {
+  id: string;
+  text: string;
+  completed: boolean;
+  created_at: number;
+  updated_at: number;
 }

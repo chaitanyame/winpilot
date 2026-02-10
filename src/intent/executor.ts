@@ -9,6 +9,71 @@ import { ToolExecutionResult } from './types';
 import { desktopCommanderTools } from '../tools';
 import { logger } from '../utils/logger';
 
+/** Telemetry entry for a single tool execution */
+export interface ToolTelemetryEntry {
+  tool: string;
+  latencyMs: number;
+  success: boolean;
+  tier: number;
+  timestamp: number;
+}
+
+/** Aggregated stats for a tool */
+export interface ToolTelemetryStats {
+  tool: string;
+  calls: number;
+  avgLatencyMs: number;
+  p95LatencyMs: number;
+  successRate: number;
+}
+
+// Ring buffer of recent tool executions (last 500)
+const TELEMETRY_BUFFER_SIZE = 500;
+const telemetryBuffer: ToolTelemetryEntry[] = [];
+
+/** Record a tool execution for telemetry */
+export function recordToolExecution(entry: ToolTelemetryEntry): void {
+  if (telemetryBuffer.length >= TELEMETRY_BUFFER_SIZE) {
+    telemetryBuffer.shift();
+  }
+  telemetryBuffer.push(entry);
+}
+
+/** Get aggregated telemetry stats per tool */
+export function getToolTelemetryStats(): ToolTelemetryStats[] {
+  const groups = new Map<string, ToolTelemetryEntry[]>();
+  for (let i = 0; i < telemetryBuffer.length; i++) {
+    const entry = telemetryBuffer[i];
+    let arr = groups.get(entry.tool);
+    if (!arr) {
+      arr = [];
+      groups.set(entry.tool, arr);
+    }
+    arr.push(entry);
+  }
+
+  const stats: ToolTelemetryStats[] = [];
+  groups.forEach((entries, tool) => {
+    const latencies = entries.map(e => e.latencyMs).sort((a, b) => a - b);
+    const sum = latencies.reduce((a, b) => a + b, 0);
+    const p95Idx = Math.min(Math.floor(latencies.length * 0.95), latencies.length - 1);
+    stats.push({
+      tool,
+      calls: entries.length,
+      avgLatencyMs: Math.round(sum / entries.length),
+      p95LatencyMs: latencies[p95Idx],
+      successRate: entries.filter(e => e.success).length / entries.length,
+    });
+  });
+
+  return stats.sort((a, b) => b.calls - a.calls);
+}
+
+/** Get raw telemetry buffer (most recent entries) */
+export function getRawTelemetry(limit = 50): ToolTelemetryEntry[] {
+  return telemetryBuffer.slice(-limit);
+}
+
 /**
  * Tool Executor Class
  * Executes tools directly without going through the LLM
@@ -65,17 +130,31 @@ export class ToolExecutor {
       const result = await handler(params);
 
       const latency = Date.now() - startTime;
-      logger.copilot(`Tool executed: ${toolName}`, { latency: `${latency}ms` });
+      const response = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
 
-      // Return the result in the expected format
+      // Detect soft failures: handlers that return error strings instead of throwing
+      if (typeof result === 'string' && this.isErrorResponse(result)) {
+        logger.copilot(`Tool returned error response: ${toolName}`, { response: result.substring(0, 100), latency: `${latency}ms` });
+        recordToolExecution({ tool: toolName, latencyMs: latency, success: false, tier: 0, timestamp: Date.now() });
+        return {
+          success: false,
+          response,
+          error: result,
+        };
+      }
+
+      logger.copilot(`Tool executed: ${toolName}`, { latency: `${latency}ms` });
+      recordToolExecution({ tool: toolName, latencyMs: latency, success: true, tier: 0, timestamp: Date.now() });
+
       return {
         success: true,
-        response: typeof result === 'string' ? result : JSON.stringify(result, null, 2),
+        response,
       };
     } catch (error) {
       const latency = Date.now() - startTime;
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.copilot(`Tool execution failed: ${toolName}`, { error: errorMessage, latency: `${latency}ms` });
+      recordToolExecution({ tool: toolName, latencyMs: latency, success: false, tier: 0, timestamp: Date.now() });
 
       return {
         success: false,
@@ -103,12 +182,29 @@ export class ToolExecutor {
    * Format execution result for streaming
    * Matches the format expected by the IPC handler
    */
-  formatForStreaming(result: ToolExecutionResult, _toolName: string): string {
+  formatForStreaming(result: ToolExecutionResult): string {
     if (result.success) {
       // Format similar to LLM responses
       return `${result.response}`;
     } else {
       return `Error: ${result.error || 'Unknown error'}`;
     }
+  }
+
+  /**
+   * Detect if a tool handler response indicates failure
+   * (handlers that return error strings instead of throwing)
+   */
+  private isErrorResponse(response: string): boolean {
+    const lower = response.toLowerCase();
+    const errorPrefixes = [
+      'failed to ',
+      'error:',
+      'error executing',
+      'could not ',
+      'unable to ',
+      'cannot ',
+    ];
+    return errorPrefixes.some(prefix => lower.startsWith(prefix));
   }
 }

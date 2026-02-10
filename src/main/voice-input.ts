@@ -1,7 +1,7 @@
 // Voice Input Manager
 
 import { getSettings } from './store';
-import { getCommandWindow } from './windows';
+import { getCommandWindow, setAutoHideSuppressed, showCommandWindow } from './windows';
 
 /**
  * Voice Input Manager
@@ -11,6 +11,7 @@ import { getCommandWindow } from './windows';
 class VoiceInputManager {
   private isRecording = false;
   private recordingStartTime = 0;
+  private windowRestoreInterval: NodeJS.Timeout | null = null;
 
   /**
    * Start recording audio
@@ -31,9 +32,30 @@ class VoiceInputManager {
     this.isRecording = true;
     this.recordingStartTime = Date.now();
 
+    // Ensure window stays visible during voice recording
+    setAutoHideSuppressed(true);
+
+    // Show and focus the window
     const window = getCommandWindow();
-    if (window) {
-      window.webContents.send('voice:recordingStarted');
+    if (window && !window.isDestroyed()) {
+      try {
+        showCommandWindow();
+      } catch (err) {
+        console.warn('Failed to show window during voice recording:', err);
+      }
+      
+      // Start a polling loop to keep restoring the window
+      // This handles the case where getUserMedia causes focus loss
+      this.startWindowRestoreLoop();
+      
+      // Send recording started event with safety check
+      try {
+        if (window.webContents && !window.webContents.isDestroyed()) {
+          window.webContents.send('voice:recordingStarted');
+        }
+      } catch (err) {
+        console.warn('Failed to send voice:recordingStarted:', err);
+      }
     }
   }
 
@@ -48,14 +70,22 @@ class VoiceInputManager {
 
     console.log('Stopping voice recording...');
     this.isRecording = false;
+    this.stopWindowRestoreLoop();
+    setAutoHideSuppressed(true);
 
     const duration = Date.now() - this.recordingStartTime;
     console.log(`Recording duration: ${duration}ms`);
 
     const window = getCommandWindow();
-    if (window) {
+    if (window && !window.isDestroyed()) {
       // Tell renderer to stop and transcribe
-      window.webContents.send('voice:recordingStopped');
+      try {
+        if (window.webContents && !window.webContents.isDestroyed()) {
+          window.webContents.send('voice:recordingStopped');
+        }
+      } catch (err) {
+        console.warn('Failed to send voice:recordingStopped:', err);
+      }
     }
   }
 
@@ -75,9 +105,16 @@ class VoiceInputManager {
    */
   sendTranscript(transcript: string): void {
     const window = getCommandWindow();
-    if (window) {
-      window.webContents.send('voice:transcript', transcript);
+    if (window && !window.isDestroyed()) {
+      try {
+        if (window.webContents && !window.webContents.isDestroyed()) {
+          window.webContents.send('voice:transcript', transcript);
+        }
+      } catch (err) {
+        console.warn('Failed to send voice:transcript:', err);
+      }
     }
+    setAutoHideSuppressed(false);
   }
 
   /**
@@ -85,9 +122,16 @@ class VoiceInputManager {
    */
   sendError(error: string): void {
     const window = getCommandWindow();
-    if (window) {
-      window.webContents.send('voice:error', error);
+    if (window && !window.isDestroyed()) {
+      try {
+        if (window.webContents && !window.webContents.isDestroyed()) {
+          window.webContents.send('voice:error', error);
+        }
+      } catch (err) {
+        console.warn('Failed to send voice:error:', err);
+      }
     }
+    setAutoHideSuppressed(false);
   }
 
   /**
@@ -103,6 +147,69 @@ class VoiceInputManager {
   reset(): void {
     this.isRecording = false;
     this.recordingStartTime = 0;
+    this.stopWindowRestoreLoop();
+    setAutoHideSuppressed(false);
+  }
+
+  /**
+   * Start a polling loop that keeps trying to restore the window
+   * This handles the case where getUserMedia steals focus
+   * Only runs for the first 3 seconds after recording starts
+   */
+  private startWindowRestoreLoop(): void {
+    this.stopWindowRestoreLoop(); // Clear any existing loop
+
+    let attempts = 0;
+    const maxAttempts = 6; // 3 seconds max (500ms interval)
+    const startTime = Date.now();
+    const absoluteTimeout = 5000; // Absolute max 5 seconds regardless of state
+
+    this.windowRestoreInterval = setInterval(() => {
+      attempts++;
+      const elapsed = Date.now() - startTime;
+
+      // Stop if: not recording, max attempts, OR absolute timeout exceeded
+      if (!this.isRecording || attempts >= maxAttempts || elapsed >= absoluteTimeout) {
+        console.log(`[Voice] Restore loop stopping - attempts: ${attempts}, elapsed: ${elapsed}ms, recording: ${this.isRecording}`);
+        this.stopWindowRestoreLoop();
+        return;
+      }
+
+      const window = getCommandWindow();
+      if (!window || window.isDestroyed()) {
+        console.log('[Voice] Restore loop stopping - window destroyed');
+        this.stopWindowRestoreLoop();
+        return;
+      }
+
+      // Only force restore if window is minimized or not visible
+      // Don't fight for focus - just ensure visibility
+      if (window.isMinimized() || !window.isVisible()) {
+        console.log(`[Voice] Window restore loop attempt ${attempts} - window hidden/minimized, restoring...`);
+        try {
+          window.setAlwaysOnTop(true, 'screen-saver');
+          if (window.isMinimized()) {
+            window.restore();
+          }
+          window.show();
+          window.moveTop();
+        } catch (err) {
+          console.warn('[Voice] Failed to restore window in loop, stopping:', err);
+          // Stop on error to prevent infinite error loop
+          this.stopWindowRestoreLoop();
+        }
+      }
+    }, 500);
+  }
+
+  /**
+   * Stop the window restore polling loop
+   */
+  private stopWindowRestoreLoop(): void {
+    if (this.windowRestoreInterval) {
+      clearInterval(this.windowRestoreInterval);
+      this.windowRestoreInterval = null;
+    }
   }
 }
 

@@ -50,24 +50,22 @@ export class MLIntentClassifier {
         return;
       }
 
-      // Load the model
+      // Load the model (wrapped in Promise to properly await callback)
       logger.copilot('Loading ML model from ' + modelPath);
 
-      natural.BayesClassifier.load(modelPath, null, (err: any, classifier: any) => {
-        if (err) {
-          this.initializationError = 'Failed to load model: ' + err.message;
-          logger.copilot('Failed to load ML model: ' + err.message, 'error');
+      await new Promise<void>((resolve) => {
+        natural.BayesClassifier.load(modelPath, null, (err: any, classifier: any) => {
+          if (err) {
+            this.initializationError = 'Failed to load model: ' + err.message;
+            logger.copilot('Failed to load ML model: ' + err.message, 'error');
+          } else {
+            this.classifier = classifier;
+            logger.copilot('ML model loaded successfully (Naive Bayes)');
+          }
           this.initialized = true;
-          return;
-        }
-
-        this.classifier = classifier;
-        this.initialized = true;
-        logger.copilot('ML model loaded successfully (Naive Bayes)');
+          resolve();
+        });
       });
-
-      // Wait a bit for async load
-      await new Promise(resolve => setTimeout(resolve, 100));
 
     } catch (error) {
       this.initializationError = error instanceof Error ? error.message : String(error);

@@ -3,8 +3,18 @@
 export const APP_NAME = 'Desktop Commander';
 export const APP_VERSION = '0.1.0';
 
+// Clipboard history limits
+export const CLIPBOARD_LIMITS = {
+  MAX_TEXT_SIZE_BYTES: 1024 * 1024,       // 1MB max for text entries
+  MAX_IMAGE_SIZE_BYTES: 10 * 1024 * 1024, // 10MB max per image
+  MAX_IMAGE_STORAGE_MB: 100,              // 100MB total image storage
+  THUMBNAIL_SIZE: 150,                     // 150x150 max thumbnail
+  MAX_FILES_PER_ENTRY: 100,               // Max files in a single copy operation
+  MAX_UNPINNED_ENTRIES: 50,               // Max unpinned entries to keep
+};
+
 // Default hotkey for command palette
-export const DEFAULT_HOTKEY = 'CommandOrControl+Shift+Space';
+export const DEFAULT_HOTKEY = 'CommandOrControl+Shift+A';
 
 // Window dimensions
 export const COMMAND_PALETTE_WIDTH = 600;
@@ -21,7 +31,12 @@ import { PermissionLevel } from './types';
 // Default settings
 export const DEFAULT_SETTINGS = {
   hotkey: DEFAULT_HOTKEY,
-  theme: 'system' as const,
+  appearanceMode: 'system' as const,
+  themeId: 'claude' as const,
+  screenSharePrivacy: {
+    enabled: false,
+    autoHideOnShare: true,
+  },
   permissions: {
     defaultLevel: PermissionLevel.STANDARD,
     rememberChoices: true,
@@ -36,6 +51,7 @@ export const DEFAULT_SETTINGS = {
     floatingWindow: true,
     toastNotifications: true,
     menuBarMode: false,
+    onboardingSeen: false,
   },
   safety: {
     maxFilesPerOperation: 100,
@@ -46,8 +62,9 @@ export const DEFAULT_SETTINGS = {
     enabled: true,
     maxIterations: 10,
     maxTotalTimeMinutes: 15,
-    iterationTimeoutSeconds: 120,
+    iterationTimeoutSeconds: 300, // 5 minutes
     model: 'gpt-5' as const, // Base GPT-5 model - fast and capable
+    autoCompactThreshold: 40,
   },
   notifications: {
     enabled: true,
@@ -63,13 +80,33 @@ export const DEFAULT_SETTINGS = {
   voiceInput: {
     enabled: false,
     hotkey: 'CommandOrControl+Shift+V',
-    provider: 'browser' as const,
-    whisperCpp: {
-      binaryPath: '',
-      modelPath: '',
+    provider: 'local_whisper' as const,  // local whisper - free, offline, no API key needed
+    openaiWhisper: {
+      apiKey: '',
+      model: 'whisper-1',
+    },
+    localWhisper: {
+      modelSize: 'base' as const,  // good balance of speed and accuracy
     },
     language: 'en-US',
     showVisualFeedback: true,
+  },
+  recording: {
+    outputPath: '', // Empty means app directory (resources/recordings)
+  },
+  hotkeys: {
+    clipboardHistory: 'CommandOrControl+Shift+H',
+    voiceTranscribe: 'CommandOrControl+Shift+T',
+    voiceCommand: 'CommandOrControl+Shift+G',
+    chat: 'CommandOrControl+Shift+C',
+    audioRecording: 'CommandOrControl+Shift+A',
+    videoRecording: 'CommandOrControl+Shift+R',
+  },
+  contextAwareness: {
+    enabled: true,
+    captureSelectedText: false,
+    showContextBadge: true,
+    injectionStyle: 'visible' as const,
   },
 };
 
@@ -124,75 +161,78 @@ const getHomePath = (): string => {
   return '';
 };
 
-export const DEFAULT_MCP_SERVERS: StoredMCPServer[] = [
-  {
-    id: 'mcp-default-filesystem',
-    config: {
-      name: 'File System Access',
-      type: 'local' as const,
-      command: 'npx',
-      args: ['-y', '@modelcontextprotocol/server-filesystem', getHomePath()],
-      tools: '*',
-      enabled: false,
-      description: 'Read and write files on your computer. No setup required.',
+// Function to generate default servers (returns fresh copy each time)
+export function getDefaultMcpServers(): StoredMCPServer[] {
+  return [
+    {
+      id: 'mcp-default-filesystem',
+      config: {
+        name: 'File System Access',
+        type: 'local' as const,
+        command: 'npx',
+        args: ['-y', '@modelcontextprotocol/server-filesystem', getHomePath()],
+        tools: '*',
+        enabled: false,
+        description: 'Read and write files on your computer. No setup required.',
+      },
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
     },
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-  },
-  {
-    id: 'mcp-default-memory',
-    config: {
-      name: 'Memory Storage',
-      type: 'local' as const,
-      command: 'npx',
-      args: ['-y', '@modelcontextprotocol/server-memory'],
-      tools: '*',
-      enabled: false,
-      description: 'Store and recall information across sessions. Perfect for taking notes.',
+    {
+      id: 'mcp-default-memory',
+      config: {
+        name: 'Memory Storage',
+        type: 'local' as const,
+        command: 'npx',
+        args: ['-y', '@modelcontextprotocol/server-memory'],
+        tools: '*',
+        enabled: false,
+        description: 'Store and recall information across sessions. Perfect for taking notes.',
+      },
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
     },
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-  },
-  {
-    id: 'mcp-default-puppeteer',
-    config: {
-      name: 'Browser Automation',
-      type: 'local' as const,
-      command: 'npx',
-      args: ['-y', '@modelcontextprotocol/server-puppeteer'],
-      tools: '*',
-      enabled: false,
-      description: 'Automate web browsers, take screenshots, and scrape websites.',
+    {
+      id: 'mcp-default-puppeteer',
+      config: {
+        name: 'Browser Automation',
+        type: 'local' as const,
+        command: 'npx',
+        args: ['-y', '@modelcontextprotocol/server-puppeteer'],
+        tools: '*',
+        enabled: false,
+        description: 'Automate web browsers, take screenshots, and scrape websites.',
+      },
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
     },
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-  },
-  {
-    id: 'mcp-default-fetch',
-    config: {
-      name: 'HTTP Requests',
-      type: 'local' as const,
-      command: 'npx',
-      args: ['-y', '@modelcontextprotocol/server-fetch'],
-      tools: '*',
-      enabled: false,
-      description: 'Make HTTP requests and fetch web content. No API key needed.',
+    {
+      id: 'mcp-default-fetch',
+      config: {
+        name: 'HTTP Requests',
+        type: 'local' as const,
+        command: 'npx',
+        args: ['-y', '@modelcontextprotocol/server-fetch'],
+        tools: '*',
+        enabled: false,
+        description: 'Make HTTP requests and fetch web content. No API key needed.',
+      },
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
     },
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-  },
-  {
-    id: 'mcp-default-windows-mcp',
-    config: {
-      name: 'Windows Automation (UI)',
-      type: 'local' as const,
-      command: 'uvx',
-      args: ['windows-mcp'],
-      tools: '*',
-      enabled: true,
-      description: 'Direct Windows UI automation: click, type, scroll, drag, screenshots, shell commands. Requires Python 3.13+ and uv.',
+    {
+      id: 'mcp-default-windows-mcp',
+      config: {
+        name: 'Windows Automation (UI)',
+        type: 'local' as const,
+        command: 'uvx',
+        args: ['windows-mcp'],
+        tools: '*',
+        enabled: true,
+        description: 'Direct Windows UI automation: click, type, scroll, drag, screenshots, shell commands. Requires Python 3.13+ and uv.',
+      },
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
     },
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-  },
-];
+  ];
+}
