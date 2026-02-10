@@ -1,18 +1,18 @@
-# Desktop Commander
+# WinPilot
 
-> Control your entire desktop with natural language using AI
+> Control your Windows desktop with natural language using AI
 
 ![Version](https://img.shields.io/badge/version-0.1.0-blue.svg)
-![Platform](https://img.shields.io/badge/platform-Windows%20(alpha)-lightgrey.svg)
+![Platform](https://img.shields.io/badge/platform-Windows%20only-lightgrey.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 
-Desktop Commander is a system tray application that lets you control your desktop environment through natural language. It acts as an AI layer over your operating system, enabling you to manage windows, files, applications, and system settings through conversation.
+WinPilot is a Windows system tray application that lets you control your desktop environment through natural language. It acts as an AI layer over your operating system, enabling you to manage windows, files, applications, and system settings through conversation.
 
 This repository is currently a **public alpha**:
 
-- Windows is the primary supported platform today.
-- macOS/Linux adapters exist but are not feature complete yet.
-- Destructive actions require confirmation in the UI, but you should still treat this as experimental software.
+- **Windows-only** today (macOS/Linux adapters are stubs).
+- Destructive actions require confirmation in the UI.
+- Treat as experimental software.
 
 ## ✨ Features
 
@@ -29,16 +29,22 @@ This repository is currently a **public alpha**:
 
 - Node.js 18+
 - npm
-- Windows 10/11 (alpha)
+- Windows 10/11 (required)
 - GitHub Copilot CLI installed (the `copilot` command)
 	- The app uses the Copilot CLI via `@github/copilot-sdk`.
 	- Install guide: https://docs.github.com/en/copilot/how-tos/set-up/install-copilot-cli
-	- On Windows, Desktop Commander will try to auto-detect the Copilot CLI that ships with VS Code's Copilot extension, but you can also install the Copilot CLI separately and ensure `copilot` is on your `PATH`.
+	- On Windows, WinPilot will try to auto-detect the Copilot CLI that ships with VS Code's Copilot extension, but you can also install the Copilot CLI separately and ensure `copilot` is on your `PATH`.
 	- Optional: set `COPILOT_CLI_PATH` to point to your Copilot CLI executable.
+- Optional dependencies:
+	- **FFmpeg** for recording and local whisper audio conversion (`ffmpeg.exe`)
+	- **Invisiwind binaries** for screen-share privacy tools (`resources\\invisiwind\\`)
+	- **OpenAI API key** for cloud Whisper
+	- **Search API key** for the `web_search` tool
+	- **Agent skills** (`SKILL.md` files) for docx/pptx/pdf/xlsx
 
 ### Sign in to Copilot CLI (required)
 
-Before running Desktop Commander, you must authenticate the Copilot CLI at least once on this machine.
+Before running WinPilot, you must authenticate the Copilot CLI at least once on this machine.
 
 1. Run `copilot`
 2. At the prompt, run `/login` and complete the browser sign-in flow
@@ -49,8 +55,8 @@ If you skip this step, the app won't be able to start a Copilot session.
 
 ```bash
 # Clone the repository
-git clone https://github.com/burkeholland/desktop-commander.git
-cd desktop-commander
+git clone https://github.com/chaitanyame/winpilot.git
+cd winpilot
 
 # Install dependencies
 npm install
@@ -62,22 +68,22 @@ cp .env.example .env
 npm run electron:dev
 ```
 
-### Building
+### Building (Windows)
 
 ```bash
 # Build for current platform
 npm run build
 
-# Build for specific platforms
+# Build for Windows explicitly
 npm run build:win
-npm run build:mac
-npm run build:linux
 ```
+
+macOS/Linux builds are not supported yet (adapters are stubs).
 
 ## 🎮 Usage
 
 1. **Launch the app** - It will appear in your system tray
-2. **Press the hotkey** - `Ctrl+Shift+Space` (or `Cmd+Shift+Space` on macOS)
+2. **Press the hotkey** - `Ctrl+Shift+Space`
 3. **Type your command** - Use natural language to describe what you want to do
 4. **Confirm actions** - Sensitive operations will ask for confirmation
 
@@ -92,11 +98,32 @@ npm run build:linux
 "Set volume to 50%"
 ```
 
+## ✅ Feature Availability (Windows)
+
+| Feature Area | Status | Requirements |
+|---|---|---|
+| Window management | ✅ | None |
+| Screen-share privacy (hide/show windows) | ⚠️ | Invisiwind binaries in `resources\\invisiwind\\` |
+| File operations | ✅ | Home/temp constrained by default |
+| App control | ✅ | App must be installed |
+| System (volume/brightness/screenshot/DND/lock/sleep) | ✅ | None |
+| Process list/kill/top | ✅ | Permission-gated |
+| Clipboard read/write/history | ✅ | None |
+| Recording (screen/audio/webcam) | ⚠️ | FFmpeg (`ffmpeg.exe`) |
+| Voice input (local whisper) | ⚠️ | whisper.cpp binary + model + FFmpeg |
+| Voice input (OpenAI Whisper) | ⚠️ | OpenAI API key |
+| Voice input (Web Speech API) | ❌ | Not supported in Electron |
+| OCR (image/clipboard/region) | ⚠️ | Windows OCR engine availability |
+| Web search tool | ⚠️ | Search API key (placeholder tool) |
+| Web fetch | ✅ | Internet access |
+| Copilot SDK/LLM tools | ⚠️ | Copilot CLI installed + `/login` completed |
+| Agent skills (docx/pptx/pdf/xlsx) | ⚠️ | User-provided `SKILL.md` files |
+
 ## 🛠️ Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                     Desktop Commander                            │
+│                           WinPilot                               │
 ├─────────────────────────────────────────────────────────────────┤
 │  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐      │
 │  │   System     │    │   Copilot    │    │    Tool      │      │
@@ -118,7 +145,7 @@ npm run build:linux
 ## 📁 Project Structure
 
 ```
-desktop-commander/
+winpilot/
 ├── src/
 │   ├── main/           # Electron main process
 │   ├── renderer/       # React UI (command palette)
@@ -136,7 +163,7 @@ desktop-commander/
 
 ## 🔒 Security & Permissions
 
-Desktop Commander uses a permission system to protect your system:
+WinPilot uses a permission system to protect your system:
 
 | Level | Description | Examples |
 |-------|-------------|----------|
@@ -161,7 +188,7 @@ Settings are stored locally and can be configured:
 
 ## 🧠 Agent Skills (Anthropic)
 
-Desktop Commander supports Agent Skills via `SKILL.md` files. Skills are injected into the Copilot system prompt only when relevant, to avoid prompt bloat.
+WinPilot supports Agent Skills via `SKILL.md` files. Skills are injected into the Copilot system prompt only when relevant, to avoid prompt bloat.
 
 **Where to place skills:**
 
@@ -186,7 +213,7 @@ Example layout:
     SKILL.md
 ```
 
-Once installed, Desktop Commander will automatically detect these skills and inject the correct instructions when you mention presentations, documents, PDFs, or spreadsheets.
+Once installed, WinPilot will automatically detect these skills and inject the correct instructions when you mention presentations, documents, PDFs, or spreadsheets.
 
 ## 🗺️ Roadmap
 
@@ -194,9 +221,7 @@ Once installed, Desktop Commander will automatically detect these skills and inj
 - [ ] Phase 2: Complete file system operations
 - [ ] Phase 3: Application & system control
 - [ ] Phase 4: Process & clipboard management
-- [ ] Phase 5: macOS support
-- [ ] Phase 6: Linux support
-- [ ] Phase 7: Voice input support
+- [ ] Phase 5: Voice input improvements
 
 ## 🤝 Contributing
 

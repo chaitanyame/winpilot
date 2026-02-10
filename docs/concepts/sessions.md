@@ -1,6 +1,6 @@
 # Sessions (Project Notes)
 
-Desktop Commander creates a Copilot SDK session in the Electron main process.
+WinPilot creates a Copilot SDK session in the Electron main process.
 
 Project conventions:
 

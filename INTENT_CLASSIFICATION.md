@@ -397,6 +397,6 @@ MIT - Same as WinPilot
 ## Support
 
 For issues or questions:
-- GitHub Issues: https://github.com/burkeholland/winpilot/issues
+- GitHub Issues: https://github.com/chaitanyame/winpilot/issues
 - Check logs: `~/.winpilot/logs/`
 - Review telemetry: `router.getTelemetryStats()`

@@ -1,4 +1,4 @@
-# Desktop Commander Icons
+# WinPilot Icons
 
 This folder contains application icons for electron-builder packaging.
 
@@ -54,4 +54,4 @@ iconutil -c icns icon.iconset
 - Use a simple, recognizable design that works at small sizes
 - Ensure good contrast for visibility in taskbars and docks
 - Consider both light and dark mode contexts
-- Desktop Commander suggestion: A command terminal/console icon with a lightning bolt or wand
+- WinPilot suggestion: A command terminal/console icon with a lightning bolt or wand

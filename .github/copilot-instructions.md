@@ -1,8 +1,8 @@
-# Desktop Commander - Copilot Instructions
+# WinPilot - Copilot Instructions
 
 ## Project Overview
 
-Desktop Commander is an Electron application that allows users to control their desktop via natural language commands using the GitHub Copilot SDK.
+WinPilot is an Electron application that allows users to control their Windows desktop via natural language commands using the GitHub Copilot SDK.
 
 ## Commands
 

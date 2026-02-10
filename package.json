@@ -1,16 +1,16 @@
 {
   "name": "winpilot",
   "version": "0.1.0",
-  "description": "Control your entire desktop with natural language using the GitHub Copilot SDK",
+  "description": "Control your Windows desktop with natural language using the GitHub Copilot SDK",
   "main": "dist/main/index.js",
   "repository": {
     "type": "git",
-    "url": "https://github.com/burkeholland/winpilot.git"
+    "url": "https://github.com/chaitanyame/winpilot.git"
   },
   "bugs": {
-    "url": "https://github.com/burkeholland/winpilot/issues"
+    "url": "https://github.com/chaitanyame/winpilot/issues"
   },
-  "homepage": "https://github.com/burkeholland/winpilot#readme",
+  "homepage": "https://github.com/chaitanyame/winpilot#readme",
   "scripts": {
     "dev": "vite",
     "dev:wait": "wait-on http://localhost:5173 && npm run dev",
@@ -36,7 +36,7 @@
     "natural-language",
     "electron"
   ],
-  "author": "Burke Holland",
+  "author": "Chaitanya Me",
   "license": "MIT",
   "engines": {
     "node": ">=18.0.0"

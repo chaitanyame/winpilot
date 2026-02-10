@@ -1,6 +1,6 @@
 # Tools (Project Notes)
 
-Desktop Commander exposes a curated set of desktop-control tools to the Copilot session.
+WinPilot exposes a curated set of desktop-control tools to the Copilot session.
 
 Key project conventions:
 

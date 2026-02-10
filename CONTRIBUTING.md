@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for your interest in Desktop Commander.
+Thanks for your interest in WinPilot.
 
 ## Development setup
 

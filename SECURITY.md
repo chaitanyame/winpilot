@@ -14,4 +14,4 @@ If you don't have a direct contact channel, open a GitHub issue with minimal det
 
 ## Supported versions
 
-This project is currently an **alpha**. Only the latest commit on `main` is supported.
+WinPilot is currently an **alpha**. Only the latest commit on `main` is supported.
