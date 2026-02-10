@@ -1210,7 +1210,7 @@ Provide ONLY the summary, no preamble.`;
       ? `\n## Active Skill: ${this.activeSkillContext.id}\n\n${this.activeSkillContext.instructions}\n`
       : '';
 
-    const prompt = `You are Desktop Commander, an AI assistant that helps users control their desktop through natural language commands.
+    const prompt = `You are WinPilot, an AI assistant that helps users control their Windows desktop through natural language commands.
 
 ## Available Tools
 

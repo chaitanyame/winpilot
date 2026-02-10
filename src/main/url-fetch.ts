@@ -13,7 +13,7 @@ export interface FetchResult {
   error?: string;
 }
 
-const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Desktop-Commander/0.1.0';
+const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) WinPilot/0.1.0';
 const MAX_CONTENT_LENGTH = 2 * 1024 * 1024; // 2MB max download
 const DEFAULT_SUMMARY_LENGTH = 2000;
 const TIMEOUT_MS = 15000;

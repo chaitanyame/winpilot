@@ -102,7 +102,7 @@ export function ScreenSharePrivacyPanel({ isOpen, onClose, variant = 'modal' }: 
             className="w-4 h-4 rounded border-dark-300 text-primary-500"
           />
           <span className="text-sm text-[color:var(--app-text-muted)]">
-            Auto-hide Desktop Commander when screen sharing starts
+            Auto-hide WinPilot when screen sharing starts
           </span>
         </label>
       </div>

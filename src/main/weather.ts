@@ -9,7 +9,7 @@ export async function fetchWeather(location: string, detailed: boolean): Promise
 
   return new Promise((resolve) => {
     const req = https.get(url, {
-      headers: { 'User-Agent': 'Desktop-Commander/0.1.0' },
+      headers: { 'User-Agent': 'WinPilot/0.1.0' },
       timeout: 10000,
     }, (res) => {
       let data = '';

@@ -195,7 +195,7 @@ async function initApp() {
   // Wait for all background tasks to settle
   await Promise.all(backgroundTasks);
 
-  console.log('Desktop Commander initialized');
+  console.log('WinPilot initialized');
 }
 
 // App ready

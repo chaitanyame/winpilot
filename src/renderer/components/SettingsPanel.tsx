@@ -934,7 +934,7 @@ export function SettingsPanel({ isOpen, onClose }: Props) {
                       className="w-4 h-4 rounded border-dark-300 text-primary-500"
                     />
                     <span className="text-sm text-dark-600 dark:text-dark-400">
-                      Auto-hide Desktop Commander when screen sharing starts
+                      Auto-hide WinPilot when screen sharing starts
                     </span>
                   </label>
                 </div>

@@ -520,7 +520,7 @@ export function setupIpcHandlers(): void {
       return { success: false, error: 'Window not found' };
     }
     if (target.app.toLowerCase() === 'winpilot' || target.app.toLowerCase() === 'electron') {
-      return { success: false, error: 'Refusing to hide Desktop Commander window.' };
+      return { success: false, error: 'Refusing to hide WinPilot window.' };
     }
     const result = await invisiwind.hideWindowsByPid(target.processId);
     if (!result.success) {
@@ -1340,7 +1340,7 @@ export function setupIpcHandlers(): void {
       const output = {
         exportedAt: Date.now(),
         app: {
-          name: 'Desktop Commander',
+          name: 'WinPilot',
           version: app.getVersion(),
         },
         logs: payload.logs || [],

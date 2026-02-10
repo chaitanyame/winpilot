@@ -97,13 +97,13 @@ export function updateTrayMenu(): void {
     },
     { type: 'separator' },
     {
-      label: 'About Desktop Commander',
+      label: 'About WinPilot',
       click: () => {
         const { dialog } = require('electron');
         dialog.showMessageBox({
           type: 'info',
-          title: 'About Desktop Commander',
-          message: 'Desktop Commander',
+          title: 'About WinPilot',
+          message: 'WinPilot',
           detail: 'Control your entire desktop with natural language.\n\nVersion: 0.1.0',
         });
       },
@@ -126,9 +126,9 @@ export function setTrayState(state: 'idle' | 'active' | 'error'): void {
 
   // In a full implementation, we'd have different icons for each state
   const tooltips: Record<string, string> = {
-    idle: 'Desktop Commander',
-    active: 'Desktop Commander - Processing...',
-    error: 'Desktop Commander - Error',
+    idle: 'WinPilot',
+    active: 'WinPilot - Processing...',
+    error: 'WinPilot - Error',
   };
 
   tray.setToolTip(tooltips[state] || tooltips.idle);

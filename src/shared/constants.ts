@@ -1,6 +1,6 @@
 // Application constants
 
-export const APP_NAME = 'Desktop Commander';
+export const APP_NAME = 'WinPilot';
 export const APP_VERSION = '0.1.0';
 
 // Clipboard history limits

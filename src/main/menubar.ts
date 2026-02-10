@@ -26,7 +26,7 @@ export function initMenuBar(config: MenuBarConfig = {}): void {
   try {
     const menubarModule = require('menubar');
     const iconPath = config.iconPath || path.join(__dirname, '../../resources/icon.png');
-    const tooltip = config.tooltip || 'Desktop Commander';
+    const tooltip = config.tooltip || 'WinPilot';
 
     mb = menubarModule({
       index: getHtmlUrl(),
@@ -39,7 +39,7 @@ export function initMenuBar(config: MenuBarConfig = {}): void {
         height: 700,
         resizable: true,
         fullscreenable: false,
-        title: 'Desktop Commander',
+        title: 'WinPilot',
         webPreferences: {
           preload: path.join(__dirname, '../preload/index.js'),
           contextIsolation: true,
@@ -172,7 +172,7 @@ export function initCompactWindow(): void {
     skipTaskbar: false,
     alwaysOnTop: true,
     frame: true,
-    title: 'Desktop Commander',
+    title: 'WinPilot',
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
       contextIsolation: true,
